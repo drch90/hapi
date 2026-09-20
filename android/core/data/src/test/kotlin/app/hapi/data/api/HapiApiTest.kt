@@ -60,13 +60,9 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
-    fun `production clients reject cleartext hub urls`() {
-        assertFailsWith<IllegalArgumentException> {
-            HapiApi("http://hub.example", OkHttpClient())
-        }
-        assertFailsWith<IllegalArgumentException> {
-            HubSession("http://hub.example", InMemoryCredentialStore())
-        }
+    fun `production clients accept http hub urls for self hosted hubs`() {
+        HapiApi("http://hub.example", OkHttpClient())
+        HubSession("http://hub.example", InMemoryCredentialStore())
     }
 
     // ------------------------------------------------------------ ApiError --

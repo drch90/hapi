@@ -129,7 +129,7 @@ class PairingViewModelTest {
     }
 
     @Test
-    fun `non-https or malformed url errors immediately without any network call`() = runVmTest {
+    fun `malformed or unsupported url errors immediately without any network call`() = runVmTest {
         val vm = viewModel()
 
         vm.pair("not a url", "tok")
@@ -139,9 +139,6 @@ class PairingViewModelTest {
         assertEquals(PairingUiState.Idle, vm.state.value)
 
         vm.pair("ftp://hub.example", "tok")
-        assertEquals(PairingUiState.Error(PairingError.InvalidUrl), vm.state.value)
-
-        vm.pair("http://hub.example", "tok")
         assertEquals(PairingUiState.Error(PairingError.InvalidUrl), vm.state.value)
 
         advanceUntilIdle()

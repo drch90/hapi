@@ -42,7 +42,7 @@ class HubRegistryTest {
     fun `invalid urls are rejected`() = runTest {
         val registry = HubRegistry(InMemoryHubRegistryStorage())
         assertNull(registry.addHub("not a url"))
-        assertNull(registry.addHub("http://x"))
+        assertNull(registry.addHub("ws://x"))
         assertNull(registry.addHub("ftp://x"))
         assertEquals(HubRegistryState(), registry.state.value)
     }
@@ -102,7 +102,7 @@ class HubRegistryTest {
         inconsistent.load()
         assertEquals("https://a.example", inconsistent.activeHubUrl)
 
-        // Upgrades drop legacy cleartext hubs and normalize the remaining HTTPS origins.
+        // Upgrades keep http hubs (self-hosted / LAN) and normalize all origins.
         val legacy = HubRegistry(
             InMemoryHubRegistryStorage(
                 """{"hubs":["http://old.example","HTTPS://Keep.Example/path"],"activeHubUrl":"http://old.example"}"""
@@ -110,7 +110,7 @@ class HubRegistryTest {
         )
         legacy.load()
         assertEquals(
-            HubRegistryState(hubs = listOf("https://keep.example"), activeHubUrl = "https://keep.example"),
+            HubRegistryState(hubs = listOf("http://old.example", "https://keep.example"), activeHubUrl = "http://old.example"),
             legacy.state.value,
         )
     }
