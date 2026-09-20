@@ -25,14 +25,14 @@
     <string name="pairing_confirm_switch">Use existing pairing</string>
     <string name="pairing_confirm_repair">Re-pair with the new code</string>
     <string name="pairing_confirm_cancel">Cancel</string>
-    <string name="pairing_invalid_link">That pairing link is invalid, incomplete, or does not use HTTPS.</string>
+    <string name="pairing_invalid_link">That pairing link is invalid or incomplete.</string>
     <string name="pairing_back">Back</string>
 
     <!-- Manual entry -->
     <string name="pairing_manual_title">Manual pairing</string>
     <string name="pairing_manual_hint">Find both values in the hub terminal on startup, or in the web app under Settings → Companion pairing.</string>
     <string name="pairing_hub_url_label">Hub URL</string>
-    <string name="pairing_hub_url_placeholder">https://hub.example.com</string>
+    <string name="pairing_hub_url_placeholder">http://192.168.1.10:3006</string>
     <string name="pairing_token_label">Access token</string>
     <string name="pairing_token_placeholder">Paste the access token</string>
     <string name="pairing_pair_button">Pair</string>
@@ -40,7 +40,7 @@
     <!-- QR scan -->
     <string name="pairing_scan_title">Scan pairing QR</string>
     <string name="pairing_scan_prompt">Point the camera at the pairing QR code</string>
-    <string name="pairing_scan_not_pairing_qr">That QR code is not a valid HTTPS HAPI pairing code. Scan one of the two QR codes your hub prints (Companion app or Web app).</string>
+    <string name="pairing_scan_not_pairing_qr">That QR code is not a valid HAPI pairing code. Scan one of the two QR codes your hub prints (Companion app or Web app).</string>
     <string name="pairing_scan_again">Scan again</string>
     <string name="pairing_scan_permission_rationale">Camera access is needed to scan the pairing QR code. You can also pair manually instead.</string>
     <string name="pairing_scan_grant_camera">Grant camera access</string>

@@ -32,14 +32,14 @@
     <string name="pairing_confirm_switch">使用现有配对</string>
     <string name="pairing_confirm_repair">用新配对码重新配对</string>
     <string name="pairing_confirm_cancel">取消</string>
-    <string name="pairing_invalid_link">该配对链接无效、不完整，或未使用 HTTPS。</string>
+    <string name="pairing_invalid_link">该配对链接无效或不完整。</string>
     <string name="pairing_back">返回</string>
 
     <!-- Manual entry -->
     <string name="pairing_manual_title">手动配对</string>
     <string name="pairing_manual_hint">这两项信息可在 hub 启动时的终端里找到，也可在网页应用的“设置 → 伴侣应用配对”中查看。</string>
     <string name="pairing_hub_url_label">Hub 地址</string>
-    <string name="pairing_hub_url_placeholder">https://hub.example.com</string>
+    <string name="pairing_hub_url_placeholder">http://192.168.1.10:3006</string>
     <string name="pairing_token_label">访问令牌</string>
     <string name="pairing_token_placeholder">粘贴访问令牌</string>
     <string name="pairing_pair_button">配对</string>
@@ -47,7 +47,7 @@
     <!-- QR scan -->
     <string name="pairing_scan_title">扫描配对二维码</string>
     <string name="pairing_scan_prompt">将相机对准配对二维码</string>
-    <string name="pairing_scan_not_pairing_qr">这不是有效的 HTTPS HAPI 配对二维码。请扫描 hub 打印的两个二维码之一（伴侣应用或网页应用）。</string>
+    <string name="pairing_scan_not_pairing_qr">这不是有效的 HAPI 配对二维码。请扫描 hub 打印的两个二维码之一（伴侣应用或网页应用）。</string>
     <string name="pairing_scan_again">重新扫描</string>
     <string name="pairing_scan_permission_rationale">扫描配对二维码需要相机权限。您也可以改用手动配对。</string>
     <string name="pairing_scan_grant_camera">授予相机权限</string>
