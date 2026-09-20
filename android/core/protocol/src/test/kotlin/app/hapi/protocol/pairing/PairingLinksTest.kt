@@ -60,9 +60,11 @@ class PairingLinksTest {
     }
 
     @Test
-    fun `web form requires both urls to use https`() {
-        assertNull(PairingLinks.parseWebUrl("http://app.hapi.run/?hub=https%3A%2F%2Fh.example.com&token=x"))
-        assertNull(PairingLinks.parseWebUrl("https://app.hapi.run/?hub=http%3A%2F%2Fh.example.com&token=x"))
+    fun `web form accepts http urls but rejects unsupported schemes`() {
+        assertEquals(
+            "http://h.example.com",
+            PairingLinks.parseWebUrl("https://app.hapi.run/?hub=http%3A%2F%2Fh.example.com&token=x")?.hubUrl,
+        )
         assertNull(PairingLinks.parseWebUrl("https://app.hapi.run/?hub=ftp%3A%2F%2Fh.example.com&token=x"))
         assertNull(PairingLinks.parseWebUrl("https://app.hapi.run/?hub=not-a-url&token=x"))
     }

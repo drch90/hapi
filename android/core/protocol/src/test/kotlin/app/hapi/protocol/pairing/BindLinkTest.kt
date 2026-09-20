@@ -82,8 +82,11 @@ class BindLinkTest {
     }
 
     @Test
-    fun `returns null when hub is not an https url`() {
-        assertNull(BindLink.parse("hapicompanion://bind?hub=http%3A%2F%2Fh.example.com&code=x"))
+    fun `accepts http hubs but rejects unsupported schemes`() {
+        assertEquals(
+            BindLink(hubUrl = "http://h.example.com", accessToken = "x"),
+            BindLink.parse("hapicompanion://bind?hub=http%3A%2F%2Fh.example.com&code=x"),
+        )
         assertNull(BindLink.parse("hapicompanion://bind?hub=ftp%3A%2F%2Fh.example.com&code=x"))
         assertNull(BindLink.parse("hapicompanion://bind?hub=not-a-url&code=x"))
     }

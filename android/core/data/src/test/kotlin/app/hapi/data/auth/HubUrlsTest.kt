@@ -34,9 +34,14 @@ class HubUrlsTest {
     }
 
     @Test
-    fun `rejects cleartext non-https schemes and garbage`() {
-        assertNull(HubUrls.normalize("http://hub.example"))
-        assertNull(HubUrls.normalize("http://192.168.1.10:3006"))
+    fun `accepts http for local or self hosted hubs`() {
+        assertEquals("http://hub.example", HubUrls.normalize("http://hub.example"))
+        assertEquals("http://192.168.1.10:3006", HubUrls.normalize("http://192.168.1.10:3006"))
+        assertEquals("http://hub.example", HubUrls.normalize("http://hub.example:80/"))
+    }
+
+    @Test
+    fun `rejects unsupported schemes and garbage`() {
         assertNull(HubUrls.normalize("ftp://hub.example"))
         assertNull(HubUrls.normalize("hapicompanion://bind?hub=x"))
         assertNull(HubUrls.normalize("not a url"))

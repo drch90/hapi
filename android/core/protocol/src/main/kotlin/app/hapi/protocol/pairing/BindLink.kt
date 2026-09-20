@@ -87,7 +87,7 @@ data class BindLink(
                 return false
             }
             val scheme = uri.scheme?.lowercase() ?: return false
-            if (scheme != "https") return false
+            if (scheme != "https" && scheme != "http") return false
             return !(uri.host ?: uri.authority).isNullOrBlank()
         }
     }

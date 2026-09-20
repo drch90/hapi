@@ -35,7 +35,7 @@ object PairingLinks {
             return null
         }
         val scheme = uri.scheme?.lowercase() ?: return null
-        if (scheme != "https") return null
+        if (scheme != "https" && scheme != "http") return null
         if ((uri.host ?: uri.authority).isNullOrBlank()) return null
 
         val params = BindLink.parseFormQuery(uri.rawQuery ?: return null) ?: return null

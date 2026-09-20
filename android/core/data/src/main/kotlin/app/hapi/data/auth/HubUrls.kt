@@ -24,11 +24,11 @@ object HubUrls {
             return null
         }
         val scheme = uri.scheme?.lowercase() ?: return null
-        if (scheme != "https") return null
+        if (scheme != "https" && scheme != "http") return null
         // URI.host is null for malformed authorities; IPv6 literals keep their brackets.
         val host = uri.host?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
         val hostForOrigin = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
-        val defaultPort = 443
+        val defaultPort = if (scheme == "http") 80 else 443
         val port = uri.port
         return if (port == -1 || port == defaultPort) {
             "$scheme://$hostForOrigin"

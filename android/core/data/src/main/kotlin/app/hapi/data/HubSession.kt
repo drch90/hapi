@@ -119,6 +119,6 @@ class HubSession internal constructor(
 
         private fun requireHttpsBaseUrl(raw: String): HttpUrl = HubUrls.normalize(raw)
             ?.toHttpUrl()
-            ?: throw IllegalArgumentException("Invalid HTTPS hub URL: $raw")
+            ?: throw IllegalArgumentException("Invalid hub URL: $raw")
     }
 }
