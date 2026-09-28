@@ -30,7 +30,10 @@ import app.hapi.protocol.chat.AgentTextBlock
 /** Assistant prose: full-width markdown (the shared M2d1 renderer). */
 @Composable
 fun AgentTextBlockView(block: AgentTextBlock, modifier: Modifier = Modifier) {
-    Markdown(text = block.text, modifier = modifier.fillMaxWidth())
+    Column(modifier.fillMaxWidth()) {
+        Markdown(text = block.text, modifier = Modifier.fillMaxWidth())
+        app.hapi.companion.feature.chat.MessageActions(app.hapi.companion.feature.chat.shareMessage(block)!!)
+    }
 }
 
 /**

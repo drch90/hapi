@@ -71,6 +71,8 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
                 },
             )
 
+            app.hapi.companion.feature.chat.ToolTimingView(tool)
+
             if (planProposal && expanded) {
                 ToolCallBody(
                     tool = tool,

@@ -240,7 +240,10 @@ internal fun ToolGroupBrowser(
                             toolSummaryPresentation(block.tool, basePath, resources)
                         }
                         Box(Modifier.testTag("inspection-tool-${block.id}")) {
-                            ToolSummaryRow(presentation, block.tool.state) { select(block.id) }
+                            Column {
+                                ToolSummaryRow(presentation, block.tool.state) { select(block.id) }
+                                ToolTimingView(block.tool)
+                            }
                         }
                     }
                 }
@@ -297,6 +300,7 @@ private fun ToolReader(
                     Column {
                         Text(tool.name, style = MaterialTheme.typography.titleMedium)
                         ToolStatusIndicator(tool.state)
+                        ToolTimingView(tool)
                         if (path != null && name in setOf("Edit", "MultiEdit", "Write", "NotebookEdit")) {
                             TextButton(onClick = { openFile(path, null) }) { Text(stringResource(R.string.chat_view_current_file)) }
                         }

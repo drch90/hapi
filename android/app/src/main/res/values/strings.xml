@@ -570,4 +570,21 @@
     <string name="sessions_filter_summary">Filtered by: %1$s</string>
     <string name="privacy_policy">Privacy Policy</string>
     <string name="privacy_open_failed">No app can open this link.</string>
+
+    <!-- Message actions and tool timing -->
+    <string name="chat_timing_start">Start: %1$s</string>
+    <string name="chat_timing_end">End: %1$s</string>
+    <string name="chat_timing_elapsed">Elapsed: %1$s</string>
+    <string name="chat_timing_pending">Not started</string>
+    <string name="chat_timing_running">Running</string>
+    <string name="chat_share_select">Select message for image sharing</string>
+    <string name="chat_share_image">Share image</string>
+    <string name="chat_share_selected">%1$d messages selected</string>
+    <string name="chat_share_cancel">Cancel</string>
+    <string name="chat_share_generate">Generate images</string>
+    <string name="chat_share_user">You</string>
+    <string name="chat_share_assistant">Assistant</string>
+    <string name="chat_share_progress">Generating images · %1$d pages ready</string>
+    <string name="chat_share_failed">Could not generate or share images. Please try again.</string>
+    <string name="chat_share_preview">Share image preview</string>
 </resources>

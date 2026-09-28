@@ -216,49 +216,51 @@ internal fun ChatTranscript(
         stateKeys.addAll(retained)
     }
 
-    Box(modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().testTag("chat-transcript").layout { measurable, constraints ->
-                // A same-key page can still resize rows. Reading the version
-                // here forces a measure/placement pass even for a hidden-only
-                // page; acknowledging composition alone is too early.
-                val version = state.historyVersion
-                val placeable = measurable.measure(constraints)
-                layout(placeable.width, placeable.height) {
-                    placeable.place(0, 0)
-                    renderedHistoryVersion = version
+    MessageActionsHost(state.sessionId, state.blocks, modifier.fillMaxSize(), onSelectionStart = { followsTail = false }) {
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().testTag("chat-transcript").layout { measurable, constraints ->
+                    // A same-key page can still resize rows. Reading the version
+                    // here forces a measure/placement pass even for a hidden-only
+                    // page; acknowledging composition alone is too early.
+                    val version = state.historyVersion
+                    val placeable = measurable.measure(constraints)
+                    layout(placeable.width, placeable.height) {
+                        placeable.place(0, 0)
+                        renderedHistoryVersion = version
+                    }
+                },
+                contentPadding = PaddingValues(vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+            ) {
+                item(key = HISTORY_KEY, contentType = HISTORY_KEY) {
+                    HistoryControl(paging.phase, state.hasMore, state.isSyncingTail, onRetryHistory)
                 }
-            },
-            contentPadding = PaddingValues(vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
-        ) {
-            item(key = HISTORY_KEY, contentType = HISTORY_KEY) {
-                HistoryControl(paging.phase, state.hasMore, state.isSyncingTail, onRetryHistory)
-            }
-            items(rows, key = { it.id }, contentType = { it.block.contentKind }) { row ->
-                rowState.SaveableStateProvider(row.id) {
-                    val rowModifier = Modifier
-                        .onSizeChanged { heights[row.id] = it.height }
-                        .testTag("chat-row-" + row.id)
-                    app.hapi.companion.ui.theme.ReadingColumn(modifier = rowModifier) {
-                        ChatBlockCard(block = row.block, basePath = state.basePath, processSteps = state.processSteps[row.id])
+                items(rows, key = { it.id }, contentType = { it.block.contentKind }) { row ->
+                    rowState.SaveableStateProvider(row.id) {
+                        val rowModifier = Modifier
+                            .onSizeChanged { heights[row.id] = it.height }
+                            .testTag("chat-row-" + row.id)
+                        app.hapi.companion.ui.theme.ReadingColumn(modifier = rowModifier) {
+                            ChatBlockCard(block = row.block, basePath = state.basePath, processSteps = state.processSteps[row.id])
+                        }
                     }
                 }
             }
-        }
-        if (!followsTail || state.requiresLatestReset || jumpingLatest) {
-            Surface(
-                shape = androidx.compose.foundation.shape.CircleShape,
-                tonalElevation = 4.dp,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
-            ) {
-                TextButton(
-                    onClick = onJumpToLatest, enabled = !jumpingLatest,
-                    modifier = Modifier.testTag("chat-latest"),
+            if (!followsTail || state.requiresLatestReset || jumpingLatest) {
+                Surface(
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
                 ) {
-                    if (jumpingLatest) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Text(stringResource(R.string.chat_back_to_latest))
+                    TextButton(
+                        onClick = onJumpToLatest, enabled = !jumpingLatest,
+                        modifier = Modifier.testTag("chat-latest"),
+                    ) {
+                        if (jumpingLatest) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                        Text(stringResource(R.string.chat_back_to_latest))
+                    }
                 }
             }
         }
