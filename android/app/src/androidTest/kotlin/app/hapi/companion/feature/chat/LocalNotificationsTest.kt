@@ -13,6 +13,7 @@ import app.hapi.companion.di.LocalAppGraph
 import app.hapi.companion.fcm.PushNotifications
 import app.hapi.companion.notifications.*
 import app.hapi.companion.ui.theme.HapiTheme
+import app.hapi.data.auth.HubCredentials
 import app.hapi.data.push.PushPayload
 import app.hapi.data.push.PushType
 import kotlinx.coroutines.runBlocking
@@ -82,7 +83,11 @@ class LocalNotificationsTest {
         val testHub = "http://127.0.0.1:1"
         val wasPaired = testHub in graph.hubRegistry.state.value.hubs
         val wasEnabled = graph.localNotifications.enabled.value
+        val oldCredentials = graph.credentialStore.get(testHub)
         try {
+            // A paired hub has credentials even when its network is offline.
+            // Without these, MISSING_CREDENTIALS correctly stops the service.
+            graph.credentialStore.set(HubCredentials(testHub, "instrumentation-only-token"))
             runBlocking { graph.hubRegistry.addHub(testHub) }
             compose.setContent {
                 HapiTheme {
@@ -108,13 +113,30 @@ class LocalNotificationsTest {
                     it.notification.channelId == "local_notification_connection"
                 }
             }
-            compose.runOnIdle { assertFalse(graph.localNotifications.enabled.value) }
+            compose.runOnIdle {
+                assertFalse(graph.localNotifications.enabled.value)
+                assertEquals(ReceptionStatus.Stopped, graph.localNotifications.status.value)
+            }
+            // Missing pairing credentials must stop reception rather than keep
+            // claiming to be connected. Do not weaken that production guard.
+            graph.credentialStore.delete(testHub)
+            compose.runOnIdle {
+                graph.localNotifications.setEnabled(true)
+                LocalNotificationService.startIfEnabled(context)
+            }
+            waitForReception("missing-credentials stop") {
+                graph.localNotifications.status.value == ReceptionStatus.PairingRequired &&
+                    context.getSystemService(NotificationManager::class.java).activeNotifications.none {
+                        it.notification.channelId == "local_notification_connection"
+                    }
+            }
         } finally {
             LocalNotificationService.stop(context)
             runBlocking {
                 if (!wasPaired) graph.hubRegistry.removeHub(testHub)
                 if (oldHub != null) graph.hubRegistry.setActiveHub(oldHub)
             }
+            if (oldCredentials == null) graph.credentialStore.delete(testHub) else graph.credentialStore.set(oldCredentials)
             graph.localNotifications.setEnabled(wasEnabled)
         }
     }
