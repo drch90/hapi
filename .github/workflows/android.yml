@@ -72,6 +72,27 @@ jobs:
                   arch: x86_64
                   disable-animations: true
                   script: cd android && ./gradlew :app:connectedDebugAndroidTest --stacktrace
+            - name: Annotate instrumentation failures
+              if: failure()
+              run: |
+                  python3 - <<'PY'
+                  from pathlib import Path
+                  import xml.etree.ElementTree as ET
+
+                  def escape(value):
+                      return value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+
+                  for report in Path('android/app/build/outputs/androidTest-results').rglob('*.xml'):
+                      try:
+                          root = ET.parse(report).getroot()
+                      except ET.ParseError:
+                          continue
+                      for case in root.iter('testcase'):
+                          for failure in list(case.findall('failure')) + list(case.findall('error')):
+                              title = case.get('classname', '') + '.' + case.get('name', '')
+                              detail = failure.get('message', '') + '\n' + (failure.text or '')
+                              print('::error::' + escape(title + '\n' + detail[:12000]))
+                  PY
             - name: Upload instrumentation reports
               if: always()
               uses: actions/upload-artifact@v6
