@@ -15,6 +15,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import app.hapi.companion.di.AppGraph
 import app.hapi.companion.di.LocalAppGraph
 import app.hapi.companion.fcm.PushNotifications
@@ -92,13 +94,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
         maybeRequestNotificationPermission()
-    }
-
-    override fun onResume() {
-        super.onResume()
         lifecycleScope.launch {
-            appGraph.awaitReady()
-            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            // onResume runs before the lifecycle's RESUMED event. Checking
+            // currentState there can skip restoration on every warm resume.
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                appGraph.awaitReady()
                 app.hapi.companion.notifications.LocalNotificationService.startIfEnabled(this@MainActivity)
             }
         }

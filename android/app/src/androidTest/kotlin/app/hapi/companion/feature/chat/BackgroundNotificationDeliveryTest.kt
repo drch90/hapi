@@ -14,6 +14,7 @@ import app.hapi.data.auth.HubCredentials
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -66,24 +67,33 @@ class BackgroundNotificationDeliveryTest {
         val claims = Base64.encodeToString("{\"exp\":4102444800}".toByteArray(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         var scenario: ActivityScenario<MainActivity>? = null
         val manager = context.getSystemService(NotificationManager::class.java)
+        suspend fun awaitState(description: String, condition: () -> Boolean) {
+            try {
+                withTimeout(20_000) { while (!condition()) delay(100) }
+            } catch (error: TimeoutCancellationException) {
+                throw AssertionError("Waiting for $description: foreground=${graph.foreground}, " +
+                    "enabled=${graph.localNotifications.enabled.value}, status=${graph.localNotifications.status.value}, " +
+                    "hub=${graph.activeHubGraph.value?.hubUrl}, notifications=${manager.activeNotifications.size}", error)
+            }
+        }
         try {
             graph.credentialStore.set(HubCredentials(hub, "test-only", "e30.$claims.signature", System.currentTimeMillis()))
             graph.hubRegistry.addHub(hub)
             graph.localNotifications.setEnabled(true)
             scenario = ActivityScenario.launch(MainActivity::class.java)
-            withTimeout(15_000) {
-                while (manager.activeNotifications.none { it.notification.channelId == "local_notification_connection" }) delay(100)
+            awaitState("service start on activity resume") {
+                manager.activeNotifications.any { it.notification.channelId == "local_notification_connection" }
             }
             // Keep the same chat marked open: background must override
             // suppress-when-reading even though navigation still retains it.
             graph.openChatSessionId.value = sessionId
             shell("input keyevent KEYCODE_HOME")
-            withTimeout(15_000) { while (graph.foreground) delay(100) }
+            awaitState("process background after Home") { !graph.foreground }
             sendCompletion.set(true)
-            withTimeout(20_000) {
-                while (manager.activeNotifications.none {
+            awaitState("completion notification while backgrounded") {
+                manager.activeNotifications.any {
                     it.notification.extras.getString(PushNotifications.EXTRA_SESSION_ID) == sessionId
-                }) delay(100)
+                }
             }
             assertFalse("Notification must arrive before returning to the app", graph.foreground)
             val delivered = manager.activeNotifications.single {

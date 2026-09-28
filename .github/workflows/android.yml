@@ -71,7 +71,11 @@ jobs:
                   api-level: ${{ matrix.api-level }}
                   arch: x86_64
                   disable-animations: true
-                  script: cd android && ./gradlew :app:connectedDebugAndroidTest --stacktrace
+                  # Real MainActivity/background lifecycle coverage runs in a
+                  # separate instrumentation process from Compose layout tests.
+                  script: |
+                      cd android && ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=app.hapi.companion.feature.chat.BackgroundNotificationDeliveryTest --stacktrace
+                      cd android && ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.hapi.companion.feature.chat.BackgroundNotificationDeliveryTest --stacktrace
             - name: Annotate instrumentation failures
               if: failure()
               run: |
