@@ -63,7 +63,7 @@ sealed interface EngineEvent {
      * A post-handshake protocol event. Never `heartbeat`/`connection-changed`
      * (consumed by the engine) and never `Unknown` (dropped, mirroring web).
      */
-    data class Sync(val event: SyncEvent) : EngineEvent
+    data class Sync(val event: SyncEvent, val eventId: String? = null) : EngineEvent
 }
 
 /**
@@ -94,6 +94,9 @@ sealed interface EngineEvent {
  * `runTest` virtual time drives the whole state machine ([nowMs] must then be
  * the test scheduler's clock).
  *
+ * A notification foreground service may enable background reception for the
+ * global subscription without changing URL visibility or session subscriptions.
+ *
  * Usage: collect [events] **before** [subscribe] — emissions with no
  * collector are dropped (zero-replay [SharedFlow]).
  */
@@ -115,9 +118,10 @@ class SseEngine(
      */
     private val cursors = mutableMapOf<String, String>()
     private val foreground = MutableStateFlow(true)
+    private val backgroundReception = MutableStateFlow(false)
     private val networkRoute = MutableStateFlow<NetworkRoute?>(null)
 
-    private class Subscription {
+    private class Subscription(val key: SseSubscriptionKey) {
         /**
          * Zero replay, zero buffer: `emit` resumes only once every collector
          * has taken the value into its collect loop (no buffering), which is
@@ -175,7 +179,7 @@ class SseEngine(
             sub.job = scope.launch {
                 previous?.join()
                 sub.reconnectRevision.collectLatest {
-                    awaitForeground()
+                    awaitConnectivity(key)
                     runSubscriptionLoop(key, sub)
                 }
             }
@@ -217,7 +221,7 @@ class SseEngine(
 
     private fun publishState(sub: Subscription, phase: ConnectionState.Phase) = synchronized(lock) {
         sub.phase = phase
-        val visiblePhase = if (!foreground.value && phase != ConnectionState.Phase.Idle) ConnectionState.Phase.Suspended else phase
+        val visiblePhase = if (!canRun(sub.key) && phase != ConnectionState.Phase.Idle) ConnectionState.Phase.Suspended else phase
         val start = when (visiblePhase) {
             ConnectionState.Phase.Backoff -> sub.state.value.outageStartedAtMs ?: nowMs()
             ConnectionState.Phase.Connecting -> sub.state.value.outageStartedAtMs
@@ -227,7 +231,7 @@ class SseEngine(
     }
 
     private fun subscription(key: SseSubscriptionKey): Subscription = synchronized(lock) {
-        subscriptions.getOrPut(key.key) { Subscription() }
+        subscriptions.getOrPut(key.key) { Subscription(key) }
     }
 
     private fun cursorFor(key: SseSubscriptionKey): String? = synchronized(lock) { cursors[key.key] }
@@ -246,7 +250,7 @@ class SseEngine(
             forceTokenRefresh = false
             if (token == null) {
                 publishState(sub, ConnectionState.Phase.Backoff)
-                attempt = backoffThenAwaitForeground(attempt)
+                attempt = backoffThenAwaitConnectivity(key, attempt)
                 continue
             }
 
@@ -264,10 +268,10 @@ class SseEngine(
                 // 401 in the same cycle falls through to normal backoff.
                 authRetriedThisCycle = true
                 forceTokenRefresh = true
-                awaitForeground()
+                awaitConnectivity(key)
                 continue
             }
-            attempt = backoffThenAwaitForeground(attempt)
+            attempt = backoffThenAwaitConnectivity(key, attempt)
         }
     }
 
@@ -277,19 +281,37 @@ class SseEngine(
      * retry immediately then — a retry that fell due while backgrounded costs
      * no attempt, exactly like the web reference's hidden-tab deferral.
      */
-    private suspend fun backoffThenAwaitForeground(attempt: Int): Int {
-        if (!foreground.value) {
-            awaitForeground()
+    private suspend fun backoffThenAwaitConnectivity(key: SseSubscriptionKey, attempt: Int): Int {
+        if (!canRun(key)) {
+            awaitConnectivity(key)
             return attempt
         }
         val next = attempt + 1
         delay(ReconnectPolicy.delayForAttempt(attempt, random))
-        awaitForeground()
+        awaitConnectivity(key)
         return next
     }
 
-    private suspend fun awaitForeground() {
-        combine(foreground, networkRoute) { visible, route -> visible && (route == null || route.networkId != null) }.first { it }
+    private suspend fun awaitConnectivity(key: SseSubscriptionKey) {
+        combine(foreground, backgroundReception, networkRoute) { visible, background, route ->
+            (visible || (background && key == SseSubscriptionKey.Global)) && (route == null || route.networkId != null)
+        }.first { it }
+    }
+
+    private fun canRun(key: SseSubscriptionKey): Boolean =
+        foreground.value || (backgroundReception.value && key == SseSubscriptionKey.Global)
+
+    /** Only the foreground notification service grants a global background lease.
+     * Visibility is still driven exclusively by the real process lifecycle. */
+    fun setBackgroundReceptionEnabled(enabled: Boolean) {
+        synchronized(lock) {
+            if (backgroundReception.value == enabled) return
+            backgroundReception.value = enabled
+            subscriptions[SseSubscriptionKey.Global.key]?.let { sub ->
+                publishState(sub, sub.phase)
+                if (sub.job?.isActive == true) sub.reconnectRevision.value++
+            }
+        }
     }
 
     private class AttemptState {
@@ -330,7 +352,7 @@ class SseEngine(
                 // events; a throwing transport degrades to a codeless failure.
             }
         }
-        val watchdog = launch { runWatchdog(state, collector) }
+        val watchdog = launch { runWatchdog(key, state, collector) }
         val resumeCheck = launch { runForegroundResumeCheck(state, collector) }
 
         collector.join()
@@ -346,7 +368,7 @@ class SseEngine(
      * [ReconnectPolicy.STALE_MS] kills the connection; checked every
      * [ReconnectPolicy.WATCHDOG_TICK_MS], skipped while backgrounded.
      */
-    private suspend fun runWatchdog(state: AttemptState, collector: Job) {
+    private suspend fun runWatchdog(key: SseSubscriptionKey, state: AttemptState, collector: Job) {
         val connectDeadline = nowMs() + ReconnectPolicy.CONNECT_TIMEOUT_MS
         while (!state.handshakeReached) {
             val remaining = connectDeadline - nowMs()
@@ -358,7 +380,7 @@ class SseEngine(
         }
         while (true) {
             delay(ReconnectPolicy.WATCHDOG_TICK_MS)
-            if (!foreground.value) {
+            if (!canRun(key)) {
                 continue
             }
             if (nowMs() - state.lastActivityAtMs >= ReconnectPolicy.STALE_MS) {
@@ -427,7 +449,7 @@ class SseEngine(
                 // Unknown-but-well-formed type: skipped without emission
                 // (redelivery cannot help), cursor advances below.
             }
-            else -> sub.events.emit(EngineEvent.Sync(parsed))
+            else -> sub.events.emit(EngineEvent.Sync(parsed, raw.id))
         }
 
         // At-least-once: the cursor moves past an event only after the

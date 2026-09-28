@@ -116,6 +116,8 @@ fun SettingsScreen(
                 )
             }
 
+            app.hapi.companion.notifications.LocalNotificationSettingsView()
+
             if (isOwner) {
                 SettingsSection(title = stringResource(R.string.settings_section_insights)) {
                     SettingsRow(

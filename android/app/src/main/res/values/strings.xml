@@ -587,4 +587,24 @@
     <string name="chat_share_progress">Generating images · %1$d pages ready</string>
     <string name="chat_share_failed">Could not generate or share images. Please try again.</string>
     <string name="chat_share_preview">Share image preview</string>
+
+    <!-- Local notification reception -->
+    <string name="local_notifications_title">Background notifications</string>
+    <string name="local_notifications_enable">Receive from current Hub</string>
+    <string name="local_notifications_stopped">Not running</string>
+    <string name="local_notifications_connecting">Connecting</string>
+    <string name="local_notifications_connected">Connected</string>
+    <string name="local_notifications_reconnecting">Waiting for network or reconnecting</string>
+    <string name="local_notifications_permission">Notification permission is required</string>
+    <string name="local_notifications_pairing">Open the app and pair with a Hub</string>
+    <string name="local_notifications_start_failed">Could not start. Open the app and retry.</string>
+    <string name="local_notifications_open">Open app</string>
+    <string name="local_notifications_stop">Stop receiving</string>
+    <string name="local_notifications_ready">Task completed</string>
+    <string name="local_notifications_approval">Approval needed</string>
+    <string name="local_notifications_question">Your answer is needed</string>
+    <string name="local_notifications_view_session">Open the session to view details.</string>
+    <string name="local_notifications_system_settings">System notification settings</string>
+    <string name="local_notifications_retry">Resume receiving</string>
+    <string name="local_notifications_description">Keeps a connection to the current Hub with a persistent notification, without Google services. Reopens with the app. Battery saving, screen lock or an unreachable Hub can delay alerts. Reconnection checks pending approvals and questions; missed completions may not be recoverable.</string>
 </resources>

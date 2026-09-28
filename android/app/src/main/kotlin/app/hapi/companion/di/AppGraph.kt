@@ -51,6 +51,8 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 
 /** One terminal auth failure, re-emitted off OkHttp threads as a flow. */
+data class NotificationDestination(val sessionId: String, val hubUrl: String? = null)
+
 data class AuthTerminal(
     val hubUrl: String,
     val reason: AuthTerminalReason,
@@ -97,6 +99,8 @@ class AppGraph(context: Context) {
     val themePrefs: ThemePrefs = ThemePrefs(appContext.hapiDataStore)
 
     /** Language choice (B-M5a: applied via per-app locales; Settings writes it). */
+    internal val localNotifications = app.hapi.companion.notifications.LocalNotificationSettings(appContext)
+
     val languagePrefs: LanguagePrefs = LanguagePrefs(appContext.hapiDataStore)
 
     /**
@@ -136,7 +140,7 @@ class AppGraph(context: Context) {
      * (the internal intent route — no public URI). MainActivity posts;
      * `HapiNavigation` consumes, clears, and opens the chat.
      */
-    val pendingOpenSessionId = MutableStateFlow<String?>(null)
+    val pendingOpenSession = MutableStateFlow<NotificationDestination?>(null)
 
     /**
      * The session id of the currently composed chat screen, or null. Feeds
@@ -242,6 +246,9 @@ class AppGraph(context: Context) {
      * none). The active [HubGraph] swap follows via the registry observer.
      */
     suspend fun signOut(hubUrl: String) {
+        if (hubRegistry.activeHubUrl == hubUrl) {
+            app.hapi.companion.notifications.LocalNotificationService.stop(appContext)
+        }
         withTimeoutOrNull(UNREGISTER_TIMEOUT_MS) { deviceRegistrar.unregisterHub(hubUrl) }
         withContext(Dispatchers.IO) { credentialStore.delete(hubUrl) }
         hubRegistry.removeHub(hubUrl)

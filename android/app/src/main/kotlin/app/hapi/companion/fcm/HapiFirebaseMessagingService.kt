@@ -33,6 +33,7 @@ class HapiFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val graph = appGraph
+        if (graph.localNotifications.enabled.value) return
         val payload = graph.pushMessageDecoder.decode(message.data) ?: return
         if (shouldSuppressPush(graph.foreground, graph.openChatSessionId.value, payload.sessionId)) {
             return

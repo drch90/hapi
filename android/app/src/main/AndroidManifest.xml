@@ -11,13 +11,8 @@
          denial just silences the OS surface — in-app SSE is unaffected. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- WorkManager's library manifest merges FOREGROUND_SERVICE in; we
-         never run foreground work (expedited is API 31+ JobScheduler only,
-         see NotificationActionReceiver), so strip it from the merged
-         manifest — Play flags FGS permissions for declaration review. -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE"
-        tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- QR pairing only; the app is fully usable without a camera
          (manual hub URL + token entry), hence required="false". -->
@@ -48,6 +43,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.HapiCompanion"
         android:usesCleartextTraffic="true">
+
+        <service
+            android:name=".notifications.LocalNotificationService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-enabled persistent connection to a paired coding-agent hub for completion and approval notifications without a push provider" />
+        </service>
 
         <activity
             android:name=".MainActivity"

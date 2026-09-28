@@ -594,4 +594,24 @@
     <string name="chat_share_progress">正在生成图片 · 已完成 %1$d 页</string>
     <string name="chat_share_failed">生成或分享图片失败，请重试。</string>
     <string name="chat_share_preview">分享图片预览</string>
+
+    <!-- Local notification reception -->
+    <string name="local_notifications_title">后台通知</string>
+    <string name="local_notifications_enable">接收当前 Hub 的通知</string>
+    <string name="local_notifications_stopped">未运行</string>
+    <string name="local_notifications_connecting">正在连接</string>
+    <string name="local_notifications_connected">已连接</string>
+    <string name="local_notifications_reconnecting">等待网络或重新连接</string>
+    <string name="local_notifications_permission">需要允许通知权限</string>
+    <string name="local_notifications_pairing">请打开 App 并重新配对 Hub</string>
+    <string name="local_notifications_start_failed">启动失败，请打开 App 后重试。</string>
+    <string name="local_notifications_open">打开 App</string>
+    <string name="local_notifications_stop">停止接收</string>
+    <string name="local_notifications_ready">任务已完成</string>
+    <string name="local_notifications_approval">需要审批</string>
+    <string name="local_notifications_question">需要回答问题</string>
+    <string name="local_notifications_view_session">打开会话查看详情。</string>
+    <string name="local_notifications_system_settings">系统通知设置</string>
+    <string name="local_notifications_retry">恢复接收</string>
+    <string name="local_notifications_description">通过常驻通知保持与当前 Hub 的连接，无需谷歌服务。重新打开 App 后恢复接收；省电模式、锁屏或 Hub 不可达时可能延迟。重连会补报待审批和待回答事项，离线期间的完成提醒可能无法补齐。</string>
 </resources>

@@ -63,6 +63,66 @@ private fun TestScope.harness(
 class SseEngineTest {
 
     @Test
+    fun `background reception permits only global connection and keeps visibility hidden`() = runTest {
+        val h = harness()
+        val global = SseSubscriptionKey.Global
+        h.engine.setLifecycleForeground(false)
+        h.engine.setBackgroundReceptionEnabled(true)
+        h.engine.subscribe(SseSubscriptionKey.Session("chat"))
+        h.engine.subscribe(global)
+        val first = h.awaitOpen()
+        assertContains(first.url, "all=true")
+        assertContains(first.url, "visibility=hidden")
+        first.handshake()
+        runCurrent()
+        h.assertNoOpen()
+        assertEquals(ConnectionState.Phase.Connected, h.engine.connectionState(global).value.phase)
+        first.fail(null)
+        val second = h.awaitOpen()
+        assertContains(second.url, "all=true")
+        assertContains(second.url, "visibility=hidden")
+        second.handshake()
+        runCurrent()
+        h.engine.setBackgroundReceptionEnabled(false)
+        runCurrent()
+        assertTrue(second.closed)
+        advanceTimeBy(600_000)
+        runCurrent()
+        h.assertNoOpen()
+    }
+
+    @Test
+    fun `background global watchdog reconnects stale sockets`() = runTest {
+        val h = harness()
+        h.engine.setLifecycleForeground(false)
+        h.engine.setBackgroundReceptionEnabled(true)
+        h.engine.subscribe(SseSubscriptionKey.Global)
+        val first = h.awaitOpen()
+        first.handshake()
+        runCurrent()
+        advanceTimeBy(90_000)
+        runCurrent()
+        assertTrue(first.closed)
+        val second = h.awaitOpen()
+        assertContains(second.url, "visibility=hidden")
+    }
+
+    @Test
+    fun `notification consumers receive the server event id`() = runTest {
+        val h = harness()
+        val key = SseSubscriptionKey.Global
+        h.engine.events(key).test {
+            h.engine.subscribe(key)
+            val conn = h.awaitOpen()
+            conn.handshake()
+            awaitItem()
+            conn.event("event-42", SESSION_REMOVED)
+            assertEquals("event-42", assertIs<EngineEvent.Sync>(awaitItem()).eventId)
+        }
+    }
+
+
+    @Test
     fun `route changes reconnect once preserve cursor and defer while backgrounded`() = runTest {
         val h = harness()
         val key = SseSubscriptionKey.Global

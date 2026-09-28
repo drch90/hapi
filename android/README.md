@@ -58,7 +58,7 @@ only the needed projects:
 ```
 
 CI (`.github/workflows/android.yml`) runs protocol/data/app unit tests,
-`:app:assembleDebug`, `:app:lintDebug`, and Compose instrumentation on API 29
+`:app:assembleDebug`, `:app:lintDebug`, and Compose instrumentation on API 29, API 33
 and API 36 for PRs touching `android/**` or `shared/fixtures/**`.
 
 ### Protocol conformance fixtures
@@ -114,15 +114,47 @@ adb shell am start -a android.intent.action.VIEW \
   -d "hapicompanion://bind?hub=https%3A%2F%2Fhub.example.com&code=<accessToken>"  # optional: exercises the deep link
 ```
 
-The app rejects plain-`http` hub URLs in manual entry, deep links, QR codes,
-and restored hub state. The manifest also sets
-`android:usesCleartextTraffic="false"`; there is no debug or LAN exemption.
+This fork accepts both HTTP and HTTPS hub URLs in manual entry, deep links,
+QR codes and restored hub state, including LAN addresses. The manifest allows
+cleartext traffic for HTTP hubs.
 Sign-out (home → Hubs and settings → Sign out) deletes the stored credentials
 for that hub and drops it from the roster.
 
 Temporary authentication refresh failures (network/5xx) keep paired
 credentials. A rejected access token or a second 401 after a successful
 refresh requires re-pairing. See the [auth contract](../docs/api/client-contract/auth.md#silent-re-auth-401-handling).
+
+## Background notifications without Firebase
+
+In **Settings → Background notifications**, enable reception for the current
+hub and grant Android notification permission. A foreground service keeps the
+existing global SSE connection eligible for background reconnects, without
+Google Play services or a Firebase configuration. HTTP LAN hubs are supported;
+the phone must still be able to reach the hub. No hub upgrade is needed.
+
+The persistent notification shows connection status and offers **Open app** and
+**Stop receiving**. Task completion, pending approval and input-request alerts
+open the originating paired hub/session. They have no inline approval or reply
+actions. The open foreground conversation suppresses its own alerts; lock-screen
+previews hide content. While local reception is enabled, FCM presentation is
+suppressed to avoid duplicate notifications.
+
+The enabled preference survives app restarts, but a stopped process is not
+restarted by a boot receiver or sticky service. Open the app again to resume.
+Battery restrictions, Doze, force-stop and unreachable networks can interrupt
+or delay reception. No permanent wake lock is held. API 34+ declares the
+`specialUse` foreground-service type for this explicitly enabled ongoing
+connection; the time-limited `dataSync` type is not used.
+
+Reconnection reconciles outstanding approvals/questions and retracts resolved
+alerts. Completion notifications are recovered only when the existing SSE
+replay can supply them; the app does not scan old conversation history.
+Deduplication is per hub, bounded to 2,048 identifiers and seven days, and stores
+no message bodies. Settings and dedup records are excluded from backup/transfer.
+
+Verification runs in GitHub Actions (API 29/33/36). Physical-device acceptance
+should include LAN connection, background/lock screen, network loss/recovery,
+hub switching, permission denial and reopening the app after stopping it.
 
 ## Firebase / push
 
@@ -143,8 +175,9 @@ the shared Android/iOS relay URL. One hub cannot mix private-project builds
 and official-project builds.
 
 **Builds without Firebase:** the Google services plugin stays conditional.
-Without `app/google-services.json`, Firebase does not initialize and push
-paths no-op; ordinary PR builds require no credentials. Official builds use
+Without `app/google-services.json`, Firebase does not initialize and FCM
+paths no-op; local background notifications above remain available. Ordinary
+PR builds require no credentials. Official builds use
 a separate mandatory configuration check (below).
 
 **Encrypted relay:** the app registers its FCM token, install ID and random

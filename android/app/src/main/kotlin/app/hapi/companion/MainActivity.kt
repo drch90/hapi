@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
  *    [BindLink]) → [AppGraph.pendingBindLink];
  *  - the **internal** notification-tap route ([PushNotifications.ACTION_OPEN_SESSION]
  *    + session-id extra, B-M4a — explicit intent, deliberately no public URI)
- *    → [AppGraph.pendingOpenSessionId].
+ *    → [AppGraph.pendingOpenSession].
  */
 // AppCompatActivity (not ComponentActivity) since B-M5a: the appcompat base
 // class is what applies AppCompatDelegate.setApplicationLocales on API < 33
@@ -94,6 +94,16 @@ class MainActivity : AppCompatActivity() {
         maybeRequestNotificationPermission()
     }
 
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch {
+            appGraph.awaitReady()
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                app.hapi.companion.notifications.LocalNotificationService.startIfEnabled(this@MainActivity)
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleBindIntent(intent)
@@ -116,7 +126,8 @@ class MainActivity : AppCompatActivity() {
     private fun handleOpenSessionIntent(intent: Intent?) {
         if (intent?.action != PushNotifications.ACTION_OPEN_SESSION) return
         val sessionId = intent.getStringExtra(PushNotifications.EXTRA_SESSION_ID) ?: return
-        appGraph.pendingOpenSessionId.value = sessionId
+        appGraph.pendingOpenSession.value = app.hapi.companion.di.NotificationDestination(
+            sessionId, intent.getStringExtra(PushNotifications.EXTRA_HUB_URL))
     }
 
     /**

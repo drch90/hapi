@@ -6,6 +6,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
@@ -183,39 +185,36 @@ fun HapiNavigation() {
         }
     }
 
-    // A push notification was tapped (B-M4a): open that session's chat over
-    // home. Multi-hub caveat: the payload names no hub, so the chat opens
-    // against the ACTIVE hub — for a session living on another paired hub the
-    // screen shows its not-found state (the workers, by contrast, do resolve
-    // across hubs; see PushActionRunner). Unpaired app: ignore.
-    val pendingOpenSession by graph.pendingOpenSessionId.collectAsState()
-    LaunchedEffect(pendingOpenSession) {
-        val sessionId = pendingOpenSession ?: return@LaunchedEffect
-        graph.pendingOpenSessionId.value = null
-        if (graph.hubRegistry.activeHubUrl != null) {
-            navController.navigate(Routes.chat(sessionId)) {
-                // Keep the stack shallow: back always lands on the list.
-                popUpTo(Routes.HOME)
-                launchSingleTop = true
+    // Handle hub switching and notification navigation in one ordered effect:
+    // reset an old chat first, wait for the new graph, then open the destination.
+    val pendingOpenSession by graph.pendingOpenSession.collectAsState()
+    var navigationHub by remember { mutableStateOf(registryState.activeHubUrl) }
+    LaunchedEffect(registryState.activeHubUrl, activeHubGraph, pendingOpenSession) {
+        val active = registryState.activeHubUrl
+        if (navigationHub != active) {
+            navigationHub = active
+            if (active == null) {
+                val onPairing = navController.currentDestination?.hierarchy?.any { it.route == Routes.PAIRING } == true
+                if (!onPairing) navController.navigateClearingBackStack(Routes.PAIRING)
+            } else if (navController.currentDestination?.route in setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST)) {
+                navController.popBackStack(Routes.HOME, inclusive = false)
             }
         }
-    }
-
-    // Last hub signed out (or roster wiped): nothing to show but pairing.
-    // Any other active-hub change invalidates an open chat (old hub's session).
-    LaunchedEffect(registryState.activeHubUrl) {
-        val activeHubUrl = registryState.activeHubUrl
-        if (activeHubUrl == null) {
-            val onPairing = navController.currentDestination
-                ?.hierarchy?.any { it.route == Routes.PAIRING } == true
-            if (!onPairing) {
-                navController.navigateClearingBackStack(Routes.PAIRING)
-            }
-        } else if (
-            navController.currentDestination?.route in
-                setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST)
-        ) {
-            navController.popBackStack(Routes.HOME, inclusive = false)
+        val destination = pendingOpenSession ?: return@LaunchedEffect
+        val target = destination.hubUrl ?: active
+        if (target == null || target !in registryState.hubs) {
+            graph.pendingOpenSession.value = null
+            return@LaunchedEffect
+        }
+        if (target != active) {
+            graph.hubRegistry.setActiveHub(target)
+            return@LaunchedEffect
+        }
+        if (activeHubGraph?.hubUrl != target) return@LaunchedEffect
+        graph.pendingOpenSession.value = null
+        navController.navigate(Routes.chat(destination.sessionId)) {
+            popUpTo(Routes.HOME)
+            launchSingleTop = true
         }
     }
 

@@ -36,6 +36,8 @@ object PushNotifications {
 
     /** Internal intent route for notification taps (no public URI on purpose). */
     const val ACTION_OPEN_SESSION = "app.hapi.companion.action.OPEN_SESSION"
+    const val EXTRA_HUB_URL = "app.hapi.companion.extra.HUB_URL"
+    const val EXTRA_NOTICE_TYPE = "app.hapi.companion.extra.NOTICE_TYPE"
     const val EXTRA_SESSION_ID = "app.hapi.companion.extra.SESSION_ID"
 
     const val KEY_REMOTE_INPUT = "hapi_reply"
@@ -50,7 +52,7 @@ object PushNotifications {
     }
 
     /** Renders [payload] (already past the suppress-when-open check). */
-    fun show(context: Context, payload: PushPayload) {
+    fun show(context: Context, payload: PushPayload, sourceHub: String? = null, allowActions: Boolean = true, onlyAlertOnce: Boolean = false) {
         val builder = baseBuilder(context, payload.channelId, payload.sessionId)
             .setContentTitle(payload.displayTitle)
             .setContentText(firstLine(payload.displayBody))
@@ -58,9 +60,22 @@ object PushNotifications {
             .setSubText(payload.sessionName?.takeIf { it != payload.displayTitle })
             .setAutoCancel(true)
 
+        builder.setOnlyAlertOnce(onlyAlertOnce)
+        if (sourceHub != null) {
+            builder.setContentIntent(openSessionIntent(context, payload.sessionId, sourceHub))
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(NotificationCompat.Builder(context, payload.channelId)
+                    .setSmallIcon(R.drawable.ic_stat_hapi)
+                    .setContentTitle(context.getString(R.string.local_notifications_title)).build())
+                .addExtras(android.os.Bundle().apply {
+                    putString(EXTRA_HUB_URL, sourceHub)
+                    putString(EXTRA_SESSION_ID, payload.sessionId)
+                    putString(EXTRA_NOTICE_TYPE, payload.rawType)
+                })
+        }
         severityColor(payload.severity)?.let(builder::setColor)
 
-        if (payload.supportsActions) {
+        if (allowActions && payload.supportsActions) {
             when (payload.type) {
                 PushType.PERMISSION_REQUEST -> addPermissionActions(context, builder, payload)
                 PushType.READY, PushType.TASK_NOTIFICATION -> addReplyActions(context, builder, payload)
@@ -68,7 +83,7 @@ object PushNotifications {
             }
         }
 
-        notify(context, payload.notificationTag, builder.build())
+        notify(context, notificationTag(payload, sourceHub), builder.build())
     }
 
     // ------------------------------------------------------ action updates --
@@ -114,6 +129,10 @@ object PushNotifications {
         notify(context, tag, builder.build())
     }
 
+    fun notificationTag(payload: PushPayload, sourceHub: String?): String =
+        if (sourceHub == null) payload.notificationTag
+        else "local-${app.hapi.companion.notifications.hubKey(sourceHub)}-${payload.notificationTag}"
+
     fun cancel(context: Context, tag: String) {
         NotificationManagerCompat.from(context).cancel(tag, NOTIFICATION_ID)
     }
@@ -140,14 +159,20 @@ object PushNotifications {
     /**
      * Tap-through: an explicit intent into [MainActivity] carrying the
      * session id — MainActivity feeds it to the existing navigation flow
-     * (`AppGraph.pendingOpenSessionId`). Deliberately *not* a URI deep link:
+     * (`AppGraph.pendingOpenSession`). Deliberately *not* a URI deep link:
      * this route is internal, nothing external should be able to speak it.
      */
-    private fun openSessionIntent(context: Context, sessionId: String): PendingIntent {
+    private fun openSessionIntent(context: Context, sessionId: String, sourceHub: String? = null): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .setAction(ACTION_OPEN_SESSION)
             .putExtra(EXTRA_SESSION_ID, sessionId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (sourceHub != null) {
+            intent.putExtra(EXTRA_HUB_URL, sourceHub)
+            // PendingIntent equality ignores extras. Include both source and session.
+            intent.data = android.net.Uri.Builder().scheme("hapi-notification")
+                .authority(app.hapi.companion.notifications.hubKey(sourceHub)).appendPath(sessionId).build()
+        }
         return PendingIntent.getActivity(
             context,
             requestCode(sessionId, slot = 0),
