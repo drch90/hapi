@@ -43,7 +43,7 @@ jobs:
             - name: Upload debug APK
               uses: actions/upload-artifact@v6
               with:
-                  name: hapi-android-debug
+                  name: hapi-android-debug-${{ github.sha }}
                   path: android/app/build/outputs/apk/debug/*.apk
                   if-no-files-found: error
                   retention-days: 7

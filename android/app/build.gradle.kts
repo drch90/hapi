@@ -97,6 +97,11 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // Distinguish downloaded CI APKs in Settings → App version.
+            versionNameSuffix = providers.environmentVariable("GITHUB_SHA").orNull
+                ?.take(8)?.let { "-dev.$it" }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
