@@ -66,12 +66,11 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
         Column {
             ToolSummaryRow(
                 presentation, tool.state, expanded = expanded.takeIf { planProposal },
+                details = { app.hapi.companion.feature.chat.ToolTimingView(tool) },
                 onClick = {
                     if (planProposal) expanded = !expanded else inspection?.openTool(block.id)
                 },
             )
-
-            app.hapi.companion.feature.chat.ToolTimingView(tool)
 
             if (planProposal && expanded) {
                 ToolCallBody(
@@ -123,11 +122,13 @@ internal fun ToolSummaryRow(
     presentation: app.hapi.companion.feature.chat.ToolCardPresentation,
     state: String,
     expanded: Boolean? = null,
+    modifier: Modifier = Modifier,
+    details: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val stacked = androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f
     Column(
-        Modifier.fillMaxWidth().clickable(onClick = onClick)
+        modifier.fillMaxWidth().clickable(onClick = onClick)
             .then(Modifier.heightIn(min = 48.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -142,6 +143,7 @@ internal fun ToolSummaryRow(
             if (!stacked) SummaryStatus(state, expanded)
         }
         if (stacked) SummaryStatus(state, expanded)
+        details?.invoke()
     }
 }
 

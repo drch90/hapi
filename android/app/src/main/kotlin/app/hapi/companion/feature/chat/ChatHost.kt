@@ -239,12 +239,12 @@ internal fun ToolGroupBrowser(
                         val presentation = remember(block.tool.name, block.tool.input, block.tool.description, basePath, resources) {
                             toolSummaryPresentation(block.tool, basePath, resources)
                         }
-                        Box(Modifier.testTag("inspection-tool-${block.id}")) {
-                            Column {
-                                ToolSummaryRow(presentation, block.tool.state) { select(block.id) }
-                                ToolTimingView(block.tool)
-                            }
-                        }
+                        ToolSummaryRow(
+                            presentation, block.tool.state,
+                            modifier = Modifier.testTag("inspection-tool-${block.id}"),
+                            details = { ToolTimingView(block.tool) },
+                            onClick = { select(block.id) },
+                        )
                     }
                 }
             }

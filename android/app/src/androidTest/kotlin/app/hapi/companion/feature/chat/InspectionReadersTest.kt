@@ -105,6 +105,12 @@ class InspectionReadersTest {
         waitForDisplayed("inspection-tool-tool-31")
         compose.runOnIdle { inspected.value = Inspected(group(201), false) }
         waitForDisplayed("inspection-tool-tool-31")
+        // The timing footer belongs to the same click target as the summary.
+        // Touch the footer explicitly: a summary-only click handler misses it.
+        compose.onNodeWithTag("inspection-tool-tool-31").assertHasClickAction()
+            .performTouchInput { click(bottomCenter - androidx.compose.ui.geometry.Offset(0f, 4f)) }
+        compose.runOnIdle { assertEquals("tool-31", selected) }
+        compose.runOnIdle { selected = null }
         compose.onNodeWithTag("inspection-tool-tool-31").performClick()
         compose.runOnIdle { assertEquals("tool-31", selected) }
         compose.onNodeWithTag("inspection-tool-tool-201").assertDoesNotExist()
