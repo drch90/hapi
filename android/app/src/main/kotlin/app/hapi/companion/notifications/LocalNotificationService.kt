@@ -118,6 +118,9 @@ internal class LocalNotificationService : Service() {
             .setContentTitle(context.getString(R.string.local_notifications_title))
             .setContentText(listOfNotNull(context.getString(status.label()), hub).joinToString(" · "))
             .setContentIntent(open)
+            // Android 12+ otherwise defers a new FGS notification for about
+            // ten seconds, hiding the connection state after the user enables it.
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setOngoing(true).setOnlyAlertOnce(true).setSilent(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(NotificationCompat.Builder(context, CHANNEL)

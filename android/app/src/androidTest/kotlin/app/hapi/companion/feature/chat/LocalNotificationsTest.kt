@@ -26,6 +26,18 @@ class LocalNotificationsTest {
     private val context get() = instrumentation.targetContext
     private val graph get() = (context.applicationContext as HapiApp).appGraph
 
+    private fun waitForReception(description: String, condition: () -> Boolean) {
+        try {
+            // System notification posting/removal is asynchronous and not
+            // synchronized with Compose's test clock, especially on API 31+.
+            compose.waitUntil(15_000, condition)
+        } catch (error: ComposeTimeoutException) {
+            val settings = graph.localNotifications
+            throw AssertionError("Waiting for $description: enabled=${settings.enabled.value}, " +
+                "status=${settings.status.value}, permission=${LocalNotificationService.canNotify(context)}", error)
+        }
+    }
+
     private fun grantNotifications() {
         if (Build.VERSION.SDK_INT >= 33) {
             instrumentation.uiAutomation.executeShellCommand("pm grant ${context.packageName} android.permission.POST_NOTIFICATIONS")
@@ -78,8 +90,9 @@ class LocalNotificationsTest {
                 }
             }
             compose.runOnIdle { graph.localNotifications.setEnabled(false) }
-            compose.onNode(isToggleable()).performClick()
-            compose.waitUntil(5000) {
+            compose.onNode(isToggleable()).assertIsOff().performClick()
+            compose.onNode(isToggleable()).assertIsOn()
+            waitForReception("foreground service notification to appear") {
                 context.getSystemService(NotificationManager::class.java).activeNotifications.any {
                     it.notification.channelId == "local_notification_connection"
                 }
@@ -88,8 +101,9 @@ class LocalNotificationsTest {
                 assertTrue(graph.localNotifications.enabled.value)
                 assertTrue(LocalNotificationSettings(context).enabled.value)
             }
-            compose.onNode(isToggleable()).performClick()
-            compose.waitUntil(5000) {
+            compose.onNode(isToggleable()).assertIsOn().performClick()
+            compose.onNode(isToggleable()).assertIsOff()
+            waitForReception("foreground service notification to be removed") {
                 context.getSystemService(NotificationManager::class.java).activeNotifications.none {
                     it.notification.channelId == "local_notification_connection"
                 }
