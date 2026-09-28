@@ -597,6 +597,8 @@
 
     <!-- Local notification reception -->
     <string name="local_notifications_title">后台通知</string>
+    <string name="local_notifications_last_received">最近收到服务器数据：%1$s</string>
+    <string name="local_notifications_waiting_data">等待服务器数据</string>
     <string name="local_notifications_enable">接收当前 Hub 的通知</string>
     <string name="local_notifications_stopped">未运行</string>
     <string name="local_notifications_connecting">正在连接</string>

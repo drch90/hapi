@@ -139,6 +139,12 @@ actions. The open foreground conversation suppresses its own alerts; lock-screen
 previews hide content. While local reception is enabled, FCM presentation is
 suppressed to avoid duplicate notifications.
 
+The persistent notification also shows the last server-data receipt time,
+including SSE heartbeats (normally every 30 seconds). A connected label alone
+does not prove that data is still arriving: if the timestamp stops advancing
+while the app is backgrounded, check the transport/background execution before
+investigating notification presentation.
+
 The enabled preference survives app restarts, but a stopped process is not
 restarted by a boot receiver or sticky service. Open the app again to resume.
 Battery restrictions, Doze, force-stop and unreachable networks can interrupt

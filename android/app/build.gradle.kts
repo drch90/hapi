@@ -207,6 +207,7 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.okhttp.mockwebserver)
 
     // JVM unit tests (ViewModel combine logic with fake stores).
     testImplementation(libs.junit)

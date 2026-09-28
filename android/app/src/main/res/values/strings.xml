@@ -590,6 +590,8 @@
 
     <!-- Local notification reception -->
     <string name="local_notifications_title">Background notifications</string>
+    <string name="local_notifications_last_received">Last server data: %1$s</string>
+    <string name="local_notifications_waiting_data">Waiting for server data</string>
     <string name="local_notifications_enable">Receive from current Hub</string>
     <string name="local_notifications_stopped">Not running</string>
     <string name="local_notifications_connecting">Connecting</string>

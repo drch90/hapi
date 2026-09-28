@@ -66,6 +66,7 @@ class SseEngineTest {
     fun `background reception permits only global connection and keeps visibility hidden`() = runTest {
         val h = harness()
         val global = SseSubscriptionKey.Global
+        assertNull(h.engine.lastReceivedAt(global).value)
         h.engine.setLifecycleForeground(false)
         h.engine.setBackgroundReceptionEnabled(true)
         h.engine.subscribe(SseSubscriptionKey.Session("chat"))
@@ -77,6 +78,8 @@ class SseEngineTest {
         runCurrent()
         h.assertNoOpen()
         assertEquals(ConnectionState.Phase.Connected, h.engine.connectionState(global).value.phase)
+        assertNotNull(h.engine.lastReceivedAt(global).value)
+        assertNull(h.engine.lastReceivedAt(SseSubscriptionKey.Session("chat")).value)
         first.fail(null)
         val second = h.awaitOpen()
         assertContains(second.url, "all=true")

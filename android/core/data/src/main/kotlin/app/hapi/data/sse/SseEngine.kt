@@ -131,6 +131,7 @@ class SseEngine(
          */
         val events = MutableSharedFlow<EngineEvent>()
         val state = MutableStateFlow(ConnectionState())
+        val lastReceivedAt = MutableStateFlow<Long?>(null)
         val reconnectRevision = MutableStateFlow(0L)
         var phase = ConnectionState.Phase.Idle
         var job: Job? = null
@@ -140,6 +141,9 @@ class SseEngine(
     fun events(key: SseSubscriptionKey): SharedFlow<EngineEvent> = subscription(key).events
 
     fun connectionState(key: SseSubscriptionKey): StateFlow<ConnectionState> = subscription(key).state.asStateFlow()
+
+    /** Wall-clock receipt time, including heartbeats; connection state alone can be stale. */
+    fun lastReceivedAt(key: SseSubscriptionKey): StateFlow<Long?> = subscription(key).lastReceivedAt.asStateFlow()
 
     fun reconnecting(key: SseSubscriptionKey) = connectionState(key).reconnectNotice(nowMs)
 
@@ -410,6 +414,7 @@ class SseEngine(
         state: AttemptState,
     ) {
         state.lastActivityAtMs = nowMs()
+        sub.lastReceivedAt.value = System.currentTimeMillis()
         val parsed = SyncEvents.parse(raw.data)
 
         if (!state.handshakeReached) {

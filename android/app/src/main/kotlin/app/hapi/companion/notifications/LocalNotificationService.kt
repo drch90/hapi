@@ -20,6 +20,9 @@ import app.hapi.companion.di.localizedForAppLanguage
 import app.hapi.data.sse.ConnectionState
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** Started only by a visible activity. No boot receiver and no automatic resurrection. */
 internal class LocalNotificationService : Service() {
@@ -78,7 +81,13 @@ internal class LocalNotificationService : Service() {
                         }
                     }
                     try {
-                        hub.sseEngine.connectionState(app.hapi.data.sse.SseSubscriptionKey.Global).collect { state ->
+                        val key = app.hapi.data.sse.SseSubscriptionKey.Global
+                        // Streaming output can produce many frames per second.
+                        val receipts = hub.sseEngine.lastReceivedAt(key)
+                            .map { it?.let { timestamp -> timestamp / 1000 * 1000 } }.distinctUntilChanged()
+                        combine(hub.sseEngine.connectionState(key), receipts) { state, receivedAt ->
+                            state to receivedAt
+                        }.collect { (state, receivedAt) ->
                             if (!canNotify(this@LocalNotificationService)) {
                                 graph.localNotifications.status.value = ReceptionStatus.PermissionRequired
                                 stopSelf()
@@ -91,7 +100,7 @@ internal class LocalNotificationService : Service() {
                             }
                             graph.localNotifications.status.value = status
                             try {
-                                getSystemService(NotificationManager::class.java).notify(SERVICE_ID, statusNotification(status, hub.hubUrl))
+                                getSystemService(NotificationManager::class.java).notify(SERVICE_ID, statusNotification(status, hub.hubUrl, receivedAt))
                             } catch (_: SecurityException) {
                                 graph.localNotifications.status.value = ReceptionStatus.PermissionRequired
                                 stopSelf()
@@ -107,16 +116,23 @@ internal class LocalNotificationService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun statusNotification(status: ReceptionStatus, hub: String?): android.app.Notification {
+    private fun statusNotification(status: ReceptionStatus, hub: String?, receivedAt: Long? = null): android.app.Notification {
         val context = localizedForAppLanguage(graph.appLanguage.value)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 0, Intent(this, LocalNotificationService::class.java).setAction(STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val receipt = receivedAt?.let {
+            context.getString(R.string.local_notifications_last_received,
+                java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(it)))
+        } ?: context.getString(R.string.local_notifications_waiting_data)
         return NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_hapi)
             .setContentTitle(context.getString(R.string.local_notifications_title))
             .setContentText(listOfNotNull(context.getString(status.label()), hub).joinToString(" · "))
+            .setSubText(receipt)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                listOfNotNull(context.getString(status.label()), hub, receipt).joinToString("\n")))
             .setContentIntent(open)
             // Android 12+ otherwise defers a new FGS notification for about
             // ten seconds, hiding the connection state after the user enables it.
