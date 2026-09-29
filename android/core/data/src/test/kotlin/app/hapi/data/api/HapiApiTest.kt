@@ -61,6 +61,35 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `startup requests outlast hub budgets without changing ordinary request timeouts`() = runBlocking {
+        val timeouts = mutableListOf<Int>()
+        val client = OkHttpClient.Builder()
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                timeouts.add(chain.readTimeoutMillis())
+                chain.proceed(chain.request())
+            }.build()
+        try {
+            val api = HapiApi(server.url("/"), client)
+            server.enqueue(ok("""{"success":true,"availableModels":[]}"""))
+            api.getMachineHermesModels("m1", "/workspace")
+            server.enqueue(ok("""{"type":"success","sessionId":"s1"}"""))
+            api.spawnSession("m1", SpawnSessionRequest("/workspace", agent = "hermes"))
+            server.enqueue(ok("""{"sessionId":"s1"}"""))
+            api.resumeSession("s1", null)
+            server.enqueue(ok("""{"type":"success","sessionId":"s2"}"""))
+            api.spawnSession("m1", SpawnSessionRequest("/workspace", agent = "claude"))
+            assertTrue(timeouts[0] > 75_000)
+            assertTrue(timeouts[1] > 75_000)
+            assertTrue(timeouts[2] > 75_000 + 15_000 + 60_000)
+            assertEquals(60_000, timeouts[3])
+        } finally {
+            client.connectionPool.evictAll()
+            client.dispatcher.executorService.shutdown()
+        }
+    }
+
+    @Test
     fun `Hermes discovery preserves workspace provider ids refresh flag and auth`() = runBlocking {
         val response = """{"success":true,"currentModelId":"custom:office:qwen:32b","availableModels":[{"modelId":"custom:office:qwen:32b","name":"qwen:32b","providerLabel":"Office"}]}"""
         server.enqueue(ok(response))

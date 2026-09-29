@@ -145,6 +145,12 @@ class HapiApi internal constructor(
         client.newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
     }
 
+    // Resume also waits for the session to become active (15s) and ready (60s)
+    // after spawning (up to 75s for Hermes). The endpoint does not take a flavor.
+    private val sessionResumeClient by lazy {
+        client.newBuilder().readTimeout(165, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
     // ---------------------------------------------------------------- core --
 
     /**
@@ -318,6 +324,7 @@ class HapiApi internal constructor(
             "POST",
             url("api", "sessions", sessionId, "resume").build(),
             ResumeSessionRequest(permissionMode).toJsonBody(),
+            client = sessionResumeClient,
         )
 
     /** `POST /api/sessions/:id/reopen` — same superseding-id caveat as resume; 422 when metadata is incomplete. */
