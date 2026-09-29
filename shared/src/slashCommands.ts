@@ -1,6 +1,16 @@
 import type { SlashCommand } from './apiTypes'
 
 export const BUILTIN_SLASH_COMMANDS = {
+    hermes: [
+        { name: 'help', description: 'Show supported Hermes commands', source: 'builtin' },
+        { name: 'model', description: 'Show or change model and provider: /model <model ID>', source: 'builtin' },
+        { name: 'tools', description: 'List available Hermes tools', source: 'builtin' },
+        { name: 'context', description: 'Show conversation context usage', source: 'builtin' },
+        { name: 'reset', description: 'Reset Hermes context; keep HAPI conversation history', source: 'builtin' },
+        { name: 'compress', description: 'Compress Hermes context: /compress [focus]', source: 'builtin' },
+        { name: 'version', description: 'Show Hermes version', source: 'builtin' },
+        { name: 'steer', description: 'Guide the active turn: /steer <guidance>', source: 'builtin' },
+    ],
     claude: [
         { name: 'clear', description: 'Clear conversation history and free up context', source: 'builtin' },
         { name: 'compact', description: 'Clear conversation history but keep a summary in context', source: 'builtin' },

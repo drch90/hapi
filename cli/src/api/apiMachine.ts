@@ -30,6 +30,7 @@ import { getInvokedCwd } from '@/utils/invokedCwd'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import { setAgyCatalogChangeListener } from '../modules/common/agyModels'
+import { listHermesModelsForCwd } from '../hermes/modelDiscovery'
 import {
     listOpencodeModelsForCwd,
     type ListOpencodeModelsForCwdRequest,
@@ -242,6 +243,14 @@ export class ApiMachineClient {
         // resolves symlinks and rejects paths outside the configured root before
         // delegating to the lower-level probe. This intentionally overwrites the
         // earlier registration on the same scoped method name.
+        this.rpcHandlerManager.registerHandler(RPC_METHODS.ListHermesModelsForCwd, async (params: { cwd?: string; refresh?: boolean }) => {
+            const cwd = typeof params?.cwd === 'string' ? params.cwd.trim() : ''
+            if (!cwd) return { success: false, error: 'cwd is required' }
+            const resolved = await this.pathPolicy.resolveForCheck(cwd)
+            if (!this.pathPolicy.isWithinSpawnRoots(resolved)) return { success: false, error: 'Path is outside workspace roots' }
+            return await listHermesModelsForCwd(resolved, params.refresh === true)
+        })
+
         this.rpcHandlerManager.registerHandler<ListOpencodeModelsForCwdRequest, ListOpencodeModelsForCwdResponse>(
             RPC_METHODS.ListOpencodeModelsForCwd,
             async (params) => {

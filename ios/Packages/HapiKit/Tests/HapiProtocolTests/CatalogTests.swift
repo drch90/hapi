@@ -43,11 +43,10 @@ struct CatalogTests {
         let data = try Data(contentsOf: Self.generatedCatalogURL())
         let catalog = try JSONDecoder().decode(GeneratedModesCatalog.self, from: data)
 
-        // Every known flavor is present in the generated catalog and vice
-        // versa (the catalog only carries known flavors).
+        // Hermes is currently wire-only on native clients; it has no creation entry.
         #expect(
             catalog.permissionModesByFlavor.keys.sorted()
-                == AgentFlavor.knownFlavors.map(\.rawValue).sorted()
+                == (AgentFlavor.knownFlavors.map(\.rawValue) + ["hermes"]).sorted()
         )
 
         for (flavor, expected) in catalog.permissionModesByFlavor.sorted(by: { $0.key < $1.key }) {

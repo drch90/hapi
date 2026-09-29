@@ -39,6 +39,7 @@ Choose a supported coding agent from your terminal and control its sessions remo
 - `hapi pi` - Start Pi mode (remote-only).
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.
+- `hapi hermes` - Start a remote Hermes Agent session through `hermes acp`. Supports `--model`, `--permission-mode default|acceptEdits`, and `hapi resume <hapi-session-id>`; input stays in Web/PWA.
 - `hapi dsh` - Start DeepSeek Harness through ACP. See `src/dsh/runDsh.ts`.
   DSH is remote-only and its ACP server must be configured separately.
 - `hapi resume [sessionId]` - List resumable sessions for this machine or resume one locally.
@@ -195,6 +196,7 @@ controls for DSH.
 - `HAPI_EXPERIMENTAL` - Enable experimental features (true/1/yes).
 - `HAPI_EXTRA_HEADERS_JSON` - JSON object of extra headers to send on CLI → hub requests, e.g. `{"Cookie":"CF_Authorization=..."}`. Can also be set as the `extraHeaders` object in `~/.hapi/settings.json` (environment variable wins).
 - `HAPI_CLAUDE_PATH` - Path to a specific `claude` executable.
+- `HAPI_HERMES_PATH` - Path to the Hermes executable (default: `hermes` on PATH). Hermes uses its own authentication and `HERMES_HOME`.
 - `HAPI_DSH_ACP_COMMAND` - ACP server executable for `hapi dsh` (default: `dsh-acp-demo`).
 - `HAPI_DSH_ACP_CONFIG` - Optional `dsh-acp-demo --config` path.
 - `HAPI_DSH_ACP_ARGS_JSON` - Optional JSON array of ACP server arguments.

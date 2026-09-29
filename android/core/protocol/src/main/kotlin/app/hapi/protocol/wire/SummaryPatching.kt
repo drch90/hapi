@@ -118,6 +118,7 @@ object SummaryPatching {
                 "gemini" -> metadata.geminiSessionId
                 "opencode" -> metadata.opencodeSessionId
                 "grok" -> metadata.grokSessionId
+                "hermes" -> metadata.hermesSessionId
                 "agy" -> metadata.agySessionId
                 "cursor" -> metadata.cursorSessionId
                 "kimi" -> metadata.kimiSessionId

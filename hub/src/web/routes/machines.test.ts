@@ -29,6 +29,29 @@ function createMachine(overrides?: Partial<Machine>): Machine {
 }
 
 describe('machines routes', () => {
+    it('scopes Hermes discovery to online namespace machines and forwards provider metadata', async () => {
+        let visible = true, active = true
+        const calls: unknown[] = []
+        const catalog = { success: true, availableModels: [{ modelId: 'custom:lab:model:v2', providerLabel: 'Lab' }] }
+        const engine = {
+            getMachine: () => createMachine({ active, namespace: visible ? 'default' : 'other' }),
+            getMachineByNamespace: () => visible ? createMachine({ active }) : undefined,
+            listHermesModelsForCwd: async (...args: unknown[]) => { calls.push(args); return catalog }
+        } as unknown as SyncEngine
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => { c.set('namespace', 'default'); await next() })
+        app.route('/api', createMachinesRoutes(() => engine))
+        expect((await app.request('/api/machines/machine-1/hermes-models')).status).toBe(400)
+        const response = await app.request('/api/machines/machine-1/hermes-models?cwd=%2Fworkspace&refresh=true')
+        expect(await response.json()).toEqual(catalog)
+        expect(calls).toEqual([['machine-1', '/workspace', true]])
+        active = false
+        expect((await app.request('/api/machines/machine-1/hermes-models?cwd=%2Fworkspace')).status).not.toBe(200)
+        visible = false
+        active = true
+        expect((await app.request('/api/machines/machine-1/hermes-models?cwd=%2Fworkspace')).status).toBe(403)
+        expect(calls).toHaveLength(1)
+    })
     it('blocks spawn and availability inspection when the runner needs an upgrade', async () => {
         const machine = createMachine({
             metadata: {

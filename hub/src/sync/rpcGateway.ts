@@ -251,7 +251,8 @@ export class RpcGateway {
                     copilotAgentMode,
                     startingMode,
                     forkSession: forkSession === true
-                }
+                },
+                agent === 'hermes' ? 75_000 : DEFAULT_RPC_TIMEOUT_MS
             )
             if (result && typeof result === 'object') {
                 const obj = result as Record<string, unknown>
@@ -444,6 +445,14 @@ export class RpcGateway {
 
     async listCursorModelsForMachine(machineId: string): Promise<RpcListCursorModelsResponse> {
         return await this.machineRpc(machineId, RPC_METHODS.ListCursorModels, {}, MODEL_LIST_RPC_TIMEOUT_MS) as RpcListCursorModelsResponse
+    }
+
+    async listHermesModelsForSession(sessionId: string, refresh = false): Promise<import('@hapi/protocol').HermesModelsResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.ListHermesModels, { refresh }) as import('@hapi/protocol').HermesModelsResponse
+    }
+
+    async listHermesModelsForCwd(machineId: string, cwd: string, refresh = false): Promise<import('@hapi/protocol').HermesModelsResponse> {
+        return await this.machineRpc(machineId, RPC_METHODS.ListHermesModelsForCwd, { cwd, refresh }, 75_000) as import('@hapi/protocol').HermesModelsResponse
     }
 
     async listOpencodeModelsForSession(sessionId: string): Promise<RpcListOpencodeModelsResponse> {

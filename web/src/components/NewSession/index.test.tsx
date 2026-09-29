@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     notification: vi.fn(),
     checkPathsExists: vi.fn(),
     availableAgents: [
-        'agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'grok', 'kimi', 'opencode', 'pi'
+        'agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'grok', 'hermes', 'kimi', 'opencode', 'pi'
     ].map((agent) => ({ agent, available: true })),
     codexModelsLoading: false,
     agyModelsLoading: false,
@@ -116,6 +116,9 @@ vi.mock('@/hooks/queries/useAgyModels', () => ({
         error: null,
         refetch: vi.fn()
     })
+}))
+vi.mock('@/hooks/queries/useHermesModels', () => ({
+    useHermesModels: () => ({ availableModels: [], currentModelId: null, isLoading: false, error: null, refetch: vi.fn() })
 }))
 vi.mock('@/hooks/queries/useCursorModelsForMachine', () => ({
     useCursorModelsForMachine: () => ({
@@ -291,7 +294,7 @@ describe('NewSession launch preferences', () => {
         mocks.availableAgents.splice(
             0,
             mocks.availableAgents.length,
-            ...['agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'grok', 'kimi', 'opencode', 'pi']
+            ...['agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'grok', 'hermes', 'kimi', 'opencode', 'pi']
                 .map((agent) => ({ agent, available: true }))
         )
         mocks.codexModelsLoading = false
@@ -456,6 +459,15 @@ describe('NewSession launch preferences', () => {
         await waitFor(() => {
             expect(screen.getByTestId('model-options')).toHaveTextContent('Auto,GPT-5.6')
         })
+    })
+
+    it('launches Hermes with a custom model and default native policy', async () => {
+        savePreferredAgent('hermes')
+        mocks.spawnSession.mockResolvedValue({ type: 'success', sessionId: 'hermes-session' })
+        render(<NewSession api={api} machines={[machine]} initialMachineId="machine-1" initialDirectory="C:\\repo" onSuccess={mocks.onSuccess} onCancel={() => {}} />)
+        fireEvent.change(screen.getByLabelText('newSession.model'), { target: { value: 'provider:model' } })
+        fireEvent.click(screen.getByTestId('create'))
+        await waitFor(() => expect(mocks.spawnSession).toHaveBeenCalledWith(expect.objectContaining({ agent: 'hermes', model: 'provider:model', permissionMode: 'default', yolo: undefined })))
     })
 
     it('disables creation while a remembered Copilot model is being validated', async () => {

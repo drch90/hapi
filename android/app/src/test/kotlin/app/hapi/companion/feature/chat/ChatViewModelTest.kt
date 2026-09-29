@@ -193,6 +193,8 @@ private open class FakeMessagesApi : ChatSessionApi {
     override suspend fun setModelReasoningEffort(sessionId: String, modelReasoningEffort: String?) {}
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse =
         CodexModelsResponse(success = false, error = "not scripted")
+    override suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse =
+        app.hapi.protocol.wire.HermesModelsResponse(success = false, error = "not scripted")
     override suspend fun getSlashCommands(sessionId: String): app.hapi.protocol.wire.SlashCommandsResponse =
         app.hapi.protocol.wire.SlashCommandsResponse(success = false, error = "not scripted")
     override suspend fun uploadFile(

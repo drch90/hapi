@@ -10,6 +10,8 @@ import { useCodexModels } from '@/hooks/queries/useCodexModels'
 import { useCursorModelsForMachine } from '@/hooks/queries/useCursorModelsForMachine'
 import { useAgyModels } from '@/hooks/queries/useAgyModels'
 import { useOpencodeModelsForCwd } from '@/hooks/queries/useOpencodeModelsForCwd'
+import { useHermesModels } from '@/hooks/queries/useHermesModels'
+import { HermesModelPicker } from '@/components/HermesModelPicker'
 import { useOpencodeModelVariants } from '@/hooks/queries/useOpencodeModelVariants'
 import { useGrokModelsForCwd } from '@/hooks/queries/useGrokModelsForCwd'
 import { useCopilotModelsForCwd } from '@/hooks/queries/useCopilotModelsForCwd'
@@ -554,6 +556,8 @@ export function NewSession(props: {
     const deferredDirectoryExists = deferredDirectory
         ? pathExistence[deferredDirectory]
         : undefined
+    const hermesModelsState = useHermesModels({ api: props.api, machineId, cwd: deferredDirectory,
+        enabled: agent === 'hermes' && Boolean(machineId) && deferredDirectoryExists === true && !outsideWorkspaceRoots.has(deferredDirectory) })
     const opencodeModelsState = useOpencodeModelsForCwd({
         api: props.api,
         machineId,
@@ -1810,7 +1814,11 @@ export function NewSession(props: {
                     onClear={() => setSelectedPiImportSessionId(null)}
                 />
             ) : null}
-            {agent === 'dsh' ? null : agent === 'agy' ? (
+            {agent === 'hermes' ? (
+                <HermesModelPicker models={hermesModelsState.availableModels} value={model} onChange={setModel}
+                    isLoading={hermesModelsState.isLoading} error={hermesModelsState.error} allowDefault
+                    disabled={isFormDisabled} onRefresh={hermesModelsState.refetch} />
+            ) : agent === 'dsh' ? null : agent === 'agy' ? (
                 <AgyModelSelector
                     machineId={machineId}
                     isLoading={agyModelsState.isLoading}

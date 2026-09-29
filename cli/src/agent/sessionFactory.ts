@@ -128,6 +128,7 @@ function pickExistingSessionMetadata(metadata: Metadata | null | undefined): Par
     if (metadata.codexSourceSessionId !== undefined) preserved.codexSourceSessionId = metadata.codexSourceSessionId
     if (metadata.geminiSessionId !== undefined) preserved.geminiSessionId = metadata.geminiSessionId
     if (metadata.opencodeSessionId !== undefined) preserved.opencodeSessionId = metadata.opencodeSessionId
+    if (metadata.hermesSessionId !== undefined) preserved.hermesSessionId = metadata.hermesSessionId
     if (metadata.grokSessionId !== undefined) preserved.grokSessionId = metadata.grokSessionId
     if (metadata.agySessionId !== undefined) preserved.agySessionId = metadata.agySessionId
     if (metadata.cursorSessionId !== undefined) preserved.cursorSessionId = metadata.cursorSessionId
@@ -352,6 +353,12 @@ export async function bootstrapExistingSession(options: {
     })
 
     const sessionInfo = await api.getSession(options.sessionId)
+    if (options.flavor === 'hermes' && (
+        sessionInfo.metadata?.flavor !== 'hermes'
+        || sessionInfo.metadata?.machineId !== machineId
+    )) {
+        throw new Error('Hermes resume requires a Hermes session on its original machine')
+    }
     const baseMetadata = buildSessionMetadata({
         flavor: options.flavor,
         startedBy,

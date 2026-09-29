@@ -97,6 +97,12 @@ export class AcpStdioTransport {
     private guardReleased = false;
     private closed = false;
     private closeError: Error | null = null;
+    private closeHandler: ((error: Error) => void) | null = null;
+
+    onClose(handler: (error: Error) => void): void {
+        this.closeHandler = handler;
+        if (this.closeError) handler(this.closeError);
+    }
     /** True after process 'exit'; blocks new writes until 'close' drains stderr. */
     private exited = false;
     private exitError: Error | null = null;
@@ -571,6 +577,7 @@ export class AcpStdioTransport {
         this.closed = true;
         this.closeError = error;
         this.rejectAllPending(error);
+        this.closeHandler?.(error);
     }
 
     private rejectAllPending(error: Error): void {

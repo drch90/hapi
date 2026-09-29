@@ -920,7 +920,7 @@ export async function startRunner(options: { workspaceRoots?: string[] } = {}): 
               type: 'error',
               errorMessage: buildWebhookFailureMessage('timeout')
             });
-          }, webhookTimeoutMs);
+          }, agent === 'hermes' ? Math.max(webhookTimeoutMs, 60_000) : webhookTimeoutMs);
 
           // Register awaiter
           pidToAwaiter.set(pid, (completedSession) => {
@@ -1556,7 +1556,7 @@ export function buildCliArgs(
   if (agent === 'gemini') {
     throw new Error('Gemini CLI is no longer supported and cannot be launched (Google sunset the consumer Gemini CLI on 2026-06-18).');
   }
-  const agentCommand = agent === 'codex'
+  const agentCommand = agent === 'hermes' ? 'hermes' : agent === 'codex'
     ? 'codex'
     : agent === 'cursor'
       ? 'cursor'
@@ -1604,6 +1604,7 @@ export function buildCliArgs(
       || agent === 'opencode'
       || agent === 'agy'
       || agent === 'dsh'
+      || agent === 'hermes'
       || (agentCommand === 'claude' && options.forkSession)) {
     const existingSessionId = options.existingSessionId ?? options.sessionId;
     if (existingSessionId) {

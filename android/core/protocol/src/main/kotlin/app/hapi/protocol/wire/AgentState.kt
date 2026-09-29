@@ -18,6 +18,8 @@ data class AgentState(
     val controlledByUser: Boolean? = null,
     /** `'local' | 'remote' | 'pty'` — mode the session was started in. */
     val startingMode: String? = null,
+    /** True while the adapter can accept guidance for the current turn. */
+    val steeringActive: Boolean? = null,
     /** Pending requests keyed by request id (the `:rid` in the approve/deny routes). */
     val requests: Map<String, AgentStateRequest>? = null,
     /** Resolved requests keyed by request id. */

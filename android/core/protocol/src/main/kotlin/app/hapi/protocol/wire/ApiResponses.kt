@@ -259,6 +259,22 @@ data class CodexModelsResponse(
     val error: String? = null,
 )
 
+@Serializable
+data class HermesModelsResponse(
+    val success: Boolean,
+    val availableModels: List<HermesModelSummary>? = null,
+    val currentModelId: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class HermesModelSummary(
+    val modelId: String,
+    val name: String? = null,
+    val description: String? = null,
+    val providerLabel: String? = null,
+)
+
 /** `CodexModelSummary` (`shared/src/apiTypes.ts`). */
 @Serializable
 data class CodexModelSummary(

@@ -27,7 +27,7 @@ export function usesCodexFamilyPermissionModes(
  * through the same native select.
  */
 export function usesNativePermissionSelect(flavor: string | null | undefined): boolean {
-    return flavor === 'claude' || flavor === 'grok' || usesCodexFamilyPermissionModes(flavor)
+    return flavor === 'hermes' || flavor === 'claude' || flavor === 'grok' || usesCodexFamilyPermissionModes(flavor)
 }
 
 /**

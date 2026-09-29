@@ -1,5 +1,8 @@
 package app.hapi.companion.feature.chat
 
+import app.hapi.companion.ui.components.HermesModelsUi
+import app.hapi.protocol.wire.HermesModelSummary
+
 import androidx.annotation.MainThread
 import app.hapi.companion.feature.chat.attachments.ComposerAttachments
 import app.hapi.companion.feature.chat.blocks.planProposalMarkdown
@@ -153,10 +156,11 @@ data class ComposerUiState(
     val text: String,
     /** A send (or its inactive-session resume) is in flight — spinner on the send button. */
     val isSending: Boolean,
-    /** A turn is active: long-press send offers Steer; an empty draft shows Stop. */
+    /** Long-press send offers Steer while the current turn accepts guidance. */
     val canSteer: Boolean,
     /** Local focus intent; does not replace or send the draft. */
     val focusRequest: Long = 0,
+    val canStop: Boolean = canSteer,
 )
 
 /** One row of the queued-messages bar (uninvoked sends). */
@@ -196,6 +200,9 @@ data class SessionConfigUi(
     val effort: String?,
     /** null → hide the effort section. */
     val effortOptions: List<CatalogOption>?,
+    val hermesModels: List<HermesModelSummary> = emptyList(),
+    val modelsError: String? = null,
+    val configurationDisabled: Boolean = false,
 )
 
 /** One-shot side effects for the screen. */
@@ -428,6 +435,7 @@ class ChatViewModel(
     }
 
     private val codexModels = MutableStateFlow<CodexModels>(CodexModels.Idle)
+    private val hermesModels = MutableStateFlow(HermesModelsUi())
 
     private sealed interface SlashFetch {
         data object Idle : SlashFetch
@@ -495,7 +503,8 @@ class ChatViewModel(
         ComposerUiState(
             text = text,
             isSending = sending,
-            canSteer = session.thinking && session.active,
+            canSteer = session.thinking && session.active && session.steeringAllowed,
+            canStop = session.thinking && session.active,
             focusRequest = focusRequest,
         )
     }.stateIn(scope, SharingStarted.Eagerly, ComposerUiState(text = "", isSending = false, canSteer = false))
@@ -506,7 +515,7 @@ class ChatViewModel(
         .filterNotNull()
         .flatMapLatest { store ->
             combine(store.state, queuedOpPending, sessionStateFlow()) { window, opPending, session ->
-                buildQueuedRows(window, opPending, session.thinking)
+                buildQueuedRows(window, opPending, session.thinking && session.steeringAllowed)
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -524,8 +533,9 @@ class ChatViewModel(
         summaryFlow(),
         codexModels,
         configOpPending,
-    ) { detail, summary, models, _ ->
-        buildConfigUi(detail, summary, models)
+        hermesModels,
+    ) { detail, summary, models, _, hermes ->
+        buildConfigUi(detail, summary, models, hermes)
     }.stateIn(scope, SharingStarted.Eagerly, buildConfigUi(null, null, CodexModels.Idle))
 
     /**
@@ -1295,6 +1305,7 @@ class ChatViewModel(
      * an `invoked` answer reconciles a missed consume.
      */
     fun steerQueuedMessage(messageId: String) {
+        if (currentFlavor() == "hermes" && currentDetail()?.agentState?.steeringActive != true) return
         scope.launch {
             val store = awaitWindowStore()
             val row = store.state.value.messages.firstOrNull { it.id == messageId } ?: return@launch
@@ -1568,6 +1579,7 @@ class ChatViewModel(
 
     /** Fetch the codex model catalog for the picker (no-op for other flavors). */
     fun loadModelOptions() {
+        if (currentFlavor() == "hermes") { loadHermesModelOptions(); return }
         if (currentFlavor() != "codex") return
         if (codexModels.value is CodexModels.Loading || codexModels.value is CodexModels.Loaded) return
         codexModels.value = CodexModels.Loading
@@ -1591,11 +1603,18 @@ class ChatViewModel(
     }
 
     private fun runConfigChange(optimistic: (Session) -> Session, call: suspend () -> Unit) {
+        val isHermes = currentFlavor() == "hermes"
+        val current = sessionStore.currentDetail(sessionId)
+        if (isHermes && (current?.active != true || current.thinking)) return
         if (!configOpPending.compareAndSet(expect = false, update = true)) return
-        sessionStore.updateDetailLocal(sessionId, optimistic)
+        if (!isHermes) sessionStore.updateDetailLocal(sessionId, optimistic)
         scope.launch {
             try {
                 call()
+                if (isHermes) {
+                    sessionStore.loadSessionDetail(sessionId)
+                    loadHermesModelOptions()
+                }
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {
@@ -1609,7 +1628,21 @@ class ChatViewModel(
         }
     }
 
-    private fun buildConfigUi(detail: Session?, summary: SessionSummary?, models: CodexModels): SessionConfigUi {
+    fun refreshHermesModelOptions() { loadHermesModelOptions(refresh = true) }
+
+    private fun loadHermesModelOptions(refresh: Boolean = false) {
+        if (hermesModels.value.loading || sessionStore.currentDetail(sessionId)?.active != true) return
+        hermesModels.value = hermesModels.value.copy(loading = true, error = null)
+        scope.launch {
+            try {
+                val response = api.getSessionHermesModels(sessionId, refresh)
+                hermesModels.value = HermesModelsUi(response.availableModels.orEmpty(), error = if (response.success) null else response.error ?: "Hermes models unavailable")
+            } catch (cancellation: CancellationException) { throw cancellation }
+            catch (error: Exception) { hermesModels.value = hermesModels.value.copy(loading = false, error = error.message) }
+        }
+    }
+
+    private fun buildConfigUi(detail: Session?, summary: SessionSummary?, models: CodexModels, hermes: HermesModelsUi = HermesModelsUi()): SessionConfigUi {
         val flavor = detail?.metadata?.flavor ?: summary?.metadata?.flavor
         val model = detail?.model
         val modelOptions: List<CatalogOption>?
@@ -1618,6 +1651,10 @@ class ChatViewModel(
         var effortOptions: List<CatalogOption>? = null
 
         when (flavor) {
+            "hermes" -> {
+                modelOptions = hermes.models.map { CatalogOption(it.modelId, it.name ?: it.modelId) }
+                modelOptionsLoading = hermes.loading
+            }
             "claude" -> {
                 modelOptions = ModelCatalog.claudeModelOptions(model)
                 effort = detail?.effort
@@ -1653,6 +1690,9 @@ class ChatViewModel(
         }
 
         return SessionConfigUi(
+            hermesModels = hermes.models,
+            modelsError = hermes.error,
+            configurationDisabled = flavor == "hermes" && (detail?.active != true || detail.thinking || configOpPending.value),
             flavor = flavor,
             active = detail?.active ?: summary?.active ?: false,
             controlledByUser = detail?.agentState?.controlledByUser == true && detail?.metadata?.capabilities?.concurrentClients != true,
@@ -1680,7 +1720,7 @@ class ChatViewModel(
         currentDetail()?.metadata?.flavor
             ?: sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.metadata?.flavor
 
-    private class SessionLiveState(val active: Boolean, val thinking: Boolean)
+    private class SessionLiveState(val active: Boolean, val thinking: Boolean, val steeringAllowed: Boolean = true)
 
     private fun currentSessionState(): SessionLiveState {
         val detail = currentDetail()
@@ -1696,6 +1736,8 @@ class ChatViewModel(
         SessionLiveState(
             active = detail?.active ?: summary?.active ?: false,
             thinking = detail?.thinking ?: summary?.thinking ?: false,
+            steeringAllowed = (detail?.metadata?.flavor ?: summary?.metadata?.flavor) != "hermes"
+                || detail?.agentState?.steeringActive == true,
         )
     }
 

@@ -2,6 +2,7 @@ package app.hapi.companion.feature.newsession
 
 import app.hapi.data.api.HapiApi
 import app.hapi.protocol.wire.CodexModelsResponse
+import app.hapi.protocol.wire.HermesModelsResponse
 import app.hapi.protocol.wire.AgentAvailabilityResponse
 import app.hapi.protocol.wire.MachineListDirectoryResponse
 import app.hapi.protocol.wire.MachinePathsExistsResponse
@@ -31,10 +32,14 @@ interface NewSessionGateway {
 
     /** `GET /api/machines/:id/codex-models` (RPC-wrapped; 503 `rpc_target_missing` = hide picker). */
     suspend fun codexModels(machineId: String): CodexModelsResponse
+    suspend fun hermesModels(machineId: String, cwd: String, refresh: Boolean = false): HermesModelsResponse
 }
 
 /** Production adapter over the hub's [HapiApi]. */
 class ApiNewSessionGateway(private val api: HapiApi) : NewSessionGateway {
+    override suspend fun hermesModels(machineId: String, cwd: String, refresh: Boolean): HermesModelsResponse =
+        api.getMachineHermesModels(machineId, cwd, refresh)
+
     override suspend fun spawn(machineId: String, request: SpawnSessionRequest): SpawnResponse =
         api.spawnSession(machineId, request)
 

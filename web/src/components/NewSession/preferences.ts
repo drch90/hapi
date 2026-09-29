@@ -134,7 +134,7 @@ export function resolvePreferredLaunchSettings(
 ): PreferredLaunchSettings {
     const preferredModel = preferred?.model ?? 'auto'
     const staticModelValues = MODEL_OPTIONS[agent].map((option) => option.value)
-    const model = staticModelValues.length > 0 && agent !== 'codex' && agent !== 'copilot'
+    const model = staticModelValues.length > 0 && agent !== 'hermes' && agent !== 'codex' && agent !== 'copilot'
         ? resolvePreferredOptionValue(preferredModel, staticModelValues, 'auto')
         : preferredModel
     const effort = agent === 'claude'

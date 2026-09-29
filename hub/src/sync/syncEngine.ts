@@ -198,6 +198,8 @@ export class SyncEngine {
     private readonly scratchlistUploadTails = new Map<string, Promise<unknown>>()
     /** Coalesce duplicate clear requests so retries cannot spawn two fresh sessions. */
     private readonly opencodeClearTails = new Map<string, Promise<ClearOpencodeSessionResult>>()
+    /** Repeated Hermes resumes share the same native startup. */
+    private readonly hermesResumes = new Map<string, Promise<ResumeSessionResult>>()
     /** Serialize fork/rewind per session so concurrent native rollbacks cannot stack. */
     private readonly historyActionsInFlight = new Set<string>()
     /**
@@ -1078,7 +1080,7 @@ export class SyncEngine {
             return { status: 'failed', error: 'Session not found', localId: null }
         }
         if (!isSteeringSupportedForSession(session.metadata)) {
-            return { status: 'failed', error: 'Steering is only supported for Pi, Codex, and Cursor ACP sessions', localId: null }
+            return { status: 'failed', error: 'Steering is only supported for Pi, Codex, Cursor ACP, and Hermes sessions', localId: null }
         }
         if (session.agentState?.controlledByUser === true && !session.metadata?.capabilities?.concurrentClients) {
             return { status: 'failed', error: 'Steering is only available for remote sessions', localId: null }
@@ -2489,6 +2491,7 @@ export class SyncEngine {
         if (flavor === 'gemini') return metadata.geminiSessionId ?? null
         if (flavor === 'opencode') return metadata.opencodeSessionId ?? null
         if (flavor === 'grok') return metadata.grokSessionId ?? null
+        if (flavor === 'hermes') return metadata.hermesSessionId ?? null
         if (flavor === 'agy') return metadata.agySessionId ?? null
         if (flavor === 'cursor') return metadata.cursorSessionId ?? null
         if (flavor === 'kimi') return metadata.kimiSessionId ?? null
@@ -2874,6 +2877,20 @@ export class SyncEngine {
     }
 
     async resumeSession(sessionId: string, namespace: string, opts?: { permissionMode?: PermissionMode }): Promise<ResumeSessionResult> {
+        const hermesSession = this.sessionCache.getSessionByNamespace(sessionId, namespace)
+        if (hermesSession?.metadata?.flavor !== 'hermes') {
+            return this.resumeSessionInternal(sessionId, namespace, opts)
+        }
+        const key = `${namespace}:${sessionId}`
+        const pending = this.hermesResumes.get(key)
+        if (pending) return pending
+        if (!hermesSession.active) this.sessionReadyIds.delete(sessionId)
+        const result = this.resumeSessionInternal(sessionId, namespace, opts)
+        this.hermesResumes.set(key, result)
+        try { return await result } finally { this.hermesResumes.delete(key) }
+    }
+
+    private async resumeSessionInternal(sessionId: string, namespace: string, opts?: { permissionMode?: PermissionMode }): Promise<ResumeSessionResult> {
         const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
         if (!access.ok) {
             return {
@@ -2957,7 +2974,7 @@ export class SyncEngine {
         const targetMachine = this.resolveOnlineMachineForSession(
             session,
             namespace,
-            { strictMachineId: flavor === 'cursor' || (flavor === 'pi' && resumeToken !== undefined) }
+            { strictMachineId: flavor === 'hermes' || flavor === 'cursor' || (flavor === 'pi' && resumeToken !== undefined) }
         )
         if (!targetMachine) {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
@@ -3142,6 +3159,7 @@ export class SyncEngine {
 
             const needsReadyBeforeSuccess = resumedStartingMode === 'pty'
                 || requiresPiNativeReady
+                || flavor === 'hermes'
                 || (
                     spawnResult.sessionId !== access.sessionId
                     && flavor === 'cursor'
@@ -3632,6 +3650,7 @@ export class SyncEngine {
             && (prev?.claudeSessionId ?? null) === (next.claudeSessionId ?? null)
             && (prev?.geminiSessionId ?? null) === (next.geminiSessionId ?? null)
             && (prev?.opencodeSessionId ?? null) === (next.opencodeSessionId ?? null)
+            && (prev?.hermesSessionId ?? null) === (next.hermesSessionId ?? null)
             && (prev?.grokSessionId ?? null) === (next.grokSessionId ?? null)
             && (prev?.cursorSessionId ?? null) === (next.cursorSessionId ?? null)
             && (prev?.piSessionId ?? null) === (next.piSessionId ?? null)
@@ -4037,6 +4056,14 @@ export class SyncEngine {
 
     async listCursorModelsForMachine(machineId: string): Promise<RpcListCursorModelsResponse> {
         return await this.rpcGateway.listCursorModelsForMachine(machineId)
+    }
+
+    async listHermesModelsForSession(sessionId: string, refresh = false) {
+        return await this.rpcGateway.listHermesModelsForSession(sessionId, refresh)
+    }
+
+    async listHermesModelsForCwd(machineId: string, cwd: string, refresh = false) {
+        return await this.rpcGateway.listHermesModelsForCwd(machineId, cwd, refresh)
     }
 
     async listOpencodeModelsForSession(sessionId: string): Promise<RpcListOpencodeModelsResponse> {

@@ -150,6 +150,17 @@ async function dispatchLocalResume(target: LocalResumeTarget): Promise<void> {
         return
     }
 
+    if (target.flavor === 'hermes') {
+        const { runHermes } = await import('@/hermes/runHermes')
+        await runHermes({
+            ...base,
+            startingMode: 'remote',
+            permissionMode: base.permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default',
+            model: target.model ?? undefined
+        })
+        return
+    }
+
     if (target.flavor === 'agy') {
         const { runAgy } = await import('@/agy/runAgy')
         await runAgy({
@@ -267,6 +278,10 @@ export const resumeCommand: CommandDefinition = {
             // while ACTIVE, not just thinking: keepalive-delivered thinking is a
             // volatile snapshot, and a turn can start (or its update be missed)
             // between the fetch above and the handoff request below.
+            if (target.flavor === 'hermes' && target.active) {
+                console.log('Hermes is already active. Continue in HAPI Web, or stop it before resuming from this terminal.')
+                return
+            }
             if (target.flavor === 'agy' && target.active) {
                 throw new Error('Antigravity is active. Stop it before resuming.')
             }

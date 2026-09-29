@@ -14,6 +14,7 @@ const DEFAULT_COMMANDS: Record<AgentFlavor, string> = {
     dsh: 'dsh-acp-demo',
     gemini: 'gemini',
     grok: 'grok',
+    hermes: 'hermes',
     kimi: 'kimi',
     opencode: 'opencode',
     pi: 'pi',
@@ -25,6 +26,7 @@ export function getAgentLaunchCommand(
     env: LaunchEnvironment = process.env,
 ): string {
     if (flavor === 'claude') return env.HAPI_CLAUDE_PATH?.trim() || DEFAULT_COMMANDS.claude
+    if (flavor === 'hermes') return env.HAPI_HERMES_PATH?.trim() || DEFAULT_COMMANDS.hermes
     if (flavor === 'copilot') return env.COPILOT_CLI_PATH?.trim() || DEFAULT_COMMANDS.copilot
     if (flavor === 'dsh') return env.HAPI_DSH_ACP_COMMAND?.trim() || DEFAULT_COMMANDS.dsh
     return DEFAULT_COMMANDS[flavor]

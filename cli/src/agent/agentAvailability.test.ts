@@ -39,6 +39,15 @@ describe('agent executable resolution', () => {
         ])
     })
 
+    it('uses the same Hermes override for availability and launch', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'hapi-hermes-path-'))
+        const hermes = await makeExecutable(directory, 'hermes-custom')
+        const env = { PATH: '', HAPI_HERMES_PATH: hermes }
+        expect(getAgentLaunchCommand('hermes', env)).toBe(hermes)
+        expect(getAgentAvailability('hermes', env)).toEqual({ agent: 'hermes', available: true })
+        expect(getAgentAvailability('hermes', { PATH: '' }).available).toBe(false)
+    })
+
     it('reports missing executables without invoking them', () => {
         expect(getAgentAvailability('grok', { PATH: '' })).toEqual({
             agent: 'grok',

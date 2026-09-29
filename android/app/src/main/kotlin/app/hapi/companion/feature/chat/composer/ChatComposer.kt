@@ -508,7 +508,7 @@ private fun PrimaryActionButton(
     val canSubmit = (hasText || attachmentsReady) && !attachmentsBusy && !state.isSending
     val action = when {
         state.isSending -> ComposerPrimaryAction.Sending
-        state.canSteer && !hasDraft -> ComposerPrimaryAction.Stop
+        state.canStop && !hasDraft -> ComposerPrimaryAction.Stop
         else -> ComposerPrimaryAction.Send
     }
 

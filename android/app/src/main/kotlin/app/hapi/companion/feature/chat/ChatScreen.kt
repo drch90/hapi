@@ -406,6 +406,7 @@ internal fun ChatScreen(
             onSetModel = viewModel::setModel,
             onSetEffort = viewModel::setEffort,
             onLoadModelOptions = viewModel::loadModelOptions,
+            onRefreshHermesModels = viewModel::refreshHermesModelOptions,
         )
     }
     if (renameDialogOpen) {

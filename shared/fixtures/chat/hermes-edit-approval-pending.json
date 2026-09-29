@@ -1,0 +1,104 @@
+{
+    "description": "Hermes ACP edit approvals use the existing pending-request projection with native tool arguments.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Create a project file."
+            },
+            {
+                "createdAt": 1755000001000,
+                "id": "edit-approval-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "edit-approval-1",
+                    "input": {
+                        "arguments": {
+                            "content": "Hello",
+                            "path": "/workspace/result.txt"
+                        },
+                        "tool": "write_file"
+                    },
+                    "name": "Approve edit: /workspace/result.txt",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "pending"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Create a project file."
+            },
+            {
+                "createdAt": 1755000001000,
+                "id": "edit-approval-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "edit-approval-1",
+                    "input": {
+                        "arguments": {
+                            "content": "Hello",
+                            "path": "/workspace/result.txt"
+                        },
+                        "tool": "write_file"
+                    },
+                    "name": "Approve edit: /workspace/result.txt",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "pending"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "requests": {
+                "edit-approval-1": {
+                    "arguments": {
+                        "arguments": {
+                            "content": "Hello",
+                            "path": "/workspace/result.txt"
+                        },
+                        "tool": "write_file"
+                    },
+                    "createdAt": 1755000001000,
+                    "tool": "Approve edit: /workspace/result.txt"
+                }
+            }
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "text": "Create a project file.",
+                        "type": "text"
+                    },
+                    "role": "user"
+                },
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "hermes-edit-approval-pending"
+}

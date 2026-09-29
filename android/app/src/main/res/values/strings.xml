@@ -629,4 +629,10 @@
     <string name="chat_media_save_failed">Could not save the file. Please retry.</string>
     <string name="chat_media_play_failed">Cannot play this format on this device. You can save the file and open it in another app.</string>
     <string name="chat_media_fullscreen">Full screen</string>
+    <string name="hermes_model_default">Use Hermes default</string>
+    <string name="hermes_model_refresh">Refresh models</string>
+    <string name="hermes_model_search">Search provider or model</string>
+    <string name="hermes_model_empty">No matching models</string>
+    <string name="hermes_model_manual">Model ID (optional)</string>
+    <string name="hermes_settings_busy">Wait for Hermes to finish before changing settings.</string>
 </resources>

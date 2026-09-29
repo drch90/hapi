@@ -9,6 +9,9 @@ const listOpencodeModelVariantsMock = vi.hoisted(() => vi.fn())
 const listGrokModelsForCwdMock = vi.hoisted(() => vi.fn())
 const listCopilotModelsForCwdMock = vi.hoisted(() => vi.fn())
 const inspectCursorChatStoreMock = vi.hoisted(() => vi.fn())
+const listHermesModelsForCwdMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/hermes/modelDiscovery', () => ({ listHermesModelsForCwd: listHermesModelsForCwdMock }))
 
 vi.mock('socket.io-client', () => ({
     io: ioMock
@@ -66,6 +69,31 @@ describe('normalizeWindowsDriveRoot', () => {
     it('leaves non-drive-root paths unchanged', () => {
         expect(normalizeWindowsDriveRoot('C:\\Users')).toBe('C:\\Users')
         expect(normalizeWindowsDriveRoot('/tmp/workspace')).toBe('/tmp/workspace')
+    })
+})
+
+describe('Hermes discovery workspace guard', () => {
+    it('rejects symlinks outside the workspace and forwards canonical paths and refresh', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'hapi-hermes-paths-'))
+        const workspace = join(root, 'workspace'), outside = join(root, 'outside')
+        mkdirSync(workspace)
+        mkdirSync(outside)
+        symlinkSync(outside, join(workspace, 'escape'))
+        const client = new ApiMachineClient('cli-token', makeMachine('hermes-paths'), [workspace])
+        listHermesModelsForCwdMock.mockReset().mockResolvedValue({ success: true, availableModels: [] })
+        const manager = (client as unknown as { rpcHandlerManager: { handleRequest: (req: { method: string; params: string }) => Promise<string> } }).rpcHandlerManager
+        const call = async (cwd: string) => JSON.parse(await manager.handleRequest({
+            method: 'hermes-paths:listHermesModelsForCwd', params: JSON.stringify({ cwd, refresh: true })
+        }))
+        try {
+            expect(await call(join(workspace, 'escape'))).toMatchObject({ success: false, error: 'Path is outside workspace roots' })
+            expect(listHermesModelsForCwdMock).not.toHaveBeenCalled()
+            expect(await call(workspace)).toMatchObject({ success: true })
+            expect(listHermesModelsForCwdMock).toHaveBeenCalledWith(realpathSync.native(workspace), true)
+        } finally {
+            client.shutdown()
+            rmSync(root, { recursive: true, force: true })
+        }
     })
 })
 

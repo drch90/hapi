@@ -4,6 +4,7 @@ import app.hapi.protocol.wire.ApprovePermissionRequest
 import app.hapi.protocol.wire.CancelMessageResponse
 import app.hapi.protocol.wire.RetryIndeterminateMessageResponse
 import app.hapi.protocol.wire.CodexModelsResponse
+import app.hapi.protocol.wire.HermesModelsResponse
 import app.hapi.protocol.wire.DeleteUploadResponse
 import app.hapi.protocol.wire.ResumeSessionResponse
 import app.hapi.protocol.wire.SendMessageRequest
@@ -90,6 +91,7 @@ interface ChatSessionApi : MessagesApi, AttachmentUploadApi {
 
     /** `GET /api/sessions/:id/codex-models` (RPC-wrapped: check `success`). */
     suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse
+    suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean = false): HermesModelsResponse
 
     /**
      * `GET /api/sessions/:id/slash-commands` (RPC-wrapped: check `success`) —

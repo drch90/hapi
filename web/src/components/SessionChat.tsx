@@ -106,6 +106,8 @@ import {
     resolveSessionCursorVariantSelectValue
 } from '@/lib/sessionChatCursorModel'
 import { buildCursorEffortPickerOptionsWithDefaultFirst } from '@/lib/cursorModelOptions'
+import { useHermesModels } from '@/hooks/queries/useHermesModels'
+import { HermesModelPicker } from '@/components/HermesModelPicker'
 import { useOpencodeModels } from '@/hooks/queries/useOpencodeModels'
 import { useGrokModels } from '@/hooks/queries/useGrokModels'
 import { useCopilotModels } from '@/hooks/queries/useCopilotModels'
@@ -1005,6 +1007,10 @@ function SessionChatInner(props: SessionChatProps) {
         () => codexSupportedReasoningEfforts?.map((value) => ({ value })),
         [codexSupportedReasoningEfforts]
     )
+    const hermesModelsState = useHermesModels({ api: props.api, sessionId: props.session.id, enabled: agentFlavor === 'hermes' && props.session.active, model: props.session.model })
+    const [hermesModelApplyError, setHermesModelApplyError] = useState<string | null>(null)
+    const [hermesModelApplying, setHermesModelApplying] = useState(false)
+    const hermesModelOptions = useMemo(() => hermesModelsState.availableModels.map(model => ({ value: model.modelId, label: model.providerLabel ? `${model.providerLabel} · ${model.name ?? model.modelId}` : model.modelId })), [hermesModelsState.availableModels])
     const opencodeModelsState = useOpencodeModels({
         api: props.api,
         sessionId: props.session.id,
@@ -1535,6 +1541,10 @@ function SessionChatInner(props: SessionChatProps) {
 
     // Model mode change handler
     const handleModelChange = useCallback(async (model: SessionModelSelection) => {
+        if (agentFlavor === 'hermes') {
+            setHermesModelApplyError(null)
+            setHermesModelApplying(true)
+        }
         const previousModelReasoningEffort = props.session.modelReasoningEffort
         const shouldClearReasoningEffort = shouldClearReasoningEffortForModelChange({
             agentFlavor,
@@ -1556,6 +1566,12 @@ function SessionChatInner(props: SessionChatProps) {
         } catch (e) {
             haptic.notification('error')
             console.error('Failed to set model:', e)
+            if (agentFlavor === 'hermes') {
+                setHermesModelApplyError(e instanceof Error ? e.message : String(e))
+                props.onRefresh()
+            }
+        } finally {
+            if (agentFlavor === 'hermes') setHermesModelApplying(false)
         }
     }, [
         agentFlavor,
@@ -2030,6 +2046,11 @@ function SessionChatInner(props: SessionChatProps) {
                         effort={props.session.effort}
                         agentFlavor={agentFlavor}
                         concurrentClients={props.session.metadata?.capabilities?.concurrentClients}
+                        modelPicker={agentFlavor === 'hermes' ? <HermesModelPicker
+                            models={hermesModelsState.availableModels} value={props.session.model ?? null} onChange={handleModelChange}
+                            isLoading={hermesModelsState.isLoading} error={hermesModelApplyError ?? hermesModelsState.error}
+                            disabled={!props.session.active || props.session.thinking || hermesModelApplying}
+                            onRefresh={() => { setHermesModelApplyError(null); hermesModelsState.refetch() }} /> : undefined}
                         availableModelOptions={
                             agentFlavor === 'codex'
                                 ? codexModelOptions
@@ -2041,6 +2062,8 @@ function SessionChatInner(props: SessionChatProps) {
                                             ? undefined
                                             : cursorPicker.modelOptions
                                     )
+                                    : agentFlavor === 'hermes'
+                                        ? hermesModelOptions
                                     : agentFlavor === 'opencode'
                                         ? opencodeModelOptions
                                         : agentFlavor === 'grok'
@@ -2093,7 +2116,8 @@ function SessionChatInner(props: SessionChatProps) {
                                 : undefined
                         }
                         onPermissionModeChange={
-                            agentFlavor === 'copilot' && controlledByUser
+                            (agentFlavor === 'copilot' && controlledByUser)
+                                || (agentFlavor === 'hermes' && (!props.session.active || props.session.thinking))
                                 ? undefined
                                 : handlePermissionModeChange
                         }
@@ -2122,7 +2146,9 @@ function SessionChatInner(props: SessionChatProps) {
                                 : undefined
                         }
                         onModelChange={
-                            agentFlavor === 'codex'
+                            agentFlavor === 'hermes'
+                                ? (props.session.active && !props.session.thinking ? handleModelChange : undefined)
+                            : agentFlavor === 'codex'
                                 ? (props.session.active && !controlledByUser && !codexModelsState.error ? handleModelChange : undefined)
                                 : agentFlavor === 'cursor'
                                     ? (props.session.active

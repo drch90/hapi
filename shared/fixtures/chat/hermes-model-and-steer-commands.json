@@ -1,0 +1,137 @@
+{
+    "description": "Hermes provider-qualified model commands and native steer acknowledgement retain ordinary HAPI conversation history.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-model-command",
+                "kind": "user-text",
+                "localId": null,
+                "text": "/model custom:office:qwen:32b"
+            },
+            {
+                "createdAt": 1755000001000,
+                "id": "hermes-model-reply:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Current model: custom:office:qwen:32b"
+            },
+            {
+                "createdAt": 1755000002000,
+                "id": "hermes-steer-command",
+                "kind": "user-text",
+                "localId": null,
+                "text": "/steer Keep the current API unchanged."
+            },
+            {
+                "createdAt": 1755000003000,
+                "id": "hermes-steer-reply:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Guidance sent to the active turn."
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-model-command",
+                "kind": "user-text",
+                "localId": null,
+                "text": "/model custom:office:qwen:32b"
+            },
+            {
+                "createdAt": 1755000001000,
+                "id": "hermes-model-reply:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Current model: custom:office:qwen:32b"
+            },
+            {
+                "createdAt": 1755000002000,
+                "id": "hermes-steer-command",
+                "kind": "user-text",
+                "localId": null,
+                "text": "/steer Keep the current API unchanged."
+            },
+            {
+                "createdAt": 1755000003000,
+                "id": "hermes-steer-reply:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Guidance sent to the active turn."
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "steeringActive": true
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "text": "/model custom:office:qwen:32b",
+                        "type": "text"
+                    },
+                    "role": "user"
+                },
+                "createdAt": 1755000000000,
+                "id": "hermes-model-command",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "message": "Current model: custom:office:qwen:32b",
+                            "type": "message"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "hermes-model-reply",
+                "localId": null,
+                "seq": 2
+            },
+            {
+                "content": {
+                    "content": {
+                        "text": "/steer Keep the current API unchanged.",
+                        "type": "text"
+                    },
+                    "role": "user"
+                },
+                "createdAt": 1755000002000,
+                "id": "hermes-steer-command",
+                "localId": null,
+                "seq": 3
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "message": "Guidance sent to the active turn.",
+                            "type": "message"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000003000,
+                "id": "hermes-steer-reply",
+                "localId": null,
+                "seq": 4
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "hermes-model-and-steer-commands"
+}

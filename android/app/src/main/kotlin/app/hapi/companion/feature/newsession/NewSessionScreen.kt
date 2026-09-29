@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
 import app.hapi.companion.feature.directorybrowser.RemoteDirectoryBrowserSheet
 import app.hapi.companion.ui.components.AgentFlavorIcon
+import app.hapi.companion.ui.components.HermesModelPicker
 import app.hapi.companion.ui.theme.HapiTheme
 
 /**
@@ -116,6 +117,7 @@ fun NewSessionScreen(
             onCopilotAgentModeSelected = viewModel::setCopilotAgentMode,
             onServiceTierSelected = viewModel::setServiceTier,
             onCreate = viewModel::create,
+            onRefreshHermesModels = viewModel::refreshHermesModels,
         )
     }
     if (directoryBrowser.open) {
@@ -155,6 +157,7 @@ internal fun NewSessionContent(
     onCopilotAgentModeSelected: (String) -> Unit,
     onServiceTierSelected: (String) -> Unit,
     onCreate: () -> Unit,
+    onRefreshHermesModels: () -> Unit = {},
 ) {
     val form = state.form
     Column(
@@ -175,6 +178,11 @@ internal fun NewSessionContent(
         SessionTypeSection(state, onSessionTypeChange, onWorktreeNameChange)
         AgentSection(state, onAgentSelected, onRetryAgentAvailability)
 
+        if (form.agent == "hermes") {
+            HermesModelPicker(models = state.hermesModels, selected = form.model, loading = state.modelsLoading,
+                error = state.modelsError, disabled = state.isSpawning, onSelect = onModelSelected,
+                onRefresh = onRefreshHermesModels, allowDefault = true)
+        }
         state.modelOptions?.let { options ->
             OptionDropdown(
                 label = stringResource(R.string.new_session_model),

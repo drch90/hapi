@@ -86,6 +86,7 @@ object PermissionModes {
         "kimi" -> CODEX
         "copilot" -> CODEX
         "grok" -> GROK
+        "hermes" -> listOf(PermissionMode.Default, PermissionMode.AcceptEdits)
         "opencode" -> OPENCODE
         "dsh" -> emptyList()
         "agy" -> AGY

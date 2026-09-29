@@ -63,7 +63,7 @@ object NewSessionLogic {
      * `web/src/lib/codexFamilyPermissionAgents.ts`).
      */
     fun usesNativePermissionSelect(flavor: String?): Boolean =
-        flavor == "claude" || flavor == "grok" || usesCodexFamilyPermissionModes(flavor)
+        flavor == "hermes" || flavor == "claude" || flavor == "grok" || usesCodexFamilyPermissionModes(flavor)
 
     /**
      * Exact spawn body (`POST /api/machines/:id/spawn`), field-for-field port
@@ -91,7 +91,7 @@ object NewSessionLogic {
             // v1 model pickers: claude (static presets) and codex (machine
             // catalog). Other flavors' discovery endpoints are TODO(M3d+),
             // so their model is never sent.
-            (agent == "claude" || agent == "codex") && form.model != "auto" -> form.model
+            (agent == "claude" || agent == "codex" || agent == "hermes") && form.model != "auto" -> form.model.trim().takeIf { it.isNotEmpty() }
             else -> null
         }
         return SpawnSessionRequest(

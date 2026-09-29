@@ -1,0 +1,148 @@
+{
+    "description": "Hermes ACP tool execution and assistant output use the shared generic agent envelope.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Create a project file."
+            },
+            {
+                "createdAt": 1755000002000,
+                "id": "hermes-write-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "hermes-write-1",
+                    "input": {
+                        "content": "Hello",
+                        "path": "/workspace/result.txt"
+                    },
+                    "name": "write_file",
+                    "result": "File written",
+                    "state": "completed"
+                }
+            },
+            {
+                "createdAt": 1755000004000,
+                "id": "hermes-output-2:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Created result.txt."
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Create a project file."
+            },
+            {
+                "createdAt": 1755000002000,
+                "id": "hermes-write-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "hermes-write-1",
+                    "input": {
+                        "content": "Hello",
+                        "path": "/workspace/result.txt"
+                    },
+                    "name": "write_file",
+                    "result": "File written",
+                    "state": "completed"
+                }
+            },
+            {
+                "createdAt": 1755000004000,
+                "id": "hermes-output-2:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "Created result.txt."
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "text": "Create a project file.",
+                        "type": "text"
+                    },
+                    "role": "user"
+                },
+                "createdAt": 1755000000000,
+                "id": "hermes-user",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "hermes-write-1",
+                            "input": {
+                                "content": "Hello",
+                                "path": "/workspace/result.txt"
+                            },
+                            "name": "write_file",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000002000,
+                "id": "hermes-output-0",
+                "localId": null,
+                "seq": 2
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "hermes-write-1",
+                            "output": "File written",
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000003000,
+                "id": "hermes-output-1",
+                "localId": null,
+                "seq": 3
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "message": "Created result.txt.",
+                            "type": "message"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000004000,
+                "id": "hermes-output-2",
+                "localId": null,
+                "seq": 4
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "hermes-tool-and-assistant"
+}

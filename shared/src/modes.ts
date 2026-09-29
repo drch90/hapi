@@ -7,7 +7,7 @@ import { z } from 'zod'
  */
 export const AGENT_MESSAGE_PAYLOAD_TYPE = 'codex' as const
 
-export const AGENT_FLAVORS = ['agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'gemini', 'grok', 'kimi', 'opencode', 'pi'] as const
+export const AGENT_FLAVORS = ['agy', 'claude', 'codex', 'dsh', 'copilot', 'cursor', 'gemini', 'grok', 'hermes', 'kimi', 'opencode', 'pi'] as const
 export type AgentFlavor = typeof AGENT_FLAVORS[number]
 export const AgentFlavorSchema = z.enum(AGENT_FLAVORS)
 
@@ -39,6 +39,9 @@ export type KimiPermissionMode = typeof KIMI_PERMISSION_MODES[number]
 
 export const COPILOT_PERMISSION_MODES = ['default', 'read-only', 'safe-yolo', 'yolo'] as const
 export type CopilotPermissionMode = typeof COPILOT_PERMISSION_MODES[number]
+
+export const HERMES_PERMISSION_MODES = ['default', 'acceptEdits'] as const
+export type HermesPermissionMode = typeof HERMES_PERMISSION_MODES[number]
 
 export const GROK_PERMISSION_MODES = ['default', 'auto', 'plan', 'bypassPermissions'] as const
 export type GrokPermissionMode = typeof GROK_PERMISSION_MODES[number]
@@ -139,6 +142,7 @@ export function getPermissionModesForFlavor(flavor?: string | null): readonly Pe
     if (flavor === 'kimi') {
         return KIMI_PERMISSION_MODES
     }
+    if (flavor === 'hermes') return HERMES_PERMISSION_MODES
     if (flavor === 'dsh') {
         return []
     }
@@ -196,13 +200,14 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  * Steer = soft mid-turn delivery (same idea as Cursor GUI default "Send"):
  * - Pi: native steer over the Pi runtime (first-class since #1466)
  * - Codex: app-server `turn/steer` (true mid-turn inject)
+ * - Hermes: native `/steer` through a concurrent ACP prompt (no cancel).
  * - Cursor ACP: concurrent `session/prompt` soft-send (no cancel). Legacy
  *   stream-json Cursor sessions are NOT steerable — gate with
  *   {@link isSteeringSupportedForSession}.
  *
  * Claude / others: not supported (no reachable soft-steer path) — UI hides Steer.
  */
-export const STEERING_SUPPORTED_FLAVORS = ['codex', 'cursor', 'pi'] as const
+export const STEERING_SUPPORTED_FLAVORS = ['codex', 'cursor', 'pi', 'hermes'] as const
 
 export function isSteeringSupportedForFlavor(flavor?: string | null): boolean {
     return (STEERING_SUPPORTED_FLAVORS as readonly string[]).includes(flavor ?? '')
@@ -221,7 +226,7 @@ export function isSteeringSupportedForSession(metadata?: {
     cursorSessionId?: string | null
     cursorSessionProtocol?: 'acp' | 'stream-json' | null
 } | null): boolean {
-    if (metadata?.flavor === 'codex' || metadata?.flavor === 'pi') {
+    if (metadata?.flavor === 'codex' || metadata?.flavor === 'pi' || metadata?.flavor === 'hermes') {
         return true
     }
     if (metadata?.flavor !== 'cursor') {

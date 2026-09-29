@@ -69,7 +69,7 @@ fun AgentFlavorIcon(flavor: String?, modifier: Modifier = Modifier.size(16.dp)) 
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "Un",
+                text = if (normalized == "hermes") "He" else "Un",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 8.sp,
                 lineHeight = 8.sp,

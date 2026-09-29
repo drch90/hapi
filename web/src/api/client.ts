@@ -897,6 +897,15 @@ export class ApiClient {
         )
     }
 
+    async getSessionHermesModels(sessionId: string, refresh = false): Promise<import('@hapi/protocol').HermesModelsResponse> {
+        return await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/hermes-models${refresh ? '?refresh=true' : ''}`)
+    }
+
+    async getMachineHermesModels(machineId: string, cwd: string, refresh = false): Promise<import('@hapi/protocol').HermesModelsResponse> {
+        const query = new URLSearchParams({ cwd, ...(refresh ? { refresh: 'true' } : {}) })
+        return await this.request(`/api/machines/${encodeURIComponent(machineId)}/hermes-models?${query}`)
+    }
+
     async getSessionOpencodeModels(sessionId: string): Promise<OpencodeModelsResponse> {
         return await this.request<OpencodeModelsResponse>(
             `/api/sessions/${encodeURIComponent(sessionId)}/opencode-models`

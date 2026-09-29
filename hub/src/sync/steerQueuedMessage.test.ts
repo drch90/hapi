@@ -63,7 +63,7 @@ describe('SyncEngine.steerQueuedMessage', () => {
 
             expect(result).toEqual({
                 status: 'failed',
-                error: 'Steering is only supported for Pi, Codex, and Cursor ACP sessions',
+                error: 'Steering is only supported for Pi, Codex, Cursor ACP, and Hermes sessions',
                 localId: null
             })
         } finally {

@@ -266,6 +266,8 @@ private class RecordingChatApi : ChatSessionApi {
     }
 
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse = codexModelsResult
+    var hermesModelsResult = app.hapi.protocol.wire.HermesModelsResponse(success = false, error = "not scripted")
+    override suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse = hermesModelsResult
 
     var slashCommandsResult: SlashCommandsResponse = SlashCommandsResponse(success = false, error = "not scripted")
     val slashCommandsCalls = MutableStateFlow(0)
@@ -1108,6 +1110,34 @@ class ChatViewModelInteractionTest {
     }
 
     // --------------------------------------------------------------- misc --
+
+    @Test
+    fun `Hermes catalog keeps provider identity and busy commands keep Stop without Steer`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "hermes", thinking = true,
+            model = "custom:office:qwen:32b", agentState = AgentState(steeringActive = false)))
+        harness.api.hermesModelsResult = app.hapi.protocol.wire.HermesModelsResponse(success = true, availableModels = listOf(
+            app.hapi.protocol.wire.HermesModelSummary("custom:office:qwen:32b", "qwen:32b", providerLabel = "Office"),
+        ))
+        harness.viewModel.start()
+        harness.viewModel.loadModelOptions()
+        val config = harness.viewModel.config.first { it.hermesModels.isNotEmpty() }
+        assertEquals("Office", config.hermesModels.single().providerLabel)
+        assertTrue(config.configurationDisabled)
+        val composer = harness.viewModel.composer.first { it.canStop }
+        assertFalse(composer.canSteer)
+        harness.viewModel.setModel("custom:other:qwen:32b")
+        assertTrue(harness.api.configCalls.value.isEmpty())
+    }
+
+    @Test
+    fun `Hermes model selection waits for server truth`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "hermes", model = "custom:office:qwen:32b"))
+        harness.viewModel.start()
+        harness.viewModel.config.first { it.model == "custom:office:qwen:32b" }
+        harness.viewModel.setModel("custom:other:qwen:32b")
+        harness.api.configCalls.first { "model:custom:other:qwen:32b" in it }
+        assertEquals("custom:office:qwen:32b", harness.viewModel.config.value.model)
+    }
 
     @Test
     fun `draft persists on typing and restores on open`() = runTest {

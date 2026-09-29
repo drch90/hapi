@@ -507,3 +507,16 @@ describe('releaseRecoveredSpawnDedupe', () => {
         expect(recovered.has(123)).toBe(false)
     })
 })
+
+
+describe('Hermes runner arguments', () => {
+    it('binds native resume to the existing hub row', () => {
+        const args = buildCliArgs('hermes', {
+            directory: '/tmp/hermes', resumeSessionId: 'native-id', existingSessionId: 'hub-id',
+            model: 'provider:model', permissionMode: 'acceptEdits'
+        })
+        expect(args[0]).toBe('hermes')
+        expect(args).toEqual(expect.arrayContaining(['--resume', 'native-id', '--existing-session-id', 'hub-id', '--permission-mode', 'acceptEdits']))
+        expect(args).not.toContain('--yolo')
+    })
+})

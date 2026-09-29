@@ -803,6 +803,20 @@ export type OpencodeModelVariantsResponse = {
     error?: string
 }
 
+export type HermesModelSummary = {
+    modelId: string
+    name?: string
+    description?: string
+    providerLabel?: string
+}
+
+export type HermesModelsResponse = {
+    success: boolean
+    availableModels?: HermesModelSummary[]
+    currentModelId?: string | null
+    error?: string
+}
+
 export type GrokModelSummary = {
     modelId: string
     name?: string

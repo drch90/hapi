@@ -4,7 +4,7 @@ import { AGENT_FLAVORS } from '@hapi/protocol'
 import { AgentFlavorIcon } from './AgentFlavorIcon'
 
 // Flavors backed by a @lobehub/icons brand logo.
-const LOGO_FLAVORS = AGENT_FLAVORS.filter((f) => f !== 'pi')
+const LOGO_FLAVORS = AGENT_FLAVORS.filter((f) => f !== 'pi' && f !== 'hermes')
 
 function getWrapper(container: HTMLElement): HTMLElement {
     const wrapper = container.querySelector('span')
@@ -13,6 +13,10 @@ function getWrapper(container: HTMLElement): HTMLElement {
 }
 
 describe('AgentFlavorIcon', () => {
+    it('identifies Hermes with its compact badge', () => {
+        const { container } = render(<AgentFlavorIcon flavor="hermes" />)
+        expect(container.textContent).toBe('He')
+    })
     it.each(LOGO_FLAVORS)('renders an inline SVG brand logo for the %s flavor', (flavor) => {
         const { container } = render(<AgentFlavorIcon flavor={flavor} />)
         const svg = container.querySelector('svg')

@@ -636,4 +636,10 @@
     <string name="chat_media_save_failed">文件保存失败，请重试。</string>
     <string name="chat_media_play_failed">当前设备无法播放此文件，可保存后使用其他应用打开。</string>
     <string name="chat_media_fullscreen">全屏播放</string>
+    <string name="hermes_model_default">使用 Hermes 默认配置</string>
+    <string name="hermes_model_refresh">刷新模型</string>
+    <string name="hermes_model_search">搜索供应商或模型</string>
+    <string name="hermes_model_empty">没有匹配的模型</string>
+    <string name="hermes_model_manual">模型 ID（可选）</string>
+    <string name="hermes_settings_busy">请等待 Hermes 完成后再修改设置。</string>
 </resources>

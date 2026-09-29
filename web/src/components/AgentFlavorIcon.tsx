@@ -81,7 +81,9 @@ export function AgentFlavorIcon({ flavor, className }: { flavor?: string | null;
         )
     }
 
-    const badge = UNKNOWN_FLAVOR_BADGE
+    const badge = normalized === 'hermes'
+        ? { ...UNKNOWN_FLAVOR_BADGE, label: 'He' }
+        : UNKNOWN_FLAVOR_BADGE
     return (
         <span
             aria-hidden="true"

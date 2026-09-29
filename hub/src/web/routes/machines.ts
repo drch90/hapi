@@ -283,6 +283,22 @@ export function createMachinesRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
     })
 
+    app.get('/machines/:id/hermes-models', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ success: false, error: 'Not connected' }, 503)
+        const machineId = c.req.param('id')
+        const machine = requireMachine(c, engine, machineId)
+        if (machine instanceof Response) return machine
+        if (!machine.active) return c.json({ success: false, error: 'Machine is offline' }, 409)
+        const cwd = (c.req.query('cwd') ?? '').trim()
+        if (!cwd) return c.json({ success: false, error: 'cwd query parameter is required' }, 400)
+        try {
+            return c.json(await engine.listHermesModelsForCwd(machineId, cwd, c.req.query('refresh') === 'true'))
+        } catch (error) {
+            return c.json({ success: false, error: error instanceof Error ? error.message : 'Hermes model discovery failed' }, 500)
+        }
+    })
+
     app.get('/machines/:id/opencode-models', async (c) => {
         const engine = getSyncEngine()
         if (!engine) {

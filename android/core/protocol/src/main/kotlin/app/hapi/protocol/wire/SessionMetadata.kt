@@ -40,6 +40,7 @@ data class SessionMetadata(
     val geminiSessionId: String? = null,
     val opencodeSessionId: String? = null,
     val grokSessionId: String? = null,
+    val hermesSessionId: String? = null,
     val agySessionId: String? = null,
     val cursorSessionId: String? = null,
     val kimiSessionId: String? = null,

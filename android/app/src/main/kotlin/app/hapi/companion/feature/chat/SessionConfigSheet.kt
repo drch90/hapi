@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
+import app.hapi.companion.ui.components.HermesModelPicker
 import app.hapi.companion.ui.theme.HapiTheme
 import app.hapi.companion.ui.theme.hapi
 import app.hapi.protocol.catalog.CatalogOption
@@ -48,6 +49,7 @@ fun SessionConfigSheet(
     onSetModel: (String?) -> Unit,
     onSetEffort: (String?) -> Unit,
     onLoadModelOptions: () -> Unit,
+    onRefreshHermesModels: () -> Unit = {},
 ) {
     LaunchedEffect(Unit) { onLoadModelOptions() }
 
@@ -57,6 +59,7 @@ fun SessionConfigSheet(
             onSetPermissionMode = onSetPermissionMode,
             onSetModel = onSetModel,
             onSetEffort = onSetEffort,
+            onRefreshHermesModels = onRefreshHermesModels,
         )
     }
 }
@@ -67,6 +70,7 @@ internal fun SessionConfigSheetContent(
     onSetPermissionMode: (PermissionMode) -> Unit,
     onSetModel: (String?) -> Unit,
     onSetEffort: (String?) -> Unit,
+    onRefreshHermesModels: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -81,6 +85,9 @@ internal fun SessionConfigSheetContent(
         } else if (config.controlledByUser) {
             Notice(stringResource(R.string.chat_config_terminal_note))
         }
+        if (config.flavor == "hermes" && config.configurationDisabled && config.active) {
+            Notice(stringResource(R.string.hermes_settings_busy))
+        }
 
         if (config.permissionModes.isNotEmpty()) {
             SectionTitle(stringResource(R.string.chat_config_permission_mode))
@@ -90,12 +97,18 @@ internal fun SessionConfigSheetContent(
                     selected = mode.wireId == (config.permissionMode ?: "default"),
                     tone = mode.tone,
                     onClick = { onSetPermissionMode(mode) },
+                    enabled = !config.configurationDisabled,
                 )
             }
         }
 
         val modelOptions = config.modelOptions
-        if (modelOptions != null || config.modelOptionsLoading) {
+        if (config.flavor == "hermes") {
+            SectionTitle(stringResource(R.string.chat_config_model))
+            HermesModelPicker(models = config.hermesModels, selected = config.model, loading = config.modelOptionsLoading,
+                error = config.modelsError, disabled = config.configurationDisabled, onSelect = onSetModel,
+                onRefresh = onRefreshHermesModels)
+        } else if (modelOptions != null || config.modelOptionsLoading) {
             SectionTitle(stringResource(R.string.chat_config_model))
             if (config.modelOptionsLoading) {
                 Row(
@@ -165,11 +178,12 @@ private fun OptionRow(
     selected: Boolean,
     onClick: () -> Unit,
     tone: PermissionModeTone? = null,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .selectable(selected = selected, onClick = onClick)
+            .selectable(selected = selected, onClick = onClick, enabled = enabled)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

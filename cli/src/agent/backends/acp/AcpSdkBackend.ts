@@ -30,8 +30,11 @@ type AcpUsageUpdate = {
 export type AcpModelDescriptor = {
     modelId: string;
     name?: string;
+    description?: string;
     reasoningEfforts?: Array<{ value: string; name?: string; isDefault?: boolean }>;
 };
+
+export type AcpCommandDescriptor = { name: string; description?: string; inputHint?: string };
 
 export type AcpSessionModelsMetadata = {
     availableModels: AcpModelDescriptor[];
@@ -70,6 +73,8 @@ export class AcpSdkBackend implements AgentBackend {
     private readonly sessionInfoRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly initialAvailableCommands = new Set<string>();
     private readonly sessionAvailableCommands = new Map<string, Set<string>>();
+    private readonly commandDescriptors = new Map<string, AcpCommandDescriptor[]>();
+    private commandsListener: ((sessionId: string, commands: AcpCommandDescriptor[]) => void) | null = null;
     private autoPermissionModeEnabled: boolean | null = null;
     private messageHandler: AcpMessageHandler | null = null;
     private activeSessionId: string | null = null;
@@ -138,6 +143,7 @@ export class AcpSdkBackend implements AgentBackend {
         env?: Record<string, string>;
         textChunkMode?: AcpTextChunkMode;
         flavor?: AgentFlavor;
+        onClose?: (error: Error) => void;
     }) {}
 
     async initialize(): Promise<void> {
@@ -170,6 +176,7 @@ export class AcpSdkBackend implements AgentBackend {
         }
 
         this.transport = transport;
+        if (this.options.onClose) transport.onClose(this.options.onClose);
 
         this.transport.onNotification((method, params) => {
             if (method === 'session/update') {
@@ -367,9 +374,18 @@ export class AcpSdkBackend implements AgentBackend {
             }
         );
 
+        if (this.options.flavor === 'hermes' && !isObject(response)) {
+            throw new Error('Hermes session was not found or returned an invalid load response');
+        }
         const loadedSessionId = isObject(response) ? asString(response.sessionId) : null;
+        if (this.options.flavor === 'hermes' && loadedSessionId && loadedSessionId !== config.sessionId) {
+            throw new Error('Hermes returned a different session while resuming');
+        }
         const sessionId = loadedSessionId ?? config.sessionId;
         this.activeSessionId = sessionId;
+        // Hermes load is the authoritative read after its empty set_model reply.
+        // Missing model state must not reuse the optimistic switch target.
+        if (this.options.flavor === 'hermes') this.sessionModelsMetadata.delete(sessionId);
         this.captureSessionMetadata(sessionId, response);
         return sessionId;
     }
@@ -429,7 +445,7 @@ export class AcpSdkBackend implements AgentBackend {
 
         if (usedConfigOption) {
             this.captureSessionMetadata(sessionId, response);
-        } else if (opts?.flavor === 'opencode' || opts?.flavor === 'grok') {
+        } else if (opts?.flavor === 'opencode' || opts?.flavor === 'grok' || opts?.flavor === 'hermes') {
             // OpenCode's set_model response only carries an opaque `_meta` block,
             // not `availableModels`/`currentModelId`. Optimistically update the
             // cached currentModelId (the call succeeded, so the agent has switched)
@@ -506,6 +522,14 @@ export class AcpSdkBackend implements AgentBackend {
         }
         return this.sessionAvailableCommands.get(sessionId)?.has(command)
             ?? this.initialAvailableCommands.has(command);
+    }
+
+    getAvailableCommands(sessionId: string): AcpCommandDescriptor[] | undefined {
+        return this.commandDescriptors.get(sessionId);
+    }
+
+    setAvailableCommandsListener(listener: ((sessionId: string, commands: AcpCommandDescriptor[]) => void) | null): void {
+        this.commandsListener = listener;
     }
 
     /** Forwards ACP `usage_update` to the web status bar when no prompt is active (e.g. session resume). */
@@ -930,6 +954,8 @@ export class AcpSdkBackend implements AgentBackend {
         this.sessionModelsMetadata.clear();
         this.initialAvailableCommands.clear();
         this.sessionAvailableCommands.clear();
+        this.commandDescriptors.clear();
+        this.commandsListener = null;
         this.autoPermissionModeEnabled = null;
         this.notifyResponseComplete();
         await this.transport.close();
@@ -1336,6 +1362,14 @@ export class AcpSdkBackend implements AgentBackend {
         );
         if (sessionId) {
             this.sessionAvailableCommands.set(sessionId, commands);
+            const descriptors = rawCommands.filter(isObject).flatMap((entry) => {
+                const name = asString(entry.name);
+                if (!name) return [];
+                return [{ name, description: asString(entry.description) ?? undefined,
+                    inputHint: isObject(entry.input) ? asString(entry.input.hint) ?? undefined : undefined }];
+            });
+            this.commandDescriptors.set(sessionId, descriptors);
+            this.commandsListener?.(sessionId, descriptors);
             return;
         }
 
@@ -1453,7 +1487,8 @@ export class AcpSdkBackend implements AgentBackend {
         const addModel = (
             modelId: string,
             name?: string,
-            reasoningEfforts?: AcpModelDescriptor['reasoningEfforts']
+            reasoningEfforts?: AcpModelDescriptor['reasoningEfforts'],
+            description?: string
         ) => {
             const trimmedId = modelId.trim();
             if (!trimmedId) return;
@@ -1463,8 +1498,8 @@ export class AcpSdkBackend implements AgentBackend {
                 byModelId.set(
                     trimmedId,
                     trimmedName && trimmedName !== trimmedId
-                        ? { modelId: trimmedId, name: trimmedName, ...(reasoningEfforts ? { reasoningEfforts } : {}) }
-                        : { modelId: trimmedId, ...(reasoningEfforts ? { reasoningEfforts } : {}) }
+                        ? { modelId: trimmedId, name: trimmedName, ...(description ? { description } : {}), ...(reasoningEfforts ? { reasoningEfforts } : {}) }
+                        : { modelId: trimmedId, ...(description ? { description } : {}), ...(reasoningEfforts ? { reasoningEfforts } : {}) }
                 );
                 return;
             }
@@ -1489,14 +1524,14 @@ export class AcpSdkBackend implements AgentBackend {
                         }))
                         .filter((effort) => effort.value.length > 0)
                     : undefined;
-                addModel(modelId, asString(entry.name) ?? undefined, reasoningEfforts);
+                addModel(modelId, asString(entry.name) ?? undefined, reasoningEfforts, asString(entry.description) ?? undefined);
             }
         } else {
             // Preserve previously-captured availableModels when the response only
             // updates currentModelId (e.g. a setModel response from some agents).
             const existing = this.sessionModelsMetadata.get(sessionId);
             for (const entry of existing?.availableModels ?? []) {
-                addModel(entry.modelId, entry.name, entry.reasoningEfforts);
+                addModel(entry.modelId, entry.name, entry.reasoningEfforts, entry.description);
             }
         }
 

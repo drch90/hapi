@@ -53,6 +53,7 @@ class CatalogTest {
             listOf("default", "read-only", "safe-yolo", "yolo"),
             PermissionModes.forFlavor("codex").map { it.wireId }
         )
+        assertEquals(listOf("default", "acceptEdits"), PermissionModes.forFlavor("hermes").map { it.wireId })
         // gemini/kimi/copilot share the codex list.
         assertEquals(PermissionModes.forFlavor("codex"), PermissionModes.forFlavor("gemini"))
         assertEquals(PermissionModes.forFlavor("codex"), PermissionModes.forFlavor("kimi"))
@@ -90,7 +91,7 @@ class CatalogTest {
     @Test
     fun `agent flavors match AGENT_FLAVORS and CREATABLE excludes gemini`() {
         assertEquals(
-            listOf("agy", "claude", "codex", "dsh", "copilot", "cursor", "gemini", "grok", "kimi", "opencode", "pi"),
+            listOf("agy", "claude", "codex", "dsh", "copilot", "cursor", "gemini", "grok", "hermes", "kimi", "opencode", "pi"),
             AgentFlavor.KNOWN.map { it.id }
         )
         assertFalse(AgentFlavor.CREATABLE.contains(AgentFlavor.Gemini))

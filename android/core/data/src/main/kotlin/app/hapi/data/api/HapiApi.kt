@@ -139,6 +139,12 @@ class HapiApi internal constructor(
     /** Normalized hub origin this instance talks to. */
     val hubUrl: String = baseUrl.toString().removeSuffix("/")
 
+    // Hermes cold startup/model discovery has a 75-second Hub RPC budget.
+    // Keep the authenticated transport alive long enough to receive its result.
+    private val hermesStartupClient by lazy {
+        client.newBuilder().readTimeout(90, java.util.concurrent.TimeUnit.SECONDS).build()
+    }
+
     // ---------------------------------------------------------------- core --
 
     /**
@@ -469,6 +475,13 @@ class HapiApi internal constructor(
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse =
         request("GET", url("api", "sessions", sessionId, "codex-models").build())
 
+    override suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse =
+        request("GET", url("api", "sessions", sessionId, "hermes-models").addQueryParameter("refresh", refresh.toString()).build())
+
+    suspend fun getMachineHermesModels(machineId: String, cwd: String, refresh: Boolean = false): app.hapi.protocol.wire.HermesModelsResponse =
+        request("GET", url("api", "machines", machineId, "hermes-models")
+            .addQueryParameter("cwd", cwd).addQueryParameter("refresh", refresh.toString()).build(), client = hermesStartupClient)
+
     // ------------------------------------------------- commands & skills --
 
     /** `GET /api/sessions/:id/slash-commands` (RPC-wrapped: check `success`). */
@@ -499,7 +512,8 @@ class HapiApi internal constructor(
      * not HTTP status — a failed spawn is still HTTP 200 with `type: 'error'`.
      */
     suspend fun spawnSession(machineId: String, spawn: SpawnSessionRequest): SpawnResponse =
-        request("POST", url("api", "machines", machineId, "spawn").build(), spawn.toJsonBody())
+        request("POST", url("api", "machines", machineId, "spawn").build(), spawn.toJsonBody(),
+            client = if (spawn.agent == "hermes") hermesStartupClient else client)
 
     /** Installed/static-configured Agents reported by the selected runner. */
     suspend fun getMachineAgentAvailability(machineId: String): AgentAvailabilityResponse =

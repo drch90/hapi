@@ -97,6 +97,12 @@ private class FakeGateway : NewSessionGateway {
         codexThrows?.let { throw it }
         return codexResult
     }
+    var hermesResult = app.hapi.protocol.wire.HermesModelsResponse(success = true, availableModels = emptyList())
+    val hermesCalls = mutableListOf<Pair<String, String>>()
+    override suspend fun hermesModels(machineId: String, cwd: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse {
+        hermesCalls.add(machineId to cwd)
+        return hermesResult
+    }
 }
 
 private class FakeMachineStore(initial: List<Machine> = emptyList()) : MachineListStore {
@@ -162,6 +168,18 @@ private fun encode(request: SpawnSessionRequest): JsonObject =
 // ---------------------------------------------------- spawn body exactness --
 
 class SpawnBodyTest {
+
+    @Test
+    fun `Hermes preserves provider-qualified model and native permission without yolo`() {
+        val body = encode(NewSessionLogic.buildSpawnRequest(NewSessionForm(
+            machineId = "m1", directory = "/repo", agent = "hermes",
+            model = "custom:office:qwen:32b", permissionMode = "acceptEdits", yolo = true,
+        ), codexFastTierVisible = false))
+        assertEquals("custom:office:qwen:32b", body["model"]!!.jsonPrimitive.content)
+        assertEquals("acceptEdits", body["permissionMode"]!!.jsonPrimitive.content)
+        assertNull(body["yolo"])
+        assertNull(body["effort"])
+    }
 
     @Test
     fun `claude simple session with model, effort and permission mode`() {
@@ -413,6 +431,28 @@ class NewSessionLogicTest {
 // ---------------------------------------------------------- view model flow --
 
 class NewSessionViewModelTest {
+
+    @Test
+    fun `Hermes discovery follows workspace and clears on agent switch`() = runTest {
+        val gateway = FakeGateway().apply {
+            hermesResult = app.hapi.protocol.wire.HermesModelsResponse(success = true, availableModels = listOf(
+                app.hapi.protocol.wire.HermesModelSummary("custom:office:qwen:32b", "qwen:32b", providerLabel = "Office"),
+            ))
+        }
+        val vm = buildViewModel(gateway, FakeMachineStore(listOf(machine("m1"))), FakePrefs())
+        advanceUntilIdle()
+        vm.setAgent("hermes")
+        vm.setDirectory("/repo")
+        advanceUntilIdle()
+        assertEquals(listOf("m1" to "/repo"), gateway.hermesCalls)
+        assertEquals("Office", vm.uiState.value.hermesModels.single().providerLabel)
+        vm.refreshHermesModels()
+        advanceUntilIdle()
+        assertEquals(2, gateway.hermesCalls.size)
+        vm.setAgent("claude")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.hermesModels.isEmpty())
+    }
 
     /**
      * VM scope on the test scheduler as FOREGROUND work: `advanceUntilIdle`

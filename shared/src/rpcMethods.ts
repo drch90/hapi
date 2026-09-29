@@ -40,6 +40,8 @@ export const RPC_METHODS = {
     ListOpencodeModelsForCwd: 'listOpencodeModelsForCwd',
     ListGrokModelsForCwd: 'listGrokModelsForCwd',
     ListGrokModels: 'listGrokModels',
+    ListHermesModels: 'listHermesModels',
+    ListHermesModelsForCwd: 'listHermesModelsForCwd',
     ListGrokReasoningEffortOptions: 'listGrokReasoningEffortOptions',
     ListCopilotModelsForCwd: 'listCopilotModelsForCwd',
     ListCopilotModels: 'listCopilotModels',

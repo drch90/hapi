@@ -170,6 +170,18 @@
                 "tone": "danger"
             }
         ],
+        "hermes": [
+            {
+                "label": "Default",
+                "mode": "default",
+                "tone": "neutral"
+            },
+            {
+                "label": "Accept Edits",
+                "mode": "acceptEdits",
+                "tone": "warning"
+            }
+        ],
         "kimi": [
             {
                 "label": "Default",

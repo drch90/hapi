@@ -1,5 +1,8 @@
 package app.hapi.companion.feature.newsession
 
+import app.hapi.companion.ui.components.HermesModelsUi
+import app.hapi.protocol.wire.HermesModelSummary
+
 import app.hapi.companion.feature.directorybrowser.RemoteDirectoryBrowserController
 import app.hapi.companion.feature.directorybrowser.RemoteDirectoryPath
 import app.hapi.companion.feature.newsession.NewSessionLogic.buildSpawnRequest
@@ -28,6 +31,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -142,6 +146,7 @@ data class NewSessionUiState(
     val canCreate: Boolean,
     /** Armed after the first Create tap on a missing simple directory. */
     val confirmCreateDirectory: Boolean,
+    val hermesModels: List<HermesModelSummary> = emptyList(),
 )
 
 /**
@@ -172,6 +177,8 @@ class NewSessionViewModel(
     private val form = MutableStateFlow(NewSessionForm())
     private val prefsData = MutableStateFlow(NewSessionPrefsData())
     private val codexModels = MutableStateFlow<CodexModelsUi>(CodexModelsUi.Hidden)
+    private val hermesModels = MutableStateFlow(HermesModelsUi())
+    private val hermesRefresh = MutableStateFlow(0)
     private val agentAvailability = MutableStateFlow<AgentAvailabilityUi>(AgentAvailabilityUi.Loading)
     private val suggestions = MutableStateFlow<List<String>>(emptyList())
     private val pathExistence = MutableStateFlow<Map<String, Boolean>>(emptyMap())
@@ -205,6 +212,23 @@ class NewSessionViewModel(
     private var cachedListing: Pair<Pair<String, String>, List<MachineDirectoryEntry>>? = null
 
     init {
+        scope.launch {
+            combine(form, pathExistence, outsideWorkspaceRoots, hermesRefresh) { current, exists, outside, refresh ->
+                Triple(current.machineId, current.trimmedDirectory.takeIf {
+                    current.agent == "hermes" && exists[it] == true && it !in outside
+                }, refresh)
+            }.distinctUntilChanged().collectLatest { (machineId, cwd, refresh) ->
+                hermesModels.value = HermesModelsUi()
+                if (machineId == null || cwd == null) return@collectLatest
+                delay(300)
+                hermesModels.value = HermesModelsUi(loading = true)
+                try {
+                    val result = gateway.hermesModels(machineId, cwd, refresh > 0)
+                    hermesModels.value = HermesModelsUi(result.availableModels.orEmpty(), error = if (result.success) null else result.error ?: strings.modelsFailedDetail.format("Hermes"))
+                } catch (cancellation: CancellationException) { throw cancellation }
+                catch (error: Exception) { hermesModels.value = HermesModelsUi(error = error.message ?: strings.modelsFailedDetail.format("Hermes")) }
+            }
+        }
         scope.launch {
             prefsData.value = runCatching { prefs.readPrefs() }.getOrDefault(NewSessionPrefsData())
             val draft = runCatching { prefs.readDraft() }.getOrNull()?.let(NewSessionLogic::sanitizeDraft)
@@ -268,7 +292,7 @@ class NewSessionViewModel(
     val uiState: StateFlow<NewSessionUiState> = combine(
         form,
         machineStore.machines,
-        combine(codexModels, agentAvailability) { codex, availability -> CatalogState(codex, availability) },
+        combine(codexModels, agentAvailability, hermesModels) { codex, availability, hermes -> CatalogState(codex, availability, hermes) },
         combine(suggestions, pathExistence, prefsData, outsideWorkspaceRoots, directoryLookupError) {
                 s, exists, stored, outside, lookupError ->
             DirectoryData(s, exists, stored, outside, lookupError)
@@ -301,6 +325,7 @@ class NewSessionViewModel(
     private data class CatalogState(
         val codex: CodexModelsUi,
         val availability: AgentAvailabilityUi,
+        val hermes: HermesModelsUi = HermesModelsUi(),
     )
 
     private data class DirectoryData(
@@ -368,6 +393,8 @@ class NewSessionViewModel(
             if (current.agent == "codex") reconcileCodexSelections(next) else next
         }
     }
+
+    fun refreshHermesModels() { hermesRefresh.value++ }
 
     fun setEffort(effort: String) = form.update { it.copy(effort = effort) }
 
@@ -836,8 +863,9 @@ class NewSessionViewModel(
             agentAvailabilityLoading = availability is AgentAvailabilityUi.Loading,
             agentAvailabilityError = availabilityError,
             modelOptions = modelOptions,
-            modelsLoading = agent == "codex" && codex is CodexModelsUi.Loading,
-            modelsError = (codex as? CodexModelsUi.Failed)?.message?.let { strings.modelsFailedDetail.format(it) },
+            modelsLoading = if (agent == "hermes") catalogs.hermes.loading else agent == "codex" && codex is CodexModelsUi.Loading,
+            modelsError = if (agent == "hermes") catalogs.hermes.error else (codex as? CodexModelsUi.Failed)?.message?.let { strings.modelsFailedDetail.format(it) },
+            hermesModels = catalogs.hermes.models,
             effortOptions = if (agent == "claude") NewSessionCatalogs.CLAUDE_EFFORTS else null,
             reasoningEffortOptions = reasoningEffortOptions,
             permission = permission,

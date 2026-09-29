@@ -19,6 +19,7 @@ agent's integration; their supported syntax varies by agent.
 | GitHub Copilot | `hapi copilot` | ACP (`copilot --acp --stdio`) | ✓ | ✓ | `default` `read-only` `safe-yolo` `yolo` | ✓ |
 | Kimi | `hapi kimi` | ACP (`kimi acp`) | ✓ | ✓ | `default` `read-only` `safe-yolo` `yolo` | ✓ |
 | OpenCode | `hapi opencode` | ACP (`opencode acp`) | ✓ | ✓ | `default` `plan` `yolo` | ✓ |
+| Hermes Agent | `hapi hermes` | ACP (`hermes acp`) | — | ✓ | `default` `acceptEdits` | ✓ |
 | DeepSeek Harness | `hapi dsh` | ACP (`dsh-acp-demo` or configured server) | — | ✓ | Managed by DSH ACP composition | — |
 | Antigravity (agy) | `hapi agy` | Headless print mode (per-turn `agy -p` + NDJSON) | — | ✓ | `request-review` `always-proceed` | ✓ |
 | Pi | `hapi pi` | `pi --mode rpc` (JSON-line RPC over stdio) | — | ✓ | none (always auto-approve) | ✓ |
@@ -30,7 +31,7 @@ Gemini is no longer launchable: `hapi gemini` is kept as a tombstone command tha
 
 ### ACP
 
-Most remote integrations speak the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio through a shared HAPI backend. ACP gives remote sessions bidirectional permission approval, plan/todo updates, question UI, model catalogs, and session resume via `session/load`. Cursor, Grok, Copilot, Kimi, OpenCode, and DeepSeek Harness remote sessions all run over ACP. DSH's official ACP server is intentionally automation-only and currently supports fresh sessions, committed assistant output, cancellation, and one-shot permissions; it does not provide native resume, model switching, MCP injection, or live tool/reasoning telemetry.
+Most remote integrations speak the [Agent Client Protocol](https://agentclientprotocol.com) (ACP) over stdio through a shared HAPI backend. ACP gives remote sessions bidirectional permission approval, plan/todo updates, question UI, model catalogs, and session resume via `session/load`. Cursor, Grok, Copilot, Kimi, OpenCode, Hermes, and DeepSeek Harness remote sessions all run over ACP. DSH's official ACP server is intentionally automation-only and currently supports fresh sessions, committed assistant output, cancellation, and one-shot permissions; it does not provide native resume, model switching, MCP injection, or live tool/reasoning telemetry.
 
 ### Permission modes
 
@@ -38,7 +39,7 @@ Permission modes are per-agent — each flavor exposes its own set (see the matr
 
 ### Local and remote mode
 
-Work **locally** in the terminal or **remotely** from web/phone, keeping the same conversation when you hand off. The support matrix shows which interfaces each agent offers; DSH, Pi, and Antigravity accept input only through HAPI's remote interface.
+Work **locally** in the terminal or **remotely** from web/phone, keeping the same conversation when you hand off. The support matrix shows which interfaces each agent offers; DSH, Hermes, Pi, and Antigravity accept input only through HAPI's remote interface.
 
 - **Remote → local:** continue in the terminal. If it shows the remote-control screen, press double-space to return to local input.
 - **Local → remote:** send a message from the web UI or phone; HAPI handles the handoff.
@@ -52,7 +53,7 @@ hapi resume                # Interactive picker of resumable sessions on this ma
 hapi resume <session-id>   # Resume a specific HAPI session
 ```
 
-`hapi resume` reopens the conversation on this machine, including active sessions you were using from your phone. Gemini and fresh-session-only DSH cannot be resumed. Pi and Antigravity resume with input still controlled from HAPI rather than the terminal.
+`hapi resume` reopens the conversation on this machine, including active sessions you were using from your phone. Gemini and fresh-session-only DSH cannot be resumed. Hermes, Pi, and Antigravity resume with input still controlled from HAPI rather than the terminal.
 
 ### Mathematical formulas in HAPI Markdown
 
@@ -252,6 +253,57 @@ HAPI also exposes Grok's common slash commands, discovers skills from `.grok/ski
 - Grok subscription, credit, and model availability are controlled by xAI.
 
 If a remote session reports authentication failure, run `grok login --device-auth` on the runner machine and retry.
+
+## Hermes Agent
+
+Hermes sessions use the installed Nous Research Hermes CLI over ACP. Install
+and authenticate Hermes on the runner machine first; HAPI reuses its existing
+configuration and `HERMES_HOME`. Verify ACP availability with `hermes acp --check`.
+Hermes 0.21.3 is the integration baseline.
+
+```bash
+hapi hermes
+hapi hermes --model provider:model --permission-mode acceptEdits
+hapi resume <hapi-session-id>
+```
+
+`HAPI_HERMES_PATH` can select another Hermes executable. Terminal launches show
+remote status; enter messages in HAPI Web/PWA or Android. New Session offers
+Hermes when it is installed. Creation and session settings provide a searchable
+model list grouped by provider, with an explicit refresh action. Creation can
+use the Hermes configured default or a manually entered model ID when discovery
+is unavailable. Custom provider choices retain the complete Hermes ID, such as
+`custom:office:qwen:32b`, so identical model names at different endpoints remain
+distinct. Change model or permission settings between turns. HAPI reads back
+the canonical selection after switching; uncertain outcomes display an error
+and require refreshing the catalog.
+When Hermes reports only the generic `custom` provider after a successful
+switch, HAPI retains the accepted provider choice if the returned model matches.
+
+Supported commands are `/help`, `/model [model ID]`, `/tools`, `/context`,
+`/reset`, `/compress [focus]`, `/version`, and `/steer <guidance>`. Suggestions
+follow the commands advertised by the installed Hermes build. Model changes,
+reset and compression require an idle session. Reset clears the native context
+and compression summarizes it; both keep the HAPI session URL and visible
+conversation history. Live `/steer`, **Send and steer**, and the queue's **Steer**
+button use Hermes' native guidance channel and display its acknowledgement or
+error. When idle, `/steer` sends the guidance as a normal prompt. HAPI retains its
+durable waiting queue; Hermes' separate `/queue` command is not exposed.
+
+`default` asks for edits. `acceptEdits` maps to Hermes' native workspace edit
+policy: workspace and temporary-file edits can proceed automatically, while
+sensitive paths still require approval. HAPI answers native approvals and never
+turns **Allow for session** into a permanent grant. Requests expire in HAPI after
+one minute or when Hermes withdraws them. For one-shot requests, session approval
+applies only to that operation. Hermes' own command policies still apply.
+
+Stop or end sessions using the normal HAPI controls. Resume loads the original
+conversation on its original machine and preserves the HAPI session URL. Missing
+native history is reported as an error. This integration manages only sessions
+created through HAPI; external history import, local TUI handoff, YOLO, fork,
+and effort controls are unavailable. Android supports Hermes creation, models,
+commands and steering. iOS retains generic conversation/approval support; its
+Hermes creation and model picker UI are not included.
 
 ## DeepSeek Harness
 

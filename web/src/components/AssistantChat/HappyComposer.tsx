@@ -12,6 +12,7 @@ import {
     type FormEvent as ReactFormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
     type MutableRefObject,
+    type ReactNode,
     type SyntheticEvent as ReactSyntheticEvent,
     useCallback,
     useEffect,
@@ -306,6 +307,7 @@ export function HappyComposer(props: {
     concurrentClients?: boolean
     agentFlavor?: string | null
     availableModelOptions?: Array<{ value: string | null; label: string }>
+    modelPicker?: ReactNode
     /** Full Pi model data with thinkingLevelMap for provider grouping + thinking level filtering */
     piModels?: PiModelSummary[]
     /** Pi: provider-qualified selected model from metadata (survives reload;
@@ -413,6 +415,7 @@ export function HappyComposer(props: {
         concurrentClients = false,
         agentFlavor,
         availableModelOptions,
+        modelPicker,
         piModels,
         piSelectedModel,
         availableModelReasoningEffortOptions,
@@ -1373,7 +1376,9 @@ export function HappyComposer(props: {
             // would lose the provider and can pick the wrong cached match or clear
             // the model. Pi model changes go through the settings sheet's
             // provider-qualified picker (piModelGroups) only.
-            if (agentFlavor === 'pi') return
+            // Hermes also uses its provider picker, including catalog error/refresh
+            // state; the generic keyboard cycler must not bypass that state.
+            if (agentFlavor === 'pi' || agentFlavor === 'hermes') return
             if (e.key === 'm' && (e.metaKey || e.ctrlKey) && onModelChange && supportsModelChange(agentFlavor)) {
                 e.preventDefault()
                 onModelChange(getNextModelForFlavor(agentFlavor, model, availableModelOptions))
@@ -1592,7 +1597,7 @@ export function HappyComposer(props: {
         // back to the generic synthesized modelOptions rows (they would post a
         // bare model id the Pi runner cannot resolve to a provider).
         ? Boolean(onModelChange && piModelGroups)
-        : Boolean(onModelChange && supportsModelChange(agentFlavor) && modelOptions.length > 0)
+        : Boolean(onModelChange && supportsModelChange(agentFlavor) && (modelPicker || modelOptions.length > 0))
         && !cursorVariantDrillDownActive
     const showModelEffortSettings = cursorVariantDrillDownActive
         ? Boolean((onModelEffortChange ?? onModelChange) && visibleModelEffortOptions && visibleModelEffortOptions.length > 0)
@@ -1715,7 +1720,7 @@ export function HappyComposer(props: {
                                 <div className="px-3 pb-1 text-xs font-semibold text-[var(--app-hint)]">
                                     {t('misc.model')}
                                 </div>
-                                {agentFlavor === 'pi'
+                                {modelPicker ?? (agentFlavor === 'pi'
                                     ? piModelGroups?.map((group) => (
                                         <div key={group.provider}>
                                             <div className="px-3 pt-2 pb-0.5 text-xs font-medium text-[var(--app-hint)]">
@@ -1797,7 +1802,7 @@ export function HappyComposer(props: {
                                             </span>
                                         </button>
                                         )
-                                    })}
+                                    }))}
                             </div>
                         ) : null}
 

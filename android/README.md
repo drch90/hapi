@@ -24,6 +24,11 @@ differences, pairing and features currently available through the web.
 - **Composer:** optimistic send, queue/steer where supported, drafts and
   attachments uploaded on selection. Slash suggestions combine session
   metadata and the slash-command RPC; the skills `$` picker has no UI.
+- **Hermes:** creation and session models are searchable by provider/name/full
+  ID, including custom endpoints. Discovery has refresh and error states;
+  creation also accepts a manual model ID or the configured default. Settings
+  changes are idle-only and wait for server confirmation. Native command
+  suggestions and live steering use the same chat and durable queue controls.
 - **Dictation:** provider discovery on chat entry picks the first
   `standard`-capable provider. The microphone stays hidden until one is
   available. First use requests `RECORD_AUDIO`; `MediaRecorder` records

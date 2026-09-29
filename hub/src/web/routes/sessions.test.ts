@@ -137,6 +137,7 @@ function createApp(session: Session, opts?: {
             models: []
         })),
         listOpencodeModelsForSession,
+        listHermesModelsForSession: listOpencodeModelsForSession,
         listOpencodeReasoningEffortOptionsForSession,
         listGrokModelsForSession,
         listGrokReasoningEffortOptionsForSession,
@@ -1703,4 +1704,16 @@ describe('sessions routes', () => {
         expect(body.sessions.map((s) => s.id)).toEqual(['new-inactive'])
     })
 
+})
+
+
+describe('Hermes model catalog endpoint', () => {
+    it('returns the active session catalog and rejects other flavors and inactive sessions', async () => {
+        for (const [flavor, active, expectedStatus] of [['hermes', true, 200], ['hermes', false, 409], ['codex', true, 400]] as const) {
+            const { app } = createApp(createSession({ active, metadata: { path: '/tmp', host: 'host', flavor } }))
+            const response = await app.request('/api/sessions/session-1/hermes-models')
+            expect(response.status).toBe(expectedStatus)
+            if (expectedStatus === 200) expect(await response.json()).toMatchObject({ success: true, availableModels: expect.any(Array) })
+        }
+    })
 })

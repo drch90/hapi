@@ -57,3 +57,34 @@ push envelopes, direct FCM/APNs delivery, and the shared push relay. A native
 client implements this contract for interactive features and that contract
 for background push. Where they overlap (auth, send-message, approve/deny),
 this contract is the more detailed spec.
+
+
+### Hermes sessions
+
+Hermes uses wire flavor `hermes` and optional metadata `hermesSessionId`. Its
+permission modes are `default` and `acceptEdits`. Android offers Hermes creation
+and session model selection. Session operations use the
+existing lifecycle endpoints. `GET /api/sessions/:id/hermes-models` requires an
+active Hermes session in the caller's namespace and returns `success`, optional
+`availableModels` (`modelId`, optional `name`, `description`, `providerLabel`),
+`currentModelId`, and `error`. Preserve full model IDs when switching, including
+`custom:<provider>:<model>`; colons may also occur inside model names.
+`GET /api/machines/:id/hermes-models?cwd=...` provides the creation catalog for an
+online machine in the caller's namespace and enforces the runner's workspace
+boundaries. Both endpoints accept `refresh=true`; session refresh is idle-only.
+Model and permission changes use the existing session configuration endpoint
+and are idle-only. Clients must await confirmed state rather than optimistically
+display a requested model. `success: false` may include a catalog for display
+alongside the error; offer refresh before enabling model selection again.
+Some Hermes builds report named endpoints as `custom:<model>` after switching.
+The adapter retains the accepted opaque provider choice when the native model
+matches, so refresh/resume does not discard that selection. It does not infer
+an endpoint for a generic default model without an accepted choice.
+
+Hermes publishes its supported slash commands through the existing metadata/RPC
+channels. `/model`, `/reset` and `/compress` reject busy sessions. Reset/compress
+preserve the HAPI session and message history. Live steering uses the existing
+queued-message steering endpoint and `agentState.steeringActive` gate. A
+`steered` transport acknowledgement does not guarantee the model acted on the
+guidance; show Hermes' native response. Uncertain deliveries remain held for
+explicit retry/cancel instead of replaying automatically. `/queue` is excluded.

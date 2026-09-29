@@ -93,6 +93,8 @@ extension AgentFlavor {
     /// (`getPermissionModesForFlavor`): unknown flavors fall back to the
     /// Claude set, and Pi offers none (its RPC mode always auto-approves).
     public var permissionModes: [PermissionMode] {
+        // Hermes is Web-first; preserve its wire policy without adding a native launch entry.
+        if self == .other("hermes") { return [.default, .acceptEdits] }
         switch self {
         case .codex, .gemini, .kimi, .copilot:
             return [.default, .readOnly, .safeYolo, .yolo]

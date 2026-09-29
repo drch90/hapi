@@ -61,6 +61,23 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `Hermes discovery preserves workspace provider ids refresh flag and auth`() = runBlocking {
+        val response = """{"success":true,"currentModelId":"custom:office:qwen:32b","availableModels":[{"modelId":"custom:office:qwen:32b","name":"qwen:32b","providerLabel":"Office"}]}"""
+        server.enqueue(ok(response))
+        val machine = session.api.getMachineHermesModels("m1", "/workspace/project + one", true)
+        val request = server.takeRequest()
+        assertEquals("/api/machines/m1/hermes-models", request.requestUrl!!.encodedPath)
+        assertEquals("/workspace/project + one", request.requestUrl!!.queryParameter("cwd"))
+        assertEquals("true", request.requestUrl!!.queryParameter("refresh"))
+        assertEquals("Bearer $jwt", request.getHeader("Authorization"))
+        assertEquals("custom:office:qwen:32b", machine.availableModels!!.single().modelId)
+        server.enqueue(ok(response))
+        val current = session.api.getSessionHermesModels("s1", false)
+        assertEquals("/api/sessions/s1/hermes-models?refresh=false", server.takeRequest().path)
+        assertEquals("custom:office:qwen:32b", current.currentModelId)
+    }
+
+    @Test
     fun `production clients accept http hub urls for self hosted hubs`() {
         HapiApi("http://hub.example", OkHttpClient())
         HubSession("http://hub.example", InMemoryCredentialStore())

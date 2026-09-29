@@ -20,6 +20,11 @@ function renderField(props: Partial<Parameters<typeof PermissionField>[0]> = {})
 }
 
 describe('PermissionField', () => {
+    it('offers Hermes native edit policies without a YOLO toggle', () => {
+        renderField({ agent: 'hermes' })
+        expect(screen.getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['default', 'acceptEdits'])
+        expect(screen.queryByRole('checkbox')).toBeNull()
+    })
     it('offers only native shared permission modes for Codex', () => {
         renderField({ agent: 'codex' })
         expect(screen.getAllByRole('option').map(option => (option as HTMLOptionElement).value))
