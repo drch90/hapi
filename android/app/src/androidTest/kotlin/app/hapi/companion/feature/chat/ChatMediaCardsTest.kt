@@ -2,6 +2,7 @@ package app.hapi.companion.feature.chat
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -13,6 +14,7 @@ import app.hapi.companion.ui.theme.HapiTheme
 import app.hapi.protocol.chat.*
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 
@@ -53,6 +55,49 @@ class ChatMediaCardsTest {
         compose.onNodeWithText(context.getString(R.string.chat_media_retry)).performClick()
         compose.waitUntil(5_000) { fetches.get() == 2 }
         compose.onNodeWithText(context.getString(R.string.chat_media_save)).assertExists()
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @Test fun audioPreparesWithoutAutoplayAndStopsWhenCardIsRemoved() {
+        // Three seconds of silent PCM: tests real decoding without an external asset or network.
+        val samples = 8_000 * 3
+        val wav = java.nio.ByteBuffer.allocate(44 + samples * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(36 + samples * 2); put("WAVEfmt ".toByteArray())
+            putInt(16); putShort(1.toShort()); putShort(1.toShort()); putInt(8_000); putInt(16_000)
+            putShort(2.toShort()); putShort(16.toShort()); put("data".toByteArray()); putInt(samples * 2)
+        }.array()
+        val shown = mutableStateOf(true)
+        val media = ChatMedia(null, downloadMedia = { _, target -> target.writeBytes(wav) }) { null }
+        compose.setContent { HapiTheme { CompositionLocalProvider(LocalChatMedia provides media) {
+            if (shown.value) GeneratedImageBlockView(block("audio", "audio/wav"))
+        } } }
+        compose.onNodeWithText(context.getString(R.string.chat_media_load_audio)).performClick()
+        var player: androidx.media3.common.Player? = null
+        fun findPlayer(view: android.view.View): androidx.media3.common.Player? {
+            if (view is androidx.media3.ui.PlayerView) return view.player
+            if (view is android.view.ViewGroup) for (i in 0 until view.childCount) {
+                findPlayer(view.getChildAt(i))?.let { return it }
+            }
+            return null
+        }
+        compose.waitUntil(10_000) {
+            var ready = false
+            compose.runOnIdle {
+                val activities = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                player = activities.firstNotNullOfOrNull { findPlayer(it.window.decorView) }
+                ready = player?.playbackState == androidx.media3.common.Player.STATE_READY
+            }
+            ready
+        }
+        compose.runOnIdle { assertFalse(player!!.playWhenReady); player!!.play() }
+        compose.waitUntil(5_000) {
+            var playing = false
+            compose.runOnIdle { playing = player!!.isPlaying }
+            playing
+        }
+        compose.runOnIdle { shown.value = false }
+        compose.runOnIdle { assertFalse(player!!.isPlaying) }
     }
 
     @Test fun attachmentImagesOpenGalleryZoomAndMoveToAnotherImage() {
