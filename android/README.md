@@ -331,6 +331,23 @@ Out of scope on purpose: `:core:protocol` presentation strings
 (`getEventPresentation`, tool-group activity titles) stay English — the web
 does not translate them either, and terminology parity with the web wins.
 
+## Chat file and media cards
+
+Chat media cards use the existing authenticated generated-media endpoint, including
+HTTP LAN hubs. Images open a full-screen viewer with pinch zoom, pan, zoom/reset
+buttons, and previous/next navigation across images in the loaded conversation.
+User image attachments use the same viewer; ordinary attachment chips show filename
+and size. SVG and animated image decoders are enabled on the hub image loader.
+
+Audio, video and ordinary files download only after a tap. Transfers stream to a
+private temporary file rather than buffering the full response in memory, and can
+be cancelled or retried. Audio/video have native playback controls; videos also
+support full screen. Playback pauses on background and releases when its card
+leaves composition. Unsupported codecs can still be saved and opened in another app.
+The Save action uses Android's document picker without broad storage permission.
+Temporary files are removed on card disposal; abandoned files expire after 24 hours
+and are cleaned when another download starts. No changes to the Hub API are required.
+
 ## Tool previews
 
 Ordinary chat tools stay compact summaries. Tap a tool or tool group to open a native

@@ -30,6 +30,7 @@ highlights = "1.0.0"
 # Generated-image loading (B-M2d2). Coil 2.x (stable, OkHttp 4-compatible);
 # Coil 3 is a package rename + engine split — migrate deliberately later.
 coil = "2.7.0"
+media3 = "1.7.1"
 # FCM push + notification actions (B-M4a). All on Google Maven:
 # work-runtime-ktx 2.10.1 (2025-03), firebase-messaging 24.1.0 (2024-11),
 # google-services 4.4.2 (2024-04; applied conditionally, see :app build file).
@@ -87,6 +88,10 @@ zxing-android-embedded = { group = "com.journeyapps", name = "zxing-android-embe
 
 # Image loading (generated images ride the authed hub OkHttp client).
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coil" }
+coil-gif = { group = "io.coil-kt", name = "coil-gif", version.ref = "coil" }
+media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 
 # Push (B-M4a): FCM transport + expedited workers for notification actions.
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }

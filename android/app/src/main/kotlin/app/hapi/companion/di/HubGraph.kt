@@ -145,6 +145,11 @@ class HubGraph(
      */
     val imageLoader: ImageLoader = ImageLoader.Builder(context)
         .okHttpClient(session.imageClient)
+        .components {
+            add(coil.decode.SvgDecoder.Factory())
+            if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory())
+            else add(coil.decode.GifDecoder.Factory())
+        }
         .build()
 
     /** Absolute URL of a generated image, for [imageLoader]. */

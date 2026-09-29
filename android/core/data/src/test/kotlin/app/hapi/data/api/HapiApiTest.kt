@@ -16,6 +16,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.add
@@ -433,6 +434,37 @@ class HapiApiTest {
         assertEquals("/api/sessions/s1/generated-images/img-1", server.takeRequest().path)
         assertContentEquals(bytes, image.bytes)
         assertEquals("image/png", image.mimeType)
+    }
+
+    @Test
+    fun `generated files stream authenticated bytes to disk and remove failed downloads`() = runBlocking {
+        val file = kotlin.io.path.createTempFile().toFile()
+        val bytes = ByteArray(512 * 1024) { (it % 251).toByte() }
+        try {
+            server.enqueue(MockResponse().setHeader("Content-Type", "application/octet-stream").setBody(Buffer().write(bytes)))
+            session.api.downloadGeneratedMedia("s1", "file-1", file)
+            val request = server.takeRequest()
+            assertEquals("/api/sessions/s1/generated-images/file-1", request.path)
+            assertEquals("Bearer $jwt", request.getHeader("Authorization"))
+            assertContentEquals(bytes, file.readBytes())
+            server.enqueue(MockResponse().setResponseCode(404).setBody("{\"error\":\"missing\"}"))
+            assertFailsWith<ApiError> { session.api.downloadGeneratedMedia("s1", "missing", file) }
+            assertTrue(!file.exists())
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun `cancelling a generated media download removes its partial file`() = runBlocking {
+        val file = kotlin.io.path.createTempFile().toFile()
+        server.enqueue(MockResponse().setBody(Buffer().write(ByteArray(64 * 1024)))
+            .throttleBody(1024, 100, java.util.concurrent.TimeUnit.MILLISECONDS))
+        val job = launch { session.api.downloadGeneratedMedia("s1", "slow", file) }
+        try {
+            kotlinx.coroutines.withTimeout(5_000) { while (file.length() == 0L) kotlinx.coroutines.delay(20) }
+            job.cancel()
+            job.join()
+            kotlinx.coroutines.withTimeout(5_000) { while (file.exists()) kotlinx.coroutines.delay(20) }
+        } finally { job.cancel(); file.delete() }
     }
 
     @Test

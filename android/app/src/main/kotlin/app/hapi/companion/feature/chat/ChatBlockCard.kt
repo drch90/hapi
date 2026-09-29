@@ -32,6 +32,7 @@ import coil.ImageLoader
  */
 data class ChatMedia(
     val imageLoader: ImageLoader?,
+    val downloadMedia: (suspend (imageId: String, destination: java.io.File) -> Unit)? = null,
     val generatedImageUrl: (imageId: String) -> String?,
 )
 

@@ -1,6 +1,5 @@
 package app.hapi.companion.feature.chat.blocks
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,12 +19,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -35,8 +32,6 @@ import app.hapi.companion.feature.chat.LocalChatInteractions
 import app.hapi.companion.feature.chat.LocalChatInspection
 import app.hapi.companion.feature.chat.messagePreview
 import app.hapi.companion.ui.theme.HapiTypography
-import app.hapi.companion.feature.chat.attachments.PreviewImage
-import app.hapi.companion.feature.chat.attachments.rememberPreviewImage
 import app.hapi.companion.ui.theme.HapiTheme
 import app.hapi.protocol.chat.ChatAttachment
 import app.hapi.protocol.chat.UserTextBlock
@@ -79,7 +74,7 @@ fun UserTextBlockView(block: UserTextBlock, modifier: Modifier = Modifier) {
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                                 horizontalAlignment = Alignment.End,
                             ) {
-                                attachments.forEach { AttachmentView(it) }
+                                attachments.forEach { AttachmentView(block.id, it) }
                             }
                         }
                     }
@@ -112,36 +107,21 @@ fun UserTextBlockView(block: UserTextBlock, modifier: Modifier = Modifier) {
 }
 
 /**
- * One bubble attachment: image mimes with a decodable `previewUrl` render a
- * thumbnail (web `MessageAttachments` split); everything else — plus decode
- * failures — falls back to the filename chip.
+ * Image previews open the shared gallery; other attachments show name and size.
  */
 @Composable
-private fun AttachmentView(attachment: ChatAttachment) {
-    val isImage = attachment.mimeType.startsWith("image/")
-    if (!isImage || attachment.previewUrl == null) {
-        AttachmentChip(attachment)
-        return
-    }
-    val preview by rememberPreviewImage(attachment.previewUrl)
-    when (val state = preview) {
-        is PreviewImage.Ready -> Image(
-            bitmap = state.bitmap,
-            contentDescription = attachment.filename,
-            contentScale = ContentScale.Fit,
-            alignment = Alignment.CenterEnd,
-            modifier = Modifier
-                .heightIn(max = 180.dp)
-                .clip(RoundedCornerShape(10.dp)),
-        )
-        // Sized placeholder while decoding keeps the bubble from jumping.
-        PreviewImage.Loading -> Surface(
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f),
-            shape = RoundedCornerShape(10.dp),
-        ) {
-            Spacer(modifier = Modifier.size(width = 120.dp, height = 90.dp))
+private fun AttachmentView(blockId: String, attachment: ChatAttachment) {
+    val image = app.hapi.companion.feature.chat.media.attachmentImage(blockId, attachment)
+    if (image == null) AttachmentChip(attachment)
+    else {
+        Column {
+            app.hapi.companion.feature.chat.media.ChatImagePreview(
+                image, app.hapi.companion.feature.chat.LocalChatMedia.current.imageLoader,
+                Modifier.heightIn(max = 180.dp).clip(RoundedCornerShape(10.dp)),
+            )
+            Text(attachment.filename, style = MaterialTheme.typography.labelSmall,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        PreviewImage.Unavailable -> AttachmentChip(attachment)
     }
 }
 
@@ -151,13 +131,16 @@ private fun AttachmentChip(attachment: ChatAttachment) {
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
         shape = RoundedCornerShape(8.dp),
     ) {
-        Text(
-            text = "${if (attachment.mimeType.startsWith("image/")) "🖼" else "📎"} ${attachment.filename}",
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        )
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            Text(
+                text = "${if (attachment.mimeType.startsWith("image/")) "🖼" else "📎"} ${attachment.filename}",
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(app.hapi.companion.feature.chat.media.mediaFileSize(attachment.size),
+                style = MaterialTheme.typography.labelSmall)
+        }
     }
 }
 

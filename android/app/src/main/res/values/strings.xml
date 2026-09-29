@@ -609,4 +609,24 @@
     <string name="local_notifications_system_settings">System notification settings</string>
     <string name="local_notifications_retry">Resume receiving</string>
     <string name="local_notifications_description">Keeps a connection to the current Hub with a persistent notification, without Google services. Reopens with the app. Battery saving, screen lock or an unreachable Hub can delay alerts. Reconnection checks pending approvals and questions; missed completions may not be recoverable.</string>
+    <string name="chat_media_image">Displayed image: %1$s</string>
+    <string name="chat_media_video">Displayed video: %1$s</string>
+    <string name="chat_media_audio">Displayed audio: %1$s</string>
+    <string name="chat_media_file">Displayed file: %1$s</string>
+    <string name="chat_media_unavailable">Media is unavailable</string>
+    <string name="chat_media_image_retry">Image could not load. Tap to retry</string>
+    <string name="chat_media_retry">Retry</string>
+    <string name="chat_media_close">Close</string>
+    <string name="chat_media_previous">Previous image</string>
+    <string name="chat_media_next">Next image</string>
+    <string name="chat_media_load_video">Load video</string>
+    <string name="chat_media_load_audio">Load audio</string>
+    <string name="chat_media_prepare_download">Prepare download</string>
+    <string name="chat_media_load_failed">Could not download. Check the connection and retry.</string>
+    <string name="chat_media_save">Save to device</string>
+    <string name="chat_media_saving">Saving…</string>
+    <string name="chat_media_saved">File saved</string>
+    <string name="chat_media_save_failed">Could not save the file. Please retry.</string>
+    <string name="chat_media_play_failed">Cannot play this format on this device. You can save the file and open it in another app.</string>
+    <string name="chat_media_fullscreen">Full screen</string>
 </resources>

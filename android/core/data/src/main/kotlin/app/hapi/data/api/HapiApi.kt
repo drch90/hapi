@@ -619,6 +619,12 @@ class HapiApi internal constructor(
         }
     }
 
+    /** Same authenticated endpoint, streamed to disk for potentially large audio/video/files. */
+    suspend fun downloadGeneratedMedia(sessionId: String, imageId: String, destination: java.io.File) {
+        val target = url("api", "sessions", sessionId, "generated-images", imageId).build()
+        imageClient.newCall(Request.Builder().url(target).build()).downloadTo(destination)
+    }
+
     // ------------------------------------------------------------ uploads --
 
     /**

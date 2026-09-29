@@ -176,6 +176,10 @@ dependencies {
     // Generated images (chat, B-M2d2): loader wired in HubGraph over the
     // authed + disk-cached hub image client.
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
+    implementation(libs.coil.gif)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
 
     // FCM push + notification actions (B-M4a). firebase-messaging is always on
     // the classpath; whether it *activates* depends on google-services.json

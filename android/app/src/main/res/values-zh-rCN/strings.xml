@@ -616,4 +616,24 @@
     <string name="local_notifications_system_settings">系统通知设置</string>
     <string name="local_notifications_retry">恢复接收</string>
     <string name="local_notifications_description">通过常驻通知保持与当前 Hub 的连接，无需谷歌服务。重新打开 App 后恢复接收；省电模式、锁屏或 Hub 不可达时可能延迟。重连会补报待审批和待回答事项，离线期间的完成提醒可能无法补齐。</string>
+    <string name="chat_media_image">展示图片：%1$s</string>
+    <string name="chat_media_video">展示视频：%1$s</string>
+    <string name="chat_media_audio">展示音频：%1$s</string>
+    <string name="chat_media_file">展示文件：%1$s</string>
+    <string name="chat_media_unavailable">文件暂不可用</string>
+    <string name="chat_media_image_retry">图片加载失败，点击重试</string>
+    <string name="chat_media_retry">重试</string>
+    <string name="chat_media_close">关闭</string>
+    <string name="chat_media_previous">上一张</string>
+    <string name="chat_media_next">下一张</string>
+    <string name="chat_media_load_video">加载视频</string>
+    <string name="chat_media_load_audio">加载音频</string>
+    <string name="chat_media_prepare_download">准备下载</string>
+    <string name="chat_media_load_failed">下载失败，请检查连接后重试。</string>
+    <string name="chat_media_save">保存到手机</string>
+    <string name="chat_media_saving">正在保存…</string>
+    <string name="chat_media_saved">文件已保存</string>
+    <string name="chat_media_save_failed">文件保存失败，请重试。</string>
+    <string name="chat_media_play_failed">当前设备无法播放此文件，可保存后使用其他应用打开。</string>
+    <string name="chat_media_fullscreen">全屏播放</string>
 </resources>

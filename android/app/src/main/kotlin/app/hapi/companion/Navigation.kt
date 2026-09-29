@@ -305,7 +305,9 @@ fun HapiNavigation() {
             ChatHost(
                 viewModel = holder.viewModel,
                 media = remember(hubGraph, sessionId) {
-                    ChatMedia(hubGraph.imageLoader) { imageId ->
+                    ChatMedia(hubGraph.imageLoader, downloadMedia = { imageId, destination ->
+                        hubGraph.session.api.downloadGeneratedMedia(sessionId, imageId, destination)
+                    }) { imageId ->
                         hubGraph.generatedImageUrl(sessionId, imageId)
                     }
                 },
