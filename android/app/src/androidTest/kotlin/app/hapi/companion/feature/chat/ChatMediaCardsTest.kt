@@ -56,13 +56,20 @@ class ChatMediaCardsTest {
     }
 
     @Test fun attachmentImagesOpenGalleryZoomAndMoveToAnotherImage() {
-        val preview = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aHXsAAAAASUVORK5CYII="
+        val bitmap = android.graphics.Bitmap.createBitmap(8, 8, android.graphics.Bitmap.Config.ARGB_8888)
+        val bytes = java.io.ByteArrayOutputStream().use { output ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+            output.toByteArray()
+        }
+        bitmap.recycle()
+        val preview = "data:image/png;base64," + android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
         val user = UserTextBlock("user", null, 0, null, "Images", listOf(
             ChatAttachment("one", "first.png", "image/png", 100.0, "one", preview),
             ChatAttachment("two", "second.png", "image/png", 100.0, "two", preview),
         ), null, null, null)
         val media = ChatMedia(null) { null }
         compose.setContent { HapiTheme { ChatImageGallery(listOf(user), media) { UserTextBlockView(user) } } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("first.png").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("first.png").performClick()
         compose.onNodeWithText("1 / 2").assertExists()
         compose.onNodeWithText("+").performClick()

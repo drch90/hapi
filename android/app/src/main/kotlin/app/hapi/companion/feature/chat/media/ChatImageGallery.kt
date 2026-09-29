@@ -24,10 +24,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.hapi.companion.R
 import app.hapi.companion.feature.chat.ChatMedia
+import app.hapi.companion.feature.chat.attachments.AttachmentPolicy
 import app.hapi.protocol.chat.*
 import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.imageLoader
+import java.nio.ByteBuffer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 internal data class ChatImage(val id: String, val name: String, val source: String)
 internal val LocalImageGallery = staticCompositionLocalOf<((ChatImage) -> Unit)?> { null }
@@ -85,17 +89,24 @@ private fun LoadedImage(image: ChatImage, loader: ImageLoader?, modifier: Modifi
     var failed by remember(image.source) { mutableStateOf(false) }
     var loading by remember(image.source) { mutableStateOf(true) }
     var retry by remember(image.source) { mutableIntStateOf(0) }
+    val decoded by produceState<Pair<Boolean, Any?>>(false to null, image.source, retry) {
+        val model = if (image.source.startsWith("data:")) withContext(Dispatchers.Default) {
+            AttachmentPolicy.bytesFromDataUrl(image.source)?.let { ByteBuffer.wrap(it) }
+        } else image.source
+        value = true to model
+    }
     Box(modifier, contentAlignment = Alignment.Center) {
-        key(image.source, retry) {
-            AsyncImage(model = image.source, imageLoader = loader ?: LocalContext.current.imageLoader,
+        if (decoded.first && decoded.second != null) key(image.source, retry) {
+            AsyncImage(model = decoded.second, imageLoader = loader ?: LocalContext.current.imageLoader,
                 contentDescription = image.name, contentScale = ContentScale.Fit,
                 onLoading = { loading = true; failed = false },
                 onSuccess = { loading = false; failed = false },
                 onError = { loading = false; failed = true },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
         }
-        if (loading) CircularProgressIndicator(Modifier.size(28.dp))
-        if (failed) TextButton(onClick = { retry++ }) { Text(stringResource(R.string.chat_media_image_retry)) }
+        val decodeFailed = decoded.first && decoded.second == null
+        if (loading && !decodeFailed) CircularProgressIndicator(Modifier.size(28.dp))
+        if (failed || decodeFailed) TextButton(onClick = { retry++ }) { Text(stringResource(R.string.chat_media_image_retry)) }
     }
 }
 
