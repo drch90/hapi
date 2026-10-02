@@ -26,6 +26,7 @@ import app.hapi.companion.feature.chat.composer.ChatComposer
 import app.hapi.companion.ui.theme.HapiTheme
 import app.hapi.protocol.chat.ToolCallBlock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 

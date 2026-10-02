@@ -43,7 +43,7 @@ jobs:
             - name: Protocol, data and app unit tests
               run: ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest --console=plain 2>&1 | tee unit-tests.log
             - name: Assemble debug APK and lint
-              run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain 2>&1 | tee assemble-lint.log
+              run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain 2>&1 | tee assemble-lint.log
             - name: Annotate build failures
               if: failure()
               run: |
