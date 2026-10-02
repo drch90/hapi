@@ -8,6 +8,28 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 
 class LastSeenStoreTest {
+    @Test fun `manual unread and list preferences persist independently per hub`() = runTest {
+        val first = Files.createTempDirectory("read-a").toFile()
+        val second = Files.createTempDirectory("read-b").toFile()
+        try {
+            val store = LastSeenStore(backgroundScope, first)
+            store.markSeen("s", 100)
+            store.markUnread("s", 100)
+            store.setListPreferences("machine-a", true)
+            store.flushPersistence()
+            val restored = LastSeenStore(backgroundScope, first)
+            assertEquals(99L, restored.lastSeenAt("s"))
+            assertEquals(100L, restored.state.value.manualUnread["s"])
+            assertEquals("machine-a", restored.state.value.machineFilter)
+            assertTrue(restored.state.value.activeOnly)
+            assertTrue(LastSeenStore(backgroundScope, second).state.value.manualUnread.isEmpty())
+            restored.markAllSeen(listOf(summary("s", updatedAt = 100)))
+            assertEquals(100L, restored.lastSeenAt("s"))
+            assertTrue(restored.state.value.manualUnread.isEmpty())
+            assertTrue(LastSeenStore.isUnread(summary("s", updatedAt = 101), restored.lastSeenAt("s")))
+        } finally { first.deleteRecursively(); second.deleteRecursively() }
+    }
+
 
     @Test
     fun `markSeen is monotonic max`() = runTest {

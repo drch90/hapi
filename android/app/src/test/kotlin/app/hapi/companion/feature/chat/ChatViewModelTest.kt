@@ -191,6 +191,12 @@ private open class FakeMessagesApi : ChatSessionApi {
     override suspend fun setModel(sessionId: String, model: String?) {}
     override suspend fun setEffort(sessionId: String, effort: String?) {}
     override suspend fun setModelReasoningEffort(sessionId: String, modelReasoningEffort: String?) {}
+    override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean) = app.hapi.protocol.wire.AgentModelDirectory(false)
+    override suspend fun getAgentEffortDirectory(sessionId: String, flavor: String) = app.hapi.protocol.wire.AgentEffortDirectory(false)
+    override suspend fun setProviderModel(sessionId: String, provider: String, modelId: String) = Unit
+    override suspend fun setServiceTier(sessionId: String, serviceTier: String) = Unit
+    override suspend fun setCollaborationMode(sessionId: String, mode: String) = Unit
+    override suspend fun setCopilotAgentMode(sessionId: String, mode: String) = Unit
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse =
         CodexModelsResponse(success = false, error = "not scripted")
     override suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse =

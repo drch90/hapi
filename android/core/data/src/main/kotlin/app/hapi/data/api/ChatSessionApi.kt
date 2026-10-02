@@ -43,6 +43,13 @@ interface AttachmentUploadApi {
  * and [AttachmentUploadApi] for the composer attachment flow (B-M3f).
  */
 interface ChatSessionApi : MessagesApi, AttachmentUploadApi {
+    suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean = false): app.hapi.protocol.wire.AgentModelDirectory
+    suspend fun getAgentEffortDirectory(sessionId: String, flavor: String): app.hapi.protocol.wire.AgentEffortDirectory
+    suspend fun setProviderModel(sessionId: String, provider: String, modelId: String)
+    suspend fun setServiceTier(sessionId: String, serviceTier: String)
+    suspend fun setCollaborationMode(sessionId: String, mode: String)
+    suspend fun setCopilotAgentMode(sessionId: String, mode: String)
+
     /** Shared root creation; only the initiating client navigates. */
     suspend fun clearConversation(sessionId: String): ResumeSessionResponse
 

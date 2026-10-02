@@ -1,9 +1,11 @@
 name: android
 
 on:
+    workflow_dispatch:
     push:
         branches:
             - main
+            - android-session-parity
         paths:
             - 'android/**'
             - 'shared/fixtures/**'
@@ -24,8 +26,10 @@ concurrency:
 jobs:
     build:
         runs-on: ubuntu-latest
+        timeout-minutes: 40
         defaults:
             run:
+                shell: bash
                 working-directory: android
         steps:
             - uses: actions/checkout@v5
@@ -36,10 +40,34 @@ jobs:
             # Android SDK is preinstalled on GitHub ubuntu runners (licenses
             # accepted); AGP auto-installs any missing platform/build-tools.
             - uses: gradle/actions/setup-gradle@v5
-            - name: Protocol tests (pure JVM, fixtures-driven)
-              run: ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest
+            - name: Protocol, data and app unit tests
+              run: ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest --console=plain 2>&1 | tee unit-tests.log
             - name: Assemble debug APK and lint
-              run: ./gradlew :app:assembleDebug :app:lintDebug
+              run: ./gradlew :app:assembleDebug :app:lintDebug --console=plain 2>&1 | tee assemble-lint.log
+            - name: Annotate build failures
+              if: failure()
+              run: |
+                  python3 - <<'PYTHON'
+                  from pathlib import Path
+                  for log in (Path('unit-tests.log'), Path('assemble-lint.log')):
+                      if not log.exists():
+                          continue
+                      for line in log.read_text(errors='replace').splitlines():
+                          if line.startswith('e: ') or ' FAILED' in line or line.startswith('> '):
+                              print('::error::' + line.replace('%', '%25'))
+                  PYTHON
+            - name: Upload unit and lint reports
+              if: always()
+              uses: actions/upload-artifact@v6
+              with:
+                  name: android-unit-lint-reports
+                  path: |
+                      android/**/build/reports/tests/
+                      android/**/build/test-results/
+                      android/app/build/reports/lint-results-debug.*
+                      android/*.log
+                  if-no-files-found: ignore
+                  retention-days: 7
             - name: Upload debug APK
               uses: actions/upload-artifact@v6
               with:
@@ -50,6 +78,7 @@ jobs:
 
     transcript-layout:
         runs-on: ubuntu-latest
+        timeout-minutes: 45
         strategy:
             fail-fast: false
             matrix:

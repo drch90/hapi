@@ -1,5 +1,12 @@
 package app.hapi.companion.feature.chat
 
+import app.hapi.companion.feature.sessions.SessionActionItems
+import app.hapi.companion.feature.sessions.ArchiveSessionDialog
+import app.hapi.companion.feature.sessions.PinMode
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -104,6 +111,7 @@ internal fun ChatScreen(
     dictation: DictationController? = null,
     /** Top-bar folder icon → session files browser (B-M4c). */
     onOpenFiles: () -> Unit = {},
+    onNewInDirectory: ((String?, String) -> Unit)? = null,
     /** Markdown file citations → file viewer (full mode; optional line hint). */
     onOpenFile: (path: String, line: Int?) -> Unit = { _, _ -> },
     /** null ⇒ no scratchlist top-bar entry (tests / previews). */
@@ -122,6 +130,26 @@ internal fun ChatScreen(
     val configState by viewModel.config.collectAsState()
     val toolbarHeight = maxOf(64.dp, with(LocalDensity.current) { 24.sp.toDp() + 16.sp.toDp() } + 16.dp)
     var configSheetOpen by remember { mutableStateOf(false) }
+    var archiveDialogOpen by remember { mutableStateOf(false) }
+    var outlineOpen by remember { mutableStateOf(false) }
+    var outlineItems by remember { mutableStateOf(emptyList<OutlineItem>()) }
+    var location by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    DisposableEffect(outlineOpen) {
+        if (outlineOpen) { readingState.followsTail = false; viewModel.beginInspection() }
+        onDispose { if (outlineOpen) viewModel.setTranscriptVisible(true) }
+    }
+    LaunchedEffect(jumpToken) { outlineOpen = false; location = null }
+    val sendSchedule by viewModel.schedule.collectAsState()
+    val actionSummary by viewModel.actionSummary.collectAsState()
+    val allSessions by viewModel.allSessions.collectAsState()
+    val machines by viewModel.machines.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, _ -> viewModel.setReaderForeground(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        viewModel.setReaderForeground(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); viewModel.setReaderForeground(false) }
+    }
     var renameDialogOpen by remember { mutableStateOf(false) }
     var deleteDialogOpen by remember { mutableStateOf(false) }
 
@@ -290,6 +318,14 @@ internal fun ChatScreen(
                     }
                     val scratchlistCount by viewModel.scratchlistCount.collectAsState()
                     SessionOverflowMenu(
+                        id = viewModel.sessionId, title = state.header.title,
+                        pinned = actionSummary?.pinned == true, globalPinned = actionSummary?.globalPinned == true,
+                        onPin = viewModel::setPinMode, onUnread = viewModel::markUnread,
+                        onArchive = { archiveDialogOpen = true },
+                        onOutline = { outlineItems = conversationOutline(state.blocks); outlineOpen = true },
+                        onNewInDirectory = actionSummary?.metadata?.let { meta -> onNewInDirectory?.let { createSession ->
+                            { createSession(meta.machineId, meta.worktree?.basePath ?: meta.path) }
+                        } },
                         active = state.header.active,
                         onOpenFiles = onOpenFiles,
                         scratchlistCount = scratchlistCount,
@@ -333,6 +369,9 @@ internal fun ChatScreen(
                     ChatComposer(
                         state = composerState,
                         onTextChange = viewModel::setComposerText,
+                        sessionId = viewModel.sessionId, sessions = allSessions,
+                        schedule = sendSchedule, onSchedule = viewModel::setSchedule,
+                        machineLabel = { id -> machines.firstOrNull { it.id == id }?.metadata?.let { it.displayName ?: it.host } ?: id.orEmpty() },
                         onSend = { viewModel.sendMessage() },
                         onSendSteer = { viewModel.sendMessage(steer = true) },
                         onAbort = viewModel::abortSession,
@@ -353,7 +392,7 @@ internal fun ChatScreen(
         CompositionLocalProvider(
             LocalMarkdownRenderCache provides viewModel.markdownCache,
             LocalChatMedia provides media,
-            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = onOpenFile),
+            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = onOpenFile, onOpenSession = viewModel::openReference),
             LocalChatInteractions provides interactions,
         ) {
             Column(
@@ -368,6 +407,8 @@ internal fun ChatScreen(
                         state.blocks.isEmpty() && !state.hasMore -> EmptyChat()
                         else -> ChatTranscript(
                             state = state, paging = historyPaging, jumpToken = jumpToken,
+                            location = location,
+                            onLocationMissing = { scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.chat_outline_missing)) } },
                             jumpingLatest = jumpingLatest,
                             onViewport = viewModel::readingViewportChanged,
                             onLayout = viewModel::historyLaidOut,
@@ -407,8 +448,23 @@ internal fun ChatScreen(
             onSetEffort = viewModel::setEffort,
             onLoadModelOptions = viewModel::loadModelOptions,
             onRefreshHermesModels = viewModel::refreshHermesModelOptions,
+            onRefreshModels = viewModel::refreshModelOptions,
+            onCollaborationMode = viewModel::setCollaborationMode,
+            onServiceTier = viewModel::setServiceTier,
+            onCopilotAgentMode = viewModel::setCopilotAgentMode,
         )
     }
+    if (outlineOpen) ConversationOutline(outlineItems, state.hasMore,
+        onDismiss = { outlineOpen = false }, onSelect = { id ->
+            outlineOpen = false; readingState.followsTail = false
+            location = id to ((location?.second ?: 0) + 1)
+        }, onOlder = {
+            outlineOpen = false; readingState.followsTail = false
+            scope.launch { viewModel.setTranscriptVisible(true); transcriptList.scrollToItem(0); viewModel.loadOlder() }
+        })
+    if (archiveDialogOpen) ArchiveSessionDialog(state.header.title, { archiveDialogOpen = false }, {
+        archiveDialogOpen = false; viewModel.archiveSession()
+    })
     if (renameDialogOpen) {
         RenameSessionDialog(
             initialName = state.header.name ?: state.header.title,
@@ -438,81 +494,22 @@ internal fun ChatScreen(
  */
 @Composable
 private fun SessionOverflowMenu(
-    active: Boolean,
-    onRename: () -> Unit,
-    onReopen: () -> Unit,
-    onDelete: () -> Unit,
-    onOpenFiles: () -> Unit = {},
-    /** Entry-count suffix on the scratchlist row. */
-    scratchlistCount: Int = 0,
-    /** null ⇒ scratchlist row hidden (feature off / tests). */
-    onOpenScratchlist: (() -> Unit)? = null,
-    /** null ⇒ hidden (scratchlist off or empty composer). */
-    onParkDraft: (() -> Unit)? = null,
+    id: String, title: String, active: Boolean, pinned: Boolean, globalPinned: Boolean,
+    onPin: (PinMode) -> Unit, onUnread: () -> Unit, onArchive: () -> Unit, onOutline: () -> Unit,
+    onRename: () -> Unit, onReopen: () -> Unit, onDelete: () -> Unit,
+    onNewInDirectory: (() -> Unit)?, onOpenFiles: () -> Unit = {}, scratchlistCount: Int = 0,
+    onOpenScratchlist: (() -> Unit)? = null, onParkDraft: (() -> Unit)? = null,
 ) {
-    var open by remember { mutableStateOf(false) }
-    IconButton(onClick = { open = true }) {
-        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.chat_session_actions))
-    }
-    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.chat_open_files)) },
-            leadingIcon = { Icon(FolderGlyph, contentDescription = null) },
-            onClick = {
-                open = false
-                onOpenFiles()
-            },
-        )
-        if (onOpenScratchlist != null) {
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        if (scratchlistCount > 0) {
-                            stringResource(R.string.chat_open_scratchlist_count, scratchlistCount)
-                        } else {
-                            stringResource(R.string.chat_open_scratchlist)
-                        },
-                    )
-                },
-                onClick = {
-                    open = false
-                    onOpenScratchlist()
-                },
-            )
-        }
+    var expanded by remember { mutableStateOf(false) }
+    IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.chat_session_actions)) }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenuItem(text = { Text(stringResource(R.string.chat_open_files)) }, onClick = { expanded = false; onOpenFiles() })
+        DropdownMenuItem(text = { Text(stringResource(R.string.chat_outline)) }, onClick = { expanded = false; onOutline() })
+        onOpenScratchlist?.let { action -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_open_scratchlist_count, scratchlistCount)) }, onClick = { expanded = false; action() }) }
+        onParkDraft?.let { action -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_park_draft)) }, onClick = { expanded = false; action() }) }
         HorizontalDivider()
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.sessions_action_rename)) },
-            onClick = {
-                open = false
-                onRename()
-            },
-        )
-        if (onParkDraft != null) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.chat_park_draft)) },
-                onClick = {
-                    open = false
-                    onParkDraft()
-                },
-            )
-        }
-        if (!active) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.sessions_action_reopen)) },
-                onClick = {
-                    open = false
-                    onReopen()
-                },
-            )
-        }
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.sessions_action_delete), color = MaterialTheme.colorScheme.error) },
-            onClick = {
-                open = false
-                onDelete()
-            },
-        )
+        SessionActionItems(id, title, active, pinned, globalPinned, { expanded = false }, onRename, onPin,
+            onUnread, onArchive, onReopen, onDelete, onNewInDirectory)
     }
 }
 
@@ -642,6 +639,10 @@ private fun EmptyChat() {
  * behavior — so hub-side wording is never mistranslated.
  */
 internal fun chatNoticeText(context: Context, notice: ChatNotice): String = when (notice) {
+    ChatNotice.InvalidSchedule -> context.getString(R.string.chat_schedule_invalid)
+    ChatNotice.ScheduleAttachments -> context.getString(R.string.chat_schedule_attachments)
+    ChatNotice.ReferenceUnavailable -> context.getString(R.string.chat_reference_unavailable)
+    is ChatNotice.SessionActionFailed -> notice.detail ?: context.getString(R.string.sessions_error_archive)
     ChatNotice.DraftParked -> context.getString(R.string.chat_notice_draft_parked)
     ChatNotice.ScratchlistFull -> context.getString(R.string.chat_notice_scratchlist_full)
     ChatNotice.ScratchlistParkFailed -> context.getString(R.string.chat_notice_park_failed)

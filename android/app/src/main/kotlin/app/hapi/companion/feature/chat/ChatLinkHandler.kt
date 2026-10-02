@@ -30,6 +30,7 @@ import app.hapi.protocol.markdown.HrefDecision
 @Composable
 fun rememberChatLinkHandler(
     onOpenFile: (path: String, line: Int?) -> Unit = { _, _ -> },
+    onOpenSession: (String) -> Unit = {},
 ): MarkdownLinkHandler {
     val context = LocalContext.current
     var confirmUrl by remember { mutableStateOf<String?>(null) }
@@ -53,11 +54,12 @@ fun rememberChatLinkHandler(
         )
     }
 
-    return remember(context, onOpenFile) {
+    return remember(context, onOpenFile, onOpenSession) {
         object : MarkdownLinkHandler {
             override fun onFilePath(path: String, line: Int?) = onOpenFile(path, line)
 
             override fun onUrl(url: String, decision: HrefDecision) {
+                app.hapi.protocol.session.SessionReferences.parsePath(url)?.let { onOpenSession(it); return }
                 when (decision) {
                     is HrefDecision.Allowed -> context.openUrl(url)
                     is HrefDecision.ConfirmFirst -> confirmUrl = url

@@ -16,7 +16,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +52,10 @@ fun SessionConfigSheet(
     onSetEffort: (String?) -> Unit,
     onLoadModelOptions: () -> Unit,
     onRefreshHermesModels: () -> Unit = {},
+    onRefreshModels: () -> Unit = onLoadModelOptions,
+    onCollaborationMode: (String) -> Unit = {},
+    onServiceTier: (String) -> Unit = {},
+    onCopilotAgentMode: (String) -> Unit = {},
 ) {
     LaunchedEffect(Unit) { onLoadModelOptions() }
 
@@ -60,6 +66,10 @@ fun SessionConfigSheet(
             onSetModel = onSetModel,
             onSetEffort = onSetEffort,
             onRefreshHermesModels = onRefreshHermesModels,
+            onRefreshModels = onRefreshModels,
+            onCollaborationMode = onCollaborationMode,
+            onServiceTier = onServiceTier,
+            onCopilotAgentMode = onCopilotAgentMode,
         )
     }
 }
@@ -71,7 +81,12 @@ internal fun SessionConfigSheetContent(
     onSetModel: (String?) -> Unit,
     onSetEffort: (String?) -> Unit,
     onRefreshHermesModels: () -> Unit = {},
+    onRefreshModels: () -> Unit = {},
+    onCollaborationMode: (String) -> Unit = {},
+    onServiceTier: (String) -> Unit = {},
+    onCopilotAgentMode: (String) -> Unit = {},
 ) {
+    var modelQuery by remember { mutableStateOf("") }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -89,6 +104,27 @@ internal fun SessionConfigSheetContent(
             Notice(stringResource(R.string.hermes_settings_busy))
         }
 
+        if (config.flavor == "codex") {
+            SectionTitle(stringResource(R.string.chat_mode_collaboration))
+            app.hapi.protocol.catalog.CodexCollaborationMode.entries.forEach { mode ->
+                OptionRow(mode.label, (config.collaborationMode ?: "default") == mode.wireId,
+                    onClick = { onCollaborationMode(mode.wireId) }, enabled = config.active && !config.configurationDisabled)
+            }
+            if (config.supportsFast) {
+                SectionTitle(stringResource(R.string.chat_mode_service_tier))
+                listOf("standard" to R.string.new_session_fast_mode_standard, "fast" to R.string.new_session_fast_mode_fast).forEach { (value, label) ->
+                    OptionRow(stringResource(label), (config.serviceTier ?: "standard") == value,
+                        onClick = { onServiceTier(value) }, enabled = config.active && !config.configurationDisabled)
+                }
+            }
+        }
+        if (config.flavor == "copilot") {
+            SectionTitle(stringResource(R.string.chat_mode_copilot))
+            app.hapi.protocol.catalog.CopilotAgentMode.entries.forEach { mode ->
+                OptionRow(mode.label, (config.copilotAgentMode ?: "interactive") == mode.wireId,
+                    onClick = { onCopilotAgentMode(mode.wireId) }, enabled = config.active && !config.configurationDisabled)
+            }
+        }
         if (config.permissionModes.isNotEmpty()) {
             SectionTitle(stringResource(R.string.chat_config_permission_mode))
             config.permissionModes.forEach { mode ->
@@ -110,6 +146,11 @@ internal fun SessionConfigSheetContent(
                 onRefresh = onRefreshHermesModels)
         } else if (modelOptions != null || config.modelOptionsLoading) {
             SectionTitle(stringResource(R.string.chat_config_model))
+            OutlinedTextField(modelQuery, { modelQuery = it }, singleLine = true,
+                label = { Text(stringResource(R.string.chat_model_search)) }, modifier = Modifier.fillMaxWidth())
+            TextButton(onClick = onRefreshModels, enabled = !config.modelOptionsLoading) { Text(stringResource(R.string.chat_model_refresh)) }
+            config.modelsError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (config.cursorAutoUnavailable) Notice(stringResource(R.string.chat_cursor_auto_restart))
             if (config.modelOptionsLoading) {
                 Row(
                     modifier = Modifier.padding(vertical = 8.dp),
@@ -131,11 +172,12 @@ internal fun SessionConfigSheetContent(
                 )
             } else {
                 val currentModel = normalizedCurrentModel(config)
-                modelOptions.forEach { option ->
+                modelOptions.filter { it.label.contains(modelQuery, true) || it.value.orEmpty().contains(modelQuery, true) }.forEach { option ->
                     OptionRow(
                         label = option.label,
                         selected = option.value == currentModel,
                         onClick = { onSetModel(option.value) },
+                        enabled = !config.modelDisabled && !(config.cursorAutoUnavailable && option.value == "auto"),
                     )
                 }
             }
@@ -149,6 +191,7 @@ internal fun SessionConfigSheetContent(
                     label = option.label,
                     selected = option.value == currentEffort,
                     onClick = { onSetEffort(option.value) },
+                    enabled = !config.effortDisabled && !config.configurationDisabled,
                 )
             }
         }

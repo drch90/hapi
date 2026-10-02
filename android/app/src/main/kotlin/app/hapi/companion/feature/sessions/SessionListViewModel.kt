@@ -4,6 +4,9 @@ import app.hapi.data.api.ApiError
 import app.hapi.data.store.LastSeenStore
 import app.hapi.data.store.MachineListStore
 import app.hapi.data.store.SessionListStore
+import app.hapi.protocol.session.SessionDiscovery
+import java.time.LocalDate
+import java.time.ZoneId
 import app.hapi.protocol.wire.Machine
 import app.hapi.protocol.wire.SessionSummary
 import kotlin.coroutines.cancellation.CancellationException
@@ -55,6 +58,14 @@ data class MachineFilterUi(
     val unnamed: Boolean = false,
 )
 
+data class SessionFilters(
+    val query: String = "", val activeOnly: Boolean = false, val unreadOnly: Boolean = false,
+    val start: LocalDate? = null, val end: LocalDate? = null,
+) {
+    val applied: Boolean
+        get() = query.isNotBlank() || activeOnly || unreadOnly || start != null || end != null
+}
+
 data class SessionListUiState(
     val rows: List<SessionRowUi>,
     /** Choices for the filter sheet, derived from all sessions. */
@@ -66,6 +77,8 @@ data class SessionListUiState(
     val hasLoaded: Boolean,
     /** Last refresh failed — show the offline banner over snapshot data. */
     val isOffline: Boolean,
+    val filters: SessionFilters = SessionFilters(),
+    val unreadCount: Int = 0,
 ) {
     val hasMachineFilters: Boolean get() = machineFilters.size >= 2
 }
@@ -91,7 +104,8 @@ class SessionListViewModel(
     /** Last-seen baseline scope, e.g. the hub origin. */
     private val hubKey: String = "default",
 ) {
-    private val machineFilter = MutableStateFlow<String?>(null)
+    private val machineFilter = MutableStateFlow(lastSeenStore.state.value.machineFilter)
+    private val filters = MutableStateFlow(SessionFilters(activeOnly = lastSeenStore.state.value.activeOnly))
     private val isRefreshing = MutableStateFlow(false)
     private val isOffline = MutableStateFlow(false)
     private val hasRefreshedOnce = MutableStateFlow(false)
@@ -114,8 +128,8 @@ class SessionListViewModel(
                 // Validate against the current snapshot, not an older combined
                 // emission that may have queued before the user selected a row.
                 val ids = sessionStore.sessions.value.map { it.metadata?.machineId ?: UNKNOWN_MACHINE_ID }.toSet()
-                if (selected != null && (ids.size < 2 || selected !in ids)) {
-                    machineFilter.compareAndSet(selected, null)
+                if (selected != null && (ids.isNotEmpty() || hasRefreshedOnce.value) && (ids.size < 2 || selected !in ids)) {
+                    if (machineFilter.compareAndSet(selected, null)) lastSeenStore.setListPreferences(null, filters.value.activeOnly)
                 }
             }
         }
@@ -140,7 +154,7 @@ class SessionListViewModel(
         sessionStore.sessions,
         machineStore.machines,
         lastSeenStore.state,
-        machineFilter,
+        combine(machineFilter, filters) { machine, filters -> machine to filters },
         combine(isRefreshing, isOffline, hasRefreshedOnce) { refreshing, offline, loaded ->
             Triple(refreshing, offline, loaded)
         },
@@ -149,7 +163,8 @@ class SessionListViewModel(
             sessions = sessions,
             machines = machines,
             lastSeen = lastSeen.lastSeen,
-            filter = filter,
+            filter = filter.first,
+            options = filter.second,
             isRefreshing = refreshing,
             isOffline = offline,
             hasLoaded = refreshedOnce || sessions.isNotEmpty(),
@@ -218,7 +233,19 @@ class SessionListViewModel(
 
     fun setMachineFilter(machineId: String?) {
         machineFilter.value = machineId
+        lastSeenStore.setListPreferences(machineId, filters.value.activeOnly)
     }
+
+    fun setFilters(value: SessionFilters) {
+        filters.value = value
+        lastSeenStore.setListPreferences(machineFilter.value, value.activeOnly)
+    }
+    fun clearFilters() { setMachineFilter(null); setFilters(SessionFilters()) }
+    fun markUnread(id: String) {
+        sessionStore.sessions.value.firstOrNull { it.id == id }?.let { lastSeenStore.markUnread(id, it.updatedAt) }
+    }
+    fun markAllRead() = lastSeenStore.markAllSeen(SessionDiscovery.prepare(sessionStore.sessions.value))
+
 
     /** Call when navigating into a session: stamps the last-seen watermark. */
     fun onSessionOpened(sessionId: String) {
@@ -311,6 +338,7 @@ class SessionListViewModel(
         machines: List<Machine>,
         lastSeen: Map<String, Long>,
         filter: String?,
+        options: SessionFilters,
         isRefreshing: Boolean,
         isOffline: Boolean,
         hasLoaded: Boolean,
@@ -350,7 +378,7 @@ class SessionListViewModel(
         val activeFilter = filter
             ?.takeIf { filters.size >= 2 && filters.any { chip -> chip.id == it } }
 
-        val visible = if (activeFilter == null) {
+        val machineScoped = if (activeFilter == null) {
             sessions
         } else {
             sessions.filter { (it.metadata?.machineId ?: UNKNOWN_MACHINE_ID) == activeFilter }
@@ -360,6 +388,18 @@ class SessionListViewModel(
         // shares the machine, so repeating it per row is noise.
         val showMachine = filters.size >= 2 && activeFilter == null
 
+        val zone = ZoneId.systemDefault()
+        val start = options.start?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+        val end = options.end?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+        val scored = SessionDiscovery.prepare(machineScoped).filter { summary ->
+            SessionDiscovery.visible(summary) && (!options.activeOnly || summary.active) &&
+                (!options.unreadOnly || LastSeenStore.isUnread(summary, lastSeen[summary.id] ?: 0)) &&
+                (start == null || summary.updatedAt >= start) && (end == null || summary.updatedAt < end)
+        }.mapNotNull { summary -> SessionDiscovery.score(summary, options.query,
+            names[summary.metadata?.machineId] ?: summary.metadata?.machineId.orEmpty()).let { score -> score?.let { summary to it } } }
+        val visible = (if (options.query.isBlank()) scored else scored.sortedWith(compareByDescending<Pair<SessionSummary, Double>> { it.first.globalPinned == true }
+                .thenByDescending { it.first.pinned == true }.thenByDescending { it.second }
+                .thenByDescending { it.first.updatedAt })).map { it.first }
         val rows = visible.map { summary ->
             val title = sessionTitle(summary)
             val summaryText = summary.metadata?.summary?.text?.takeIf { it.isNotBlank() }
@@ -384,6 +424,8 @@ class SessionListViewModel(
             isRefreshing = isRefreshing,
             hasLoaded = hasLoaded,
             isOffline = isOffline,
+            filters = options,
+            unreadCount = SessionDiscovery.prepare(sessions).count { LastSeenStore.isUnread(it, lastSeen[it.id] ?: 0) },
         )
     }
 

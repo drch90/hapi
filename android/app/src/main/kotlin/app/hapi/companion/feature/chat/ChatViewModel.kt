@@ -1,5 +1,9 @@
 package app.hapi.companion.feature.chat
 
+import app.hapi.protocol.wire.AgentModelDirectory
+import app.hapi.protocol.wire.AgentEffortDirectory
+import app.hapi.protocol.wire.ProviderModel
+
 import app.hapi.companion.ui.components.HermesModelsUi
 import app.hapi.protocol.wire.HermesModelSummary
 
@@ -203,6 +207,14 @@ data class SessionConfigUi(
     val hermesModels: List<HermesModelSummary> = emptyList(),
     val modelsError: String? = null,
     val configurationDisabled: Boolean = false,
+    val collaborationMode: String? = null,
+    val serviceTier: String? = null,
+    val copilotAgentMode: String? = null,
+    val supportsFast: Boolean = false,
+    val cursorAutoUnavailable: Boolean = false,
+    val modelDisabled: Boolean = false,
+    val effortDisabled: Boolean = false,
+
 )
 
 /** One-shot side effects for the screen. */
@@ -211,6 +223,7 @@ sealed interface ChatEvent {
     data class SessionSuperseded(val sessionId: String) : ChatEvent
 
     /** The session was deleted — leave the chat screen. */
+    data class OpenReference(val sessionId: String) : ChatEvent
     data object SessionDeleted : ChatEvent
 
     /** Transient failure/notice for a snackbar (resolved to a string at the UI layer). */
@@ -224,6 +237,10 @@ sealed interface ChatEvent {
  * behavior).
  */
 sealed interface ChatNotice {
+    data object InvalidSchedule : ChatNotice
+    data object ScheduleAttachments : ChatNotice
+    data object ReferenceUnavailable : ChatNotice
+    data class SessionActionFailed(val detail: String?) : ChatNotice
     data object DraftParked : ChatNotice
     data object ScratchlistFull : ChatNotice
     data object ScratchlistParkFailed : ChatNotice
@@ -375,7 +392,50 @@ class ChatViewModel(
     private var historyGate: AtomicBoolean? = null
     private var historyDemand = false
     private var readerFollowsTail = true
+    private var readerForeground = true
+    private var manuallyUnreadAt: Long? = null
     private var transcriptVisible = true
+    val allSessions: StateFlow<List<SessionSummary>> get() = sessionStore.sessions
+    val machines: StateFlow<List<app.hapi.protocol.wire.Machine>> get() = machineStore.machines
+    val actionSummary = summaryFlow().stateIn(scope, SharingStarted.Eagerly, null)
+    fun setReaderForeground(value: Boolean) {
+        if (value && !readerForeground) manuallyUnreadAt = null
+        readerForeground = value
+        if (value) markVisibleSeen()
+    }
+    private fun markVisibleSeen() {
+        if (readerForeground && transcriptVisible) {
+            val at = maxOf(currentDetail()?.updatedAt ?: 0, sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.updatedAt ?: 0)
+            if (manuallyUnreadAt != at) lastSeenStore.markSeen(sessionId, at)
+        }
+    }
+    fun markUnread() {
+        val at = maxOf(currentDetail()?.updatedAt ?: 0, sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.updatedAt ?: 0)
+        manuallyUnreadAt = at
+        lastSeenStore.markUnread(sessionId, at)
+    }
+    fun setPinMode(mode: app.hapi.companion.feature.sessions.PinMode) = sessionAction { sessionStore.setPinMode(sessionId, mode.wire) }
+    fun archiveSession() = sessionAction {
+        sessionStore.archiveSession(sessionId)
+        _events.emit(ChatEvent.SessionDeleted)
+    }
+    private fun sessionAction(action: suspend () -> Unit) {
+        if (!sessionOpPending.compareAndSet(false, true)) return
+        scope.launch {
+            try { action() }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) { _events.emit(ChatEvent.Notice(ChatNotice.SessionActionFailed(error.message))) }
+            finally { sessionOpPending.value = false }
+        }
+    }
+    fun openReference(id: String) {
+        if (id == sessionId) return
+        scope.launch {
+            try { sessionStore.loadSessionDetail(id); _events.emit(ChatEvent.OpenReference(id)) }
+            catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { _events.emit(ChatEvent.Notice(ChatNotice.ReferenceUnavailable)) }
+        }
+    }
     internal val inspection = ChatInspectionState()
     private val transcriptProjection = TranscriptProjection()
     val reconnecting: StateFlow<Boolean> = sseEngine.reconnecting(subscriptionKey)
@@ -384,6 +444,7 @@ class ChatViewModel(
     @MainThread
     internal fun setTranscriptVisible(visible: Boolean) {
         transcriptVisible = visible
+        if (visible) markVisibleSeen()
         if (!visible) {
             historyDemand = false
             cancelHistory()
@@ -408,6 +469,16 @@ class ChatViewModel(
     // ------------------------------------------------------------ M3 state --
 
     private val composerText = MutableStateFlow("")
+    private val scheduleState = MutableStateFlow<app.hapi.companion.feature.chat.composer.SendSchedule?>(null)
+    val schedule = scheduleState.asStateFlow()
+    private var scheduleEdited = false
+    private var scheduleSaveJob: Job? = null
+    fun setSchedule(value: app.hapi.companion.feature.chat.composer.SendSchedule?) {
+        scheduleEdited = true
+        scheduleState.value = value
+        scheduleSaveJob?.cancel()
+        scheduleSaveJob = scope.launch { drafts?.saveSchedule(sessionId, value?.encode()) }
+    }
     private val sendInFlight = MutableStateFlow(false)
 
     /**
@@ -418,6 +489,20 @@ class ChatViewModel(
     private val queuedOpPending = MutableStateFlow(false)
     private val permissionOverrides = MutableStateFlow<Map<String, PermissionRowOverride>>(emptyMap())
     private val configOpPending = MutableStateFlow(false)
+    private data class DynamicModels(val directory: AgentModelDirectory? = null, val effort: AgentEffortDirectory? = null,
+        val loading: Boolean = false, val error: String? = null)
+    private val dynamicModels = MutableStateFlow(DynamicModels())
+    private var dynamicModelsJob: Job? = null
+    private var dynamicModelsGeneration = 0L
+    init {
+        scope.launch {
+            sessionStore.sessionDetail(sessionId)
+                .map { Triple(it?.model, it?.metadata?.piSelectedModel, it?.active) }
+                .distinctUntilChanged().drop(1).collect {
+                    if (dynamicModelsGeneration > 0 && currentFlavor() in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy")) loadDynamicModels()
+                }
+        }
+    }
     private val composerFocusRequest = MutableStateFlow(0L)
     private data class CodexPlanOperations(
         val pendingPlanId: String? = null,
@@ -532,7 +617,7 @@ class ChatViewModel(
         sessionStore.sessionDetail(sessionId),
         summaryFlow(),
         codexModels,
-        configOpPending,
+        combine(configOpPending, dynamicModels) { pending, catalog -> pending to catalog },
         hermesModels,
     ) { detail, summary, models, _, hermes ->
         buildConfigUi(detail, summary, models, hermes)
@@ -616,7 +701,11 @@ class ChatViewModel(
                 // the hub on every chat open (web queued-state reconciliation).
                 runCatching { store.reconcileQueuedState() }
             }
-            launch(workerContext) { restoreDraft() }
+            launch(workerContext) {
+                restoreDraft()
+                val restoredSchedule = app.hapi.companion.feature.chat.composer.SendSchedule.decode(drafts?.loadSchedule(sessionId))
+                if (!scheduleEdited) scheduleState.value = restoredSchedule
+            }
             withContext(workerContext) { loadDetail() }
         }
 
@@ -633,7 +722,7 @@ class ChatViewModel(
             )
                 .filterNotNull()
                 .distinctUntilChanged()
-                .collect { updatedAt -> lastSeenStore.markSeen(sessionId, updatedAt) }
+                .collect { updatedAt -> if (readerForeground && transcriptVisible && manuallyUnreadAt != updatedAt) lastSeenStore.markSeen(sessionId, updatedAt) }
         }
     }
 
@@ -934,6 +1023,14 @@ class ChatViewModel(
      */
     fun sendMessage(steer: Boolean = false) {
         if (sendInFlight.value) return
+        val pendingSchedule = scheduleState.value
+        val scheduledAt = pendingSchedule?.resolve(now())
+        if (scheduledAt != null && !app.hapi.companion.feature.chat.composer.SendSchedule.valid(scheduledAt, now())) {
+            _events.tryEmit(ChatEvent.Notice(ChatNotice.InvalidSchedule)); return
+        }
+        if (scheduledAt != null && (attachments.items.value.isNotEmpty() || steer)) {
+            _events.tryEmit(ChatEvent.Notice(ChatNotice.ScheduleAttachments)); return
+        }
         if (attachments.hasUnsettled()) {
             _events.tryEmit(ChatEvent.Notice(ChatNotice.AttachmentsUploading))
             return
@@ -947,7 +1044,7 @@ class ChatViewModel(
         scope.launch {
             try {
                 drafts?.let { runCatching { it.clear(sessionId) } }
-                if (attachmentMetadata == null && (text == "/clear" || text == "/new") &&
+                if (scheduledAt == null && attachmentMetadata == null && (text == "/clear" || text == "/new") &&
                     sessionStore.sessionDetail(sessionId).first()?.metadata?.capabilities?.concurrentClients == true) {
                     sendInFlight.value = true
                     try {
@@ -962,6 +1059,14 @@ class ChatViewModel(
                     return@launch
                 }
                 performSend(
+                    onAccepted = { target ->
+                        if (pendingSchedule != null && scheduleState.value == pendingSchedule) {
+                            setSchedule(null)
+                            scheduleSaveJob?.join()
+                            if (target != sessionId) drafts?.saveSchedule(target, null)
+                        }
+                    },
+                    scheduledAt = scheduledAt,
                     text = text,
                     localId = localIdGenerator(),
                     createdAt = now(),
@@ -991,6 +1096,8 @@ class ChatViewModel(
                 .firstOrNull { it.localId == localId && it.status == MessageStatus.Failed }
                 ?: return@launch
             val payload = sendPayloadOf(row) ?: return@launch
+            // A retry keeps the original timestamp and idempotency key. The
+            // server may already have accepted this request, even after its due time.
             performSend(
                 text = payload.text,
                 localId = localId,
@@ -1027,6 +1134,7 @@ class ChatViewModel(
         attachments: List<AttachmentMetadata>? = null,
         scheduledAt: Long? = null,
         isRetry: Boolean,
+        onAccepted: suspend (String) -> Unit = {},
     ) {
         // Wire constraint (SendMessageRequestSchema): scheduled sends exclude
         // attachments (and steer). No Android surface can produce the combo
@@ -1059,11 +1167,12 @@ class ChatViewModel(
             try {
                 api.sendMessage(sessionId, request)
                 store.updateStatus(localId, successStatus())
+                onAccepted(sessionId)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {
                 if (error.isSessionInactive()) {
-                    resumeAndRetry(store, request, localId)
+                    resumeAndRetry(store, request, localId, onAccepted)
                 } else {
                     store.updateStatus(localId, MessageStatus.Failed)
                 }
@@ -1088,6 +1197,7 @@ class ChatViewModel(
         store: MessageWindowStore,
         request: SendMessageRequest,
         localId: String,
+        onAccepted: suspend (String) -> Unit,
     ) {
         val targetSessionId = try {
             api.resumeSession(sessionId, currentDetail()?.permissionMode).sessionId
@@ -1110,6 +1220,7 @@ class ChatViewModel(
                 targetStore.appendOptimistic(optimisticRow)
                 store.removeMessage(localId)
             }
+            scheduleSaveJob?.join()
             drafts?.let { runCatching { it.move(sessionId, targetSessionId) } }
         }
 
@@ -1120,6 +1231,7 @@ class ChatViewModel(
         try {
             api.sendMessage(targetSessionId, request)
             targetStore.updateStatus(localId, successStatus())
+            onAccepted(targetSessionId)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
@@ -1285,10 +1397,12 @@ class ChatViewModel(
             val preview = queuedPreview(row)
             val editText = preview.text.ifEmpty { preview.attachmentNames.joinToString(", ") }
             val composerAtEdit = composerText.value
+            val scheduleAtEdit = scheduleState.value
             when (cancelQueuedInternal(messageId)) {
                 "cancelled" -> {
-                    if (composerText.value == composerAtEdit) {
+                    if (composerText.value == composerAtEdit && scheduleState.value == scheduleAtEdit) {
                         setComposerText(editText)
+                        setSchedule(row.wire.scheduledAt?.let { app.hapi.companion.feature.chat.composer.SendSchedule(epochMs = it) })
                     } else {
                         _events.tryEmit(ChatEvent.Notice(ChatNotice.QueuedEditKeptDraft))
                     }
@@ -1543,6 +1657,7 @@ class ChatViewModel(
 
     /** `POST /permission-mode` with an optimistic detail flip; server truth on error. */
     fun setPermissionMode(mode: PermissionMode) {
+        if (mode !in currentConfig().permissionModes) return
         runConfigChange(
             optimistic = { it.copy(permissionMode = mode.wireId) },
             call = { api.setPermissionMode(sessionId, mode.wireId) },
@@ -1551,9 +1666,26 @@ class ChatViewModel(
 
     /** `POST /model` — null clears back to the agent default. */
     fun setModel(model: String?) {
+        val liveConfig = currentConfig()
+        if (liveConfig.modelDisabled) return
+        val flavor = currentFlavor()
+        if (flavor == "cursor" && (model == null || model == "auto") && liveConfig.cursorAutoUnavailable) return
+        val providerModel = if (flavor == "pi") (dynamicModels.value.directory?.availableModels.orEmpty().ifEmpty { currentDetail()?.metadata?.piAvailableModels.orEmpty() }).firstOrNull { it.selectionKey == model } else null
+        if (flavor == "pi" && providerModel?.provider == null) return
         runConfigChange(
             optimistic = { it.copy(model = model) },
-            call = { api.setModel(sessionId, model) },
+            call = {
+                if (providerModel?.provider != null) api.setProviderModel(sessionId, providerModel.provider, providerModel.modelId)
+                else {
+                    val previousEffort = currentDetail()?.modelReasoningEffort
+                    if (flavor == "opencode" && previousEffort != null) api.setModelReasoningEffort(sessionId, null)
+                    try { api.setModel(sessionId, model) }
+                    catch (error: Exception) {
+                        if (flavor == "opencode" && previousEffort != null) runCatching { api.setModelReasoningEffort(sessionId, previousEffort) }
+                        throw error
+                    }
+                }
+            },
         )
     }
 
@@ -1562,6 +1694,7 @@ class ChatViewModel(
      * `POST /model-reasoning-effort`. Null clears.
      */
     fun setEffort(effort: String?) {
+        if (currentConfig().effortDisabled) return
         val usesReasoningEffort = currentFlavor() == "codex" || currentFlavor() == "opencode"
         runConfigChange(
             optimistic = {
@@ -1578,7 +1711,55 @@ class ChatViewModel(
     }
 
     /** Fetch the codex model catalog for the picker (no-op for other flavors). */
+    fun refreshModelOptions() {
+        if (currentFlavor() == "codex") codexModels.value = CodexModels.Idle
+        if (currentFlavor() in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy")) loadDynamicModels(true)
+        else if (currentFlavor() == "hermes") loadHermesModelOptions(true) else loadModelOptions()
+    }
+    fun setCollaborationMode(mode: String) {
+        if (currentFlavor() != "codex" || mode !in listOf("default", "plan")) return
+        runConfigChange(activeRequired = true) { api.setCollaborationMode(sessionId, mode) }
+    }
+    fun setServiceTier(tier: String) {
+        if (!currentConfig().supportsFast || tier !in listOf("fast", "standard")) return
+        runConfigChange(activeRequired = true) { api.setServiceTier(sessionId, tier) }
+    }
+    fun setCopilotAgentMode(mode: String) {
+        if (currentFlavor() != "copilot" || mode !in listOf("interactive", "plan", "autopilot")) return
+        runConfigChange(activeRequired = true) { api.setCopilotAgentMode(sessionId, mode) }
+    }
+    private fun loadDynamicModels(refresh: Boolean = false) {
+        val flavor = currentFlavor() ?: return
+        if (currentDetail()?.active != true && flavor != "agy") return
+        val generation = ++dynamicModelsGeneration
+        dynamicModelsJob?.cancel()
+        dynamicModels.value = dynamicModels.value.copy(loading = true, effort = null, error = null)
+        dynamicModelsJob = scope.launch {
+            try {
+                val directory = api.getAgentModelDirectory(sessionId, flavor, currentDetail()?.metadata?.machineId, refresh)
+                var effort: AgentEffortDirectory? = null
+                if (flavor in listOf("opencode", "grok")) {
+                    // OpenCode acknowledges the new model before its backend switches.
+                    // Bound startup/switch retries and never expose the old model's efforts.
+                    for (attempt in 0 until 6) {
+                        effort = try { api.getAgentEffortDirectory(sessionId, flavor) }
+                        catch (cancel: CancellationException) { throw cancel }
+                        catch (_: Exception) { null }
+                        if (flavor != "opencode" || (effort?.success == true && effort.currentModelId == effort.targetModelId)) break
+                        if (attempt < 5) delay(1_000)
+                    }
+                }
+                if (generation == dynamicModelsGeneration) {
+                    dynamicModels.value = DynamicModels(directory, effort, error = if (directory.success) null else directory.error ?: "Models unavailable")
+                }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (error: Exception) {
+                if (generation == dynamicModelsGeneration) dynamicModels.value = dynamicModels.value.copy(loading = false, error = error.message ?: "Models unavailable")
+            }
+        }
+    }
     fun loadModelOptions() {
+        if (currentFlavor() in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy")) { loadDynamicModels(); return }
         if (currentFlavor() == "hermes") { loadHermesModelOptions(); return }
         if (currentFlavor() != "codex") return
         if (codexModels.value is CodexModels.Loading || codexModels.value is CodexModels.Loaded) return
@@ -1602,19 +1783,23 @@ class ChatViewModel(
         }
     }
 
-    private fun runConfigChange(optimistic: (Session) -> Session, call: suspend () -> Unit) {
+    private fun runConfigChange(optimistic: ((Session) -> Session)? = null, activeRequired: Boolean = false, call: suspend () -> Unit) {
         val isHermes = currentFlavor() == "hermes"
         val current = sessionStore.currentDetail(sessionId)
         if (isHermes && (current?.active != true || current.thinking)) return
+        if (current?.agentState?.controlledByUser == true && current.metadata?.capabilities?.concurrentClients != true) return
+        if (activeRequired && current?.active != true) return
         if (!configOpPending.compareAndSet(expect = false, update = true)) return
-        if (!isHermes) sessionStore.updateDetailLocal(sessionId, optimistic)
+        // Preserve established Claude/Codex optimistic controls; newly added
+        // modes and dynamic-agent controls wait for the server's detail response.
+        val applyOptimistically = optimistic != null && currentFlavor() in listOf("claude", "codex")
+        if (applyOptimistically) sessionStore.updateDetailLocal(sessionId, requireNotNull(optimistic))
         scope.launch {
             try {
                 call()
-                if (isHermes) {
-                    sessionStore.loadSessionDetail(sessionId)
-                    loadHermesModelOptions()
-                }
+                if (!applyOptimistically) sessionStore.loadSessionDetail(sessionId)
+                if (currentFlavor() in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy")) loadDynamicModels()
+                if (isHermes) loadHermesModelOptions()
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Exception) {
@@ -1642,9 +1827,13 @@ class ChatViewModel(
         }
     }
 
+    private fun currentConfig() = buildConfigUi(currentDetail(), sessionStore.sessions.value.firstOrNull { it.id == sessionId }, codexModels.value, hermesModels.value)
+
     private fun buildConfigUi(detail: Session?, summary: SessionSummary?, models: CodexModels, hermes: HermesModelsUi = HermesModelsUi()): SessionConfigUi {
         val flavor = detail?.metadata?.flavor ?: summary?.metadata?.flavor
-        val model = detail?.model
+        val dynamic = dynamicModels.value
+        val selectedProvider = detail?.metadata?.piSelectedModel
+        val model = if (flavor == "pi" && selectedProvider != null) HapiJson.encodeToString(ProviderModel.serializer(), selectedProvider) else detail?.model
         val modelOptions: List<CatalogOption>?
         var modelOptionsLoading = false
         var effort: String? = null
@@ -1686,19 +1875,69 @@ class ChatViewModel(
                     else -> modelOptions = emptyList()
                 }
             }
-            else -> modelOptions = null // Generic fallback: hide the picker.
+            "pi", "opencode", "cursor", "grok", "copilot", "agy" -> {
+                val directory = dynamic.directory
+                var entries = directory?.availableModels.orEmpty()
+                if (flavor == "pi" && entries.isEmpty()) entries = detail?.metadata?.piAvailableModels.orEmpty()
+                if (flavor == "cursor" && directory?.parameterized == true) entries = (entries + directory.cliModelSkus).distinctBy { it.modelId }
+                modelOptions = buildList {
+                    if (flavor in listOf("opencode", "grok", "copilot")) add(CatalogOption(null, if (flavor == "copilot") "Auto" else "Default"))
+                    entries.filterNot { flavor == "copilot" && it.modelId == "auto" }.forEach { entry ->
+                        val label = entry.name ?: entry.modelId
+                        add(CatalogOption(entry.selectionKey, entry.provider?.let { "$it · $label" } ?: label))
+                    }
+                    if (model != null && none { it.value == model }) add(0, CatalogOption(model, model))
+                }
+                modelOptionsLoading = dynamic.loading
+                effort = if (flavor == "opencode") detail?.modelReasoningEffort else detail?.effort
+                if (flavor in listOf("opencode", "grok") && dynamic.effort?.success == true &&
+                    (flavor != "opencode" || dynamic.effort.currentModelId == dynamic.effort.targetModelId)) {
+                    effortOptions = listOf(CatalogOption(null, "Default")) + dynamic.effort.options.map { CatalogOption(it.value, it.name ?: it.value) }
+                }
+                if (flavor == "pi") {
+                    val selected = entries.firstOrNull { it.selectionKey == model } ?: entries.firstOrNull { it.modelId == detail?.model }
+                    if (selected?.reasoning == true) effortOptions = listOf("off", "minimal", "low", "medium", "high", "xhigh")
+                        .filter { selected.thinkingLevelMap?.let { levels -> !levels.containsKey(it) || levels[it] != null } ?: true }
+                        .map { CatalogOption(it, it) }
+                }
+            }
+            "gemini" -> modelOptions = (listOf(CatalogOption(null, "Default")) + listOf(
+                CatalogOption("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+                CatalogOption("gemini-3-flash-preview", "Gemini 3 Flash Preview"),
+                CatalogOption("gemini-2.5-pro", "Gemini 2.5 Pro"),
+                CatalogOption("gemini-2.5-flash", "Gemini 2.5 Flash"),
+                CatalogOption("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
+            ) + listOfNotNull(model?.let { CatalogOption(it, it) })).distinctBy { it.value }
+            "kimi" -> modelOptions = listOf(CatalogOption(null, "Default")) + listOfNotNull(model?.let { CatalogOption(it, it) })
+            else -> modelOptions = null
         }
 
         return SessionConfigUi(
             hermesModels = hermes.models,
-            modelsError = hermes.error,
-            configurationDisabled = flavor == "hermes" && (detail?.active != true || detail.thinking || configOpPending.value),
+            modelsError = if (flavor == "hermes") hermes.error else dynamic.error,
+            configurationDisabled = configOpPending.value || (flavor == "hermes" && (detail?.active != true || detail.thinking)) ||
+                (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true),
+            modelDisabled = configOpPending.value || (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true) ||
+                (flavor !in listOf("claude", "opencode", "kimi", "gemini") && detail?.active != true) ||
+                (flavor == "hermes" && detail?.thinking == true) ||
+                (flavor == "codex" && models !is CodexModels.Loaded) ||
+                (flavor in listOf("pi", "opencode", "cursor", "grok", "agy") && dynamic.loading) ||
+                (flavor in listOf("pi", "opencode", "cursor", "grok", "agy") && dynamic.error != null),
+            effortDisabled = configOpPending.value || (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true) ||
+                (flavor in listOf("codex", "opencode", "grok", "pi") && detail?.active != true) ||
+                (flavor in listOf("opencode", "grok") && dynamic.effort?.success != true),
+            collaborationMode = detail?.collaborationMode,
+            copilotAgentMode = detail?.copilotAgentMode,
+            serviceTier = detail?.serviceTier ?: (models as? CodexModels.Loaded)?.models?.firstOrNull { it.id == detail?.model || (detail?.model == null && it.isDefault) }?.defaultServiceTier,
+            supportsFast = flavor == "codex" && (models as? CodexModels.Loaded)?.models?.firstOrNull { it.id == detail?.model || (detail?.model == null && it.isDefault) }?.serviceTiers?.contains("fast") == true,
+            cursorAutoUnavailable = flavor == "cursor" && dynamic.directory?.availableModels?.none { it.modelId == "auto" } != false,
             flavor = flavor,
             active = detail?.active ?: summary?.active ?: false,
             controlledByUser = detail?.agentState?.controlledByUser == true && detail?.metadata?.capabilities?.concurrentClients != true,
             permissionMode = detail?.permissionMode,
             permissionModes = PermissionModes.forFlavor(flavor).filter {
-                detail?.metadata?.capabilities?.concurrentClients != true || it != PermissionMode.SafeYolo
+                (detail?.metadata?.capabilities?.concurrentClients != true || it != PermissionMode.SafeYolo) &&
+                    (flavor != "grok" || it.wireId != "auto" || dynamic.directory?.autoPermissionModeSupported == true)
             },
             model = model,
             modelOptions = modelOptions,

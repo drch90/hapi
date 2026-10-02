@@ -46,6 +46,8 @@ internal fun ChatHost(
     onNavigateToSession: (String) -> Unit,
     dictation: DictationController?,
     onOpenFiles: () -> Unit,
+    onOpenReference: (String) -> Unit = onNavigateToSession,
+    onNewInDirectory: ((String?, String) -> Unit)? = null,
     onOpenFile: (String, Int?) -> Unit,
     onOpenScratchlist: (() -> Unit)?,
 ) {
@@ -61,6 +63,7 @@ internal fun ChatHost(
     val latestKeyboard by rememberUpdatedState(keyboard)
     val latestBack by rememberUpdatedState(onBack)
     val latestNavigate by rememberUpdatedState(onNavigateToSession)
+    val latestReference by rememberUpdatedState(onOpenReference)
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -68,6 +71,7 @@ internal fun ChatHost(
     LaunchedEffect(viewModel, context) {
         viewModel.events.collect { event ->
             when (event) {
+                is ChatEvent.OpenReference -> latestReference(event.sessionId)
                 is ChatEvent.SessionSuperseded -> latestNavigate(event.sessionId)
                 ChatEvent.SessionDeleted -> latestBack()
                 is ChatEvent.Notice -> launch { snackbar.showSnackbar(chatNoticeText(context, event.notice)) }
@@ -124,7 +128,7 @@ internal fun ChatHost(
             LocalChatInteractions provides interactions,
             LocalChatMedia provides media,
             LocalMarkdownRenderCache provides viewModel.markdownCache,
-            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = openFile),
+            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = openFile, onOpenSession = viewModel::openReference),
         ) {
             Box(Modifier.fillMaxSize()) {
                 NavHost(navigation, startDestination = "thread") {
@@ -133,6 +137,7 @@ internal fun ChatHost(
                             viewModel, media, onBack, snackbarHostState = snackbar,
                             dictation = dictation, onOpenFiles = { pauseReading(); onOpenFiles() }, onOpenFile = openFile,
                             onOpenScratchlist = onOpenScratchlist?.let { open -> { pauseReading(); open() } },
+                            onNewInDirectory = onNewInDirectory,
                             transcriptList = transcriptList, readingState = reading,
                         )
                     }

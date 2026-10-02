@@ -95,3 +95,11 @@ private fun DeleteSessionDialogPreview() {
         DeleteSessionDialog(sessionTitle = "Fixture sweep", onConfirm = {}, onDismiss = {})
     }
 }
+
+@Composable
+fun ArchiveSessionDialog(title: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss,
+        text = { Text(stringResource(R.string.sessions_archive_confirm, title)) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.sessions_action_archive)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.chat_cancel)) } })
+}

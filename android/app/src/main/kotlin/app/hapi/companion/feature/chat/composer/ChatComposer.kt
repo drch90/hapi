@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -40,11 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -81,6 +76,11 @@ import kotlinx.coroutines.delay
 fun ChatComposer(
     state: ComposerUiState,
     onTextChange: (String) -> Unit,
+    schedule: SendSchedule? = null,
+    onSchedule: (SendSchedule?) -> Unit = {},
+    sessionId: String = "",
+    sessions: List<app.hapi.protocol.wire.SessionSummary> = emptyList(),
+    machineLabel: (String?) -> String = { it.orEmpty() },
     onSend: () -> Unit,
     onSendSteer: () -> Unit,
     onAbort: () -> Unit,
@@ -96,19 +96,11 @@ fun ChatComposer(
     onDictationToggle: () -> Unit = {},
     onDictationCancel: () -> Unit = {},
 ) {
-    val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-    // Do not replay an old focus intent when returning from an inspector.
-    var handledFocusRequest by remember { mutableLongStateOf(state.focusRequest) }
-    LaunchedEffect(state.focusRequest) {
-        if (state.focusRequest != handledFocusRequest) {
-            handledFocusRequest = state.focusRequest
-            focusRequester.requestFocus()
-            keyboard?.show()
-        }
-    }
+    var scheduleOpen by remember { mutableStateOf(false) }
+    if (scheduleOpen) ScheduleSendPicker({ scheduleOpen = false }, onSchedule)
     Surface(color = MaterialTheme.colorScheme.surface, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            if (schedule != null) TextButton(onClick = { scheduleOpen = true }) { Text(scheduleLabel(schedule)) }
             if (slashSuggestions.isNotEmpty()) {
                 SlashCommandDropdown(
                     suggestions = slashSuggestions,
@@ -149,34 +141,8 @@ fun ChatComposer(
                             modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
                         )
                     }
-                    BasicTextField(
-                        value = state.text,
-                        onValueChange = onTextChange,
-                        textStyle = app.hapi.companion.ui.theme.HapiTypography.body.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        maxLines = 6,
-                        modifier = Modifier
-                            .focusRequester(focusRequester)
-                            .testTag("chat-composer-input")
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
-                        decorationBox = { inner ->
-                            Box {
-                                if (state.text.isEmpty()) {
-                                    Text(
-                                        text = stringResource(R.string.chat_composer_placeholder),
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.hapi.hint,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                inner()
-                            }
-                        },
-                    )
+                    SessionReferenceInput(state.text, onTextChange, sessionId, sessions, machineLabel, state.focusRequest,
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -193,12 +159,16 @@ fun ChatComposer(
                                 Icon(PlusGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
                             }
                         }
+                        ComposerActionButton(contentDescription = stringResource(R.string.chat_schedule),
+                            onClick = { scheduleOpen = true }, enabled = attachments.isEmpty() && !state.isSending) {
+                            Icon(ScheduleGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
+                        }
                         Spacer(modifier = Modifier.weight(1f))
                         if (dictation != null) {
                             MicButton(state = dictation, onToggle = onDictationToggle)
                         }
                         PrimaryActionButton(
-                            state = state,
+                            state = state.copy(canSteer = state.canSteer && schedule == null),
                             attachments = attachments,
                             onSend = onSend,
                             onSendSteer = onSendSteer,

@@ -13,6 +13,9 @@ import kotlinx.serialization.Serializable
 data class LastSeenState(
     val lastSeen: Map<String, Long> = emptyMap(),
     val baselines: Set<String> = emptySet(),
+    val manualUnread: Map<String, Long> = emptyMap(),
+    val machineFilter: String? = null,
+    val activeOnly: Boolean = false,
 )
 
 /**
@@ -56,8 +59,33 @@ class LastSeenStore(
         updateState { state ->
             val current = state.lastSeen[sessionId] ?: 0
             val next = maxOf(current, seenAt)
-            if (next == current && state.lastSeen.containsKey(sessionId)) state
-            else state.copy(lastSeen = state.lastSeen + (sessionId to next))
+            val manual = state.manualUnread[sessionId]
+            if (next == current && state.lastSeen.containsKey(sessionId) && manual == null) state
+            else state.copy(lastSeen = state.lastSeen + (sessionId to next),
+                manualUnread = if (manual != null && next >= manual) state.manualUnread - sessionId else state.manualUnread)
+        }
+    }
+
+    fun setListPreferences(machineFilter: String?, activeOnly: Boolean) {
+        updateState { it.copy(machineFilter = machineFilter, activeOnly = activeOnly) }
+    }
+
+    fun markUnread(sessionId: String, updatedAt: Long) {
+        updateState { state -> state.copy(
+            lastSeen = state.lastSeen + (sessionId to minOf(state.lastSeen[sessionId] ?: updatedAt, updatedAt - 1)),
+            manualUnread = state.manualUnread + (sessionId to updatedAt),
+        ) }
+    }
+
+    fun markAllSeen(sessions: Iterable<SessionSummary>) {
+        updateState { state ->
+            val seen = state.lastSeen.toMutableMap()
+            val manual = state.manualUnread.toMutableMap()
+            sessions.forEach { session ->
+                seen[session.id] = maxOf(seen[session.id] ?: 0, session.updatedAt)
+                manual.remove(session.id)
+            }
+            state.copy(lastSeen = seen, manualUnread = manual)
         }
     }
 

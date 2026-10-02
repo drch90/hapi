@@ -431,6 +431,19 @@ class NewSessionLogicTest {
 // ---------------------------------------------------------- view model flow --
 
 class NewSessionViewModelTest {
+    @Test fun `explicit directory overrides saved worktree without changing target machine`() = runTest {
+        val gateway = FakeGateway()
+        val prefs = FakePrefs(draft = NewSessionForm(machineId = "m1", directory = "/old",
+            sessionType = SESSION_TYPE_WORKTREE, worktreeName = "old-tree"))
+        val vm = NewSessionViewModel(gateway, FakeMachineStore(listOf(machine("m1"))), prefs, newVmScope(),
+            initialMachineId = "m1", initialDirectory = "/repo/base")
+        advanceUntilIdle()
+        assertEquals("m1", vm.uiState.value.form.machineId)
+        assertEquals("/repo/base", vm.uiState.value.form.directory)
+        assertEquals(SESSION_TYPE_SIMPLE, vm.uiState.value.form.sessionType)
+        assertEquals("", vm.uiState.value.form.worktreeName)
+    }
+
 
     @Test
     fun `Hermes discovery follows workspace and clears on agent switch`() = runTest {

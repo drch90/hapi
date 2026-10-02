@@ -516,6 +516,22 @@ private fun AnnotatedString.Builder.appendInlineNode(node: Node, ctx: InlineCont
 
 /** Plain prose: autolink workspace file citations found by the shared detector. */
 private fun AnnotatedString.Builder.appendTextWithFilePaths(literal: String, ctx: InlineContext) {
+    val matches = Regex("""(?<![\w:/.-])(?:/[^/\s()]+)*/sessions/[^/\s)\]\"<>]+""").findAll(literal).filter {
+        app.hapi.protocol.session.SessionReferences.parsePath(it.value.trimEnd('.', ',', ';', ':', '!', '?')) != null
+    }.toList()
+    if (matches.isEmpty()) { appendTextWithWorkspacePaths(literal, ctx); return }
+    var cursor = 0
+    for (match in matches) {
+        appendTextWithWorkspacePaths(literal.substring(cursor, match.range.first), ctx)
+        val path = match.value.trimEnd('.', ',', ';', ':', '!', '?')
+        appendClassifiedLink(path, ctx) { append(path) }
+        append(match.value.substring(path.length))
+        cursor = match.range.last + 1
+    }
+    appendTextWithWorkspacePaths(literal.substring(cursor), ctx)
+}
+
+private fun AnnotatedString.Builder.appendTextWithWorkspacePaths(literal: String, ctx: InlineContext) {
     val links = MarkdownTransforms.detectFilePathLinks(literal)
     if (links.isEmpty()) {
         append(literal)

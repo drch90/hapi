@@ -17,13 +17,29 @@ controls follow agent/session capabilities; usage/storage require the owner
 namespace. See the [native app guide](../docs/guide/native-apps.md) for platform
 differences, pairing and features currently available through the web.
 
-- **Session actions:** pin/archive plus Rename, Delete and explicit Reopen
-  from the list/chat actions. Delete requires an inactive session. Resume or
-  Reopen can return another session ID: seed its window, move the draft and
-  replace navigation with the returned ID.
-- **Composer:** optimistic send, queue/steer where supported, drafts and
-  attachments uploaded on selection. Slash suggestions combine session
-  metadata and the slash-command RPC; the skills `$` picker has no UI.
+- **Sessions:** list long-press and chat overflow share Copy session reference,
+  Mark unread, project/global pin, archive, rename, reopen/delete and New in same
+  directory. Metadata search supports multiple terms and wildcards; filters cover
+  machine, active/unread state and local calendar dates. Machine/active preferences
+  and read watermarks persist per hub/device. Mark all read includes visible
+  session records outside the current filters.
+- **Composer:** `@` finds other conversations with content and inserts atomic
+  reference chips; drafts/copy/paste serialize full Markdown session links. Chat
+  links open native conversations. Optimistic send, queue/steer, attachments,
+  slash suggestions and dictation remain available. The clock schedules text
+  for 5/30/60/240 minutes later or a local date/time within seven days, using the
+  hub's durable queue. Scheduled sends cannot include attachments or steering.
+- **Conversation navigation:** the outline lists invoked/failed user messages
+  from loaded history, supports loading older messages and highlights a selected
+  message without following the tail.
+- **Workspace:** the home menu browses an online machine's configured workspace
+  roots, with breadcrumbs, hidden folders and Create here. New in same directory
+  preselects the machine and worktree base path (session path fallback).
+- **Session configuration:** Codex collaboration/Fast modes, Copilot agent modes
+  and capability-dependent permission/model/effort controls. Dynamic catalogs
+  cover Pi (provider-qualified), OpenCode, Cursor, Grok, Copilot, Agy and Hermes;
+  Claude/Gemini have presets. New dynamic controls wait for server confirmation.
+  Discovery errors can be retried from the sheet.
 - **Hermes:** creation and session models are searchable by provider/name/full
   ID, including custom endpoints. Discovery has refresh and error states;
   creation also accepts a manual model ID or the configured default. Settings
@@ -64,7 +80,8 @@ only the needed projects:
 
 CI (`.github/workflows/android.yml`) runs protocol/data/app unit tests,
 `:app:assembleDebug`, `:app:lintDebug`, and Compose instrumentation on API 29, API 33
-and API 36 for PRs touching `android/**` or `shared/fixtures/**`.
+and API 36, plus downloadable debug APK and reports. It also supports manual
+dispatch and the `android-session-parity` verification branch. It runs for PRs touching `android/**` or `shared/fixtures/**`.
 
 ### Protocol conformance fixtures
 

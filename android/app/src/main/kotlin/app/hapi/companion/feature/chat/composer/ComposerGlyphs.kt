@@ -55,3 +55,7 @@ internal val StopGlyph: ImageVector by lazy {
 internal val ArrowUpGlyph: ImageVector by lazy {
     strokeIcon("HapiArrowUp", "M12 19 L12 5.5 M6.5 11 L12 5.5 L17.5 11", 2.2f)
 }
+
+internal val ScheduleGlyph: ImageVector by lazy {
+    strokeIcon("HapiSchedule", "M21 12 A9 9 0 1 1 3 12 A9 9 0 1 1 21 12 M12 7 L12 12 L16 14")
+}

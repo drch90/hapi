@@ -1,5 +1,6 @@
 package app.hapi.companion.feature.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +44,8 @@ import app.hapi.data.store.ChatHistoryPagingState
 import app.hapi.protocol.chat.VisibleChatBlock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 private const val HISTORY_KEY = "chat-history-control"
@@ -64,9 +67,12 @@ internal fun ChatTranscript(
     onRetryHistory: () -> Unit,
     onJumpToLatest: () -> Unit,
     modifier: Modifier = Modifier,
+    location: Pair<String, Long>? = null,
+    onLocationMissing: () -> Unit = {},
     listState: LazyListState = rememberLazyListState(),
     readingState: TranscriptReadingState = rememberTranscriptReadingState(state.sessionId),
 ) {
+    var highlightedId by remember { mutableStateOf<String?>(null) }
     val rowState = rememberSaveableStateHolder()
     val stateKeys = remember(state.sessionId) { mutableSetOf<String>() }
     val rows = remember(state.blocks) { state.blocks.map(::TranscriptItem) }
@@ -89,6 +95,30 @@ internal fun ChatTranscript(
     val currentJumpToken by rememberUpdatedState(jumpToken)
     val reportViewport by rememberUpdatedState(onViewport)
     val reportLayout by rememberUpdatedState(onLayout)
+    val reportLocationMissing by rememberUpdatedState(onLocationMissing)
+
+    LaunchedEffect(location) {
+        val id = location?.first ?: return@LaunchedEffect
+        followsTail = false
+        reportViewport(false, false)
+        val ready = withTimeoutOrNull(2_000) {
+            snapshotFlow {
+                val info = listState.layoutInfo
+                id !in currentIDs || (info.totalItemsCount == currentRows.size + 1 &&
+                    info.visibleItemsInfo.all { row -> row.index == 0 || currentRows.getOrNull(row.index - 1)?.id == row.key })
+            }.first { it }
+        }
+        val index = currentRows.indexOfFirst { it.id == id }
+        if (ready != true || index < 0) { reportLocationMissing(); return@LaunchedEffect }
+        correctingTail = true
+        try {
+            listState.scrollToItem(index + 1)
+            followsTail = false
+            highlightedId = id
+        } finally { correctingTail = false }
+        try { kotlinx.coroutines.delay(1_500) } finally { highlightedId = null }
+    }
+
 
     LaunchedEffect(state.sessionId, listState) {
         var lastVersion = -1L
@@ -240,6 +270,7 @@ internal fun ChatTranscript(
                 items(rows, key = { it.id }, contentType = { it.block.contentKind }) { row ->
                     rowState.SaveableStateProvider(row.id) {
                         val rowModifier = Modifier
+                            .then(if (highlightedId == row.id) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier)
                             .onSizeChanged { heights[row.id] = it.height }
                             .testTag("chat-row-" + row.id)
                         app.hapi.companion.ui.theme.ReadingColumn(modifier = rowModifier) {

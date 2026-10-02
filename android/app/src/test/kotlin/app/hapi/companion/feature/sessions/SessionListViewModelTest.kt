@@ -106,6 +106,7 @@ private fun summary(
     worktree: WorktreeMetadata? = null,
 ): SessionSummary = SessionSummary(
     id = id,
+    hasConversationContent = true,
     active = active,
     thinking = false,
     activeAt = 0,
@@ -169,6 +170,19 @@ private fun TestScope.buildViewModel(
 // ------------------------------------------------------------------ tests --
 
 class SessionListViewModelTest {
+    @Test fun `metadata search composes with unread and active filters and clearing restores rows`() = runTest {
+        val (vm, sessions) = buildViewModel()
+        sessions.set(summary("active", active = true, name = "Fix login", updatedAt = 30),
+            summary("history", name = "Login history", updatedAt = 20), summary("other", name = "Other", updatedAt = 10))
+        vm.uiState.first { it.rows.size == 3 }
+        vm.markAllRead()
+        vm.markUnread("active")
+        vm.setFilters(SessionFilters(query = "login", unreadOnly = true, activeOnly = true))
+        assertEquals(listOf("active"), vm.uiState.first { it.filters.query == "login" }.rows.map { it.id })
+        vm.clearFilters()
+        assertEquals(3, vm.uiState.first { !it.filters.applied }.rows.size)
+    }
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     @Test
     fun `vanished filter stays cleared when sessions return and is isolated per home`() = runTest {

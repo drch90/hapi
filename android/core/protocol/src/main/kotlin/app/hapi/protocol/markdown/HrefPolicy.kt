@@ -89,7 +89,8 @@ object HrefPolicy {
         // owned by the file-path layer, never confirmable custom schemes.
         if (MarkdownTransforms.isWindowsAbsolutePath(trimmed)) return HrefDecision.Blocked
 
-        // Scheme-less: no SPA router on native -- fail closed to inert.
+        // Recognized session citations route to native chat; other relative URLs stay inert.
+        if (app.hapi.protocol.session.SessionReferences.parsePath(trimmed) != null) return HrefDecision.Allowed
         if (!hasScheme(trimmed)) return HrefDecision.Blocked
 
         val scheme = normalizedScheme(trimmed) ?: return HrefDecision.Blocked

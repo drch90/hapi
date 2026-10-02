@@ -27,6 +27,11 @@ class DataStoreChatDrafts(
     private fun key(sessionId: String): Preferences.Key<String> =
         stringPreferencesKey("draft:$hubKey:$sessionId")
 
+    private fun scheduleKey(sessionId: String) = stringPreferencesKey("schedule:$hubKey:$sessionId")
+    override suspend fun loadSchedule(sessionId: String): String? = dataStore.data.first()[scheduleKey(sessionId)]
+    override suspend fun saveSchedule(sessionId: String, value: String?) {
+        dataStore.edit { if (value == null) it.remove(scheduleKey(sessionId)) else it[scheduleKey(sessionId)] = value }
+    }
     override suspend fun load(sessionId: String): String? =
         dataStore.data.first()[key(sessionId)]?.takeIf { it.isNotEmpty() }
 
@@ -43,6 +48,9 @@ class DataStoreChatDrafts(
     override suspend fun move(fromSessionId: String, toSessionId: String) {
         if (fromSessionId == toSessionId) return
         dataStore.edit { prefs ->
+            prefs.remove(scheduleKey(fromSessionId))?.let { schedule ->
+                if (prefs[scheduleKey(toSessionId)] == null) prefs[scheduleKey(toSessionId)] = schedule
+            }
             val draft = prefs[key(fromSessionId)] ?: return@edit
             prefs.remove(key(fromSessionId))
             // Never clobber a draft already typed in the target session.

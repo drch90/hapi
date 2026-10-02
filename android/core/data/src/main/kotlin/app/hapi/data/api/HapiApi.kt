@@ -408,6 +408,8 @@ class HapiApi internal constructor(
     }
 
     /** `POST /api/sessions/:id/model` — `{provider, modelId}` variant (pi). */
+    override suspend fun setProviderModel(sessionId: String, provider: String, modelId: String) = setModel(sessionId, provider, modelId)
+
     suspend fun setModel(sessionId: String, provider: String, modelId: String) {
         setModelElement(
             sessionId,
@@ -449,7 +451,7 @@ class HapiApi internal constructor(
     }
 
     /** `POST /api/sessions/:id/service-tier` (codex) — `'fast' | 'standard'` (standard = explicit off). */
-    suspend fun setServiceTier(sessionId: String, serviceTier: String) {
+    override suspend fun setServiceTier(sessionId: String, serviceTier: String) {
         request<Unit>(
             "POST",
             url("api", "sessions", sessionId, "service-tier").build(),
@@ -458,7 +460,7 @@ class HapiApi internal constructor(
     }
 
     /** `POST /api/sessions/:id/collaboration-mode` (codex) — `'default' | 'plan'`. */
-    suspend fun setCollaborationMode(sessionId: String, mode: String) {
+    override suspend fun setCollaborationMode(sessionId: String, mode: String) {
         request<Unit>(
             "POST",
             url("api", "sessions", sessionId, "collaboration-mode").build(),
@@ -467,7 +469,7 @@ class HapiApi internal constructor(
     }
 
     /** `POST /api/sessions/:id/copilot-agent-mode` (copilot). */
-    suspend fun setCopilotAgentMode(sessionId: String, mode: String) {
+    override suspend fun setCopilotAgentMode(sessionId: String, mode: String) {
         request<Unit>(
             "POST",
             url("api", "sessions", sessionId, "copilot-agent-mode").build(),
@@ -479,6 +481,24 @@ class HapiApi internal constructor(
      * `GET /api/sessions/:id/codex-models` — active codex session's model
      * catalog (RPC-wrapped: check `success`; 400 on other flavors).
      */
+    override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean): app.hapi.protocol.wire.AgentModelDirectory {
+        require(flavor in setOf("pi", "opencode", "grok", "copilot", "cursor", "agy"))
+        val target = if (flavor == "agy") url("api", "machines", requireNotNull(machineId), "agy-models")
+            else url("api", "sessions", sessionId, "$flavor-models")
+        if (refresh && flavor == "agy") target.addQueryParameter("refresh", "true")
+        val response: app.hapi.protocol.wire.AgentModelDirectory = request("GET", target.build())
+        if (flavor != "cursor" || machineId == null || !response.success) return response
+        val machine: app.hapi.protocol.wire.AgentModelDirectory? = try {
+            request("GET", url("api", "machines", machineId, "cursor-models").build())
+        } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel } catch (_: Exception) { null }
+        return response.copy(cliModelSkus = (response.cliModelSkus + machine?.cliModelSkus.orEmpty() + machine?.availableModels.orEmpty()).distinctBy { it.modelId })
+    }
+
+    override suspend fun getAgentEffortDirectory(sessionId: String, flavor: String): app.hapi.protocol.wire.AgentEffortDirectory {
+        require(flavor == "opencode" || flavor == "grok")
+        return request("GET", url("api", "sessions", sessionId, "$flavor-reasoning-effort-options").build())
+    }
+
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse =
         request("GET", url("api", "sessions", sessionId, "codex-models").build())
 

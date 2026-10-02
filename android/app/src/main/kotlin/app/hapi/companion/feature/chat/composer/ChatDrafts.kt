@@ -7,6 +7,8 @@ package app.hapi.companion.feature.chat.composer
  */
 interface ChatDrafts {
     /** The saved draft, or null when none. */
+    suspend fun loadSchedule(sessionId: String): String? = null
+    suspend fun saveSchedule(sessionId: String, value: String?) = Unit
     suspend fun load(sessionId: String): String?
 
     /** Persist [text]; blank clears the key. */

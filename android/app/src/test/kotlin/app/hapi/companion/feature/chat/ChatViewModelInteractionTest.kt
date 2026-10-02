@@ -265,6 +265,13 @@ private class RecordingChatApi : ChatSessionApi {
         configFailure?.let { throw it }
     }
 
+    var modelDirectory = app.hapi.protocol.wire.AgentModelDirectory(false)
+    override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean) = modelDirectory
+    override suspend fun getAgentEffortDirectory(sessionId: String, flavor: String) = app.hapi.protocol.wire.AgentEffortDirectory(false)
+    override suspend fun setProviderModel(sessionId: String, provider: String, modelId: String) { configCalls.value += "provider:$provider:$modelId" }
+    override suspend fun setServiceTier(sessionId: String, serviceTier: String) { configCalls.value += "tier:$serviceTier"; configFailure?.let { throw it } }
+    override suspend fun setCollaborationMode(sessionId: String, mode: String) { configCalls.value += "collaboration:$mode"; configFailure?.let { throw it } }
+    override suspend fun setCopilotAgentMode(sessionId: String, mode: String) { configCalls.value += "copilot:$mode"; configFailure?.let { throw it } }
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse = codexModelsResult
     var hermesModelsResult = app.hapi.protocol.wire.HermesModelsResponse(success = false, error = "not scripted")
     override suspend fun getSessionHermesModels(sessionId: String, refresh: Boolean): app.hapi.protocol.wire.HermesModelsResponse = hermesModelsResult
@@ -301,6 +308,9 @@ private class RecordingChatApi : ChatSessionApi {
 
 private class FakeDrafts : ChatDrafts {
     val map = mutableMapOf<String, String>()
+    val schedules = mutableMapOf<String, String>()
+    override suspend fun loadSchedule(sessionId: String) = schedules[sessionId]
+    override suspend fun saveSchedule(sessionId: String, value: String?) { if (value == null) schedules.remove(sessionId) else schedules[sessionId] = value }
     override suspend fun load(sessionId: String): String? = map[sessionId]
     override suspend fun save(sessionId: String, text: String) {
         if (text.isBlank()) map.remove(sessionId) else map[sessionId] = text
@@ -451,6 +461,82 @@ private class InteractionHarness(
 // ------------------------------------------------------------------ tests --
 
 class ChatViewModelInteractionTest {
+    @Test fun `scheduled send persists selection until acceptance and carries exact timestamp`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.viewModel.start()
+        harness.viewModel.setSchedule(app.hapi.companion.feature.chat.composer.SendSchedule(delayMinutes = 5))
+        harness.viewModel.setComposerText("later")
+        assertNotNull(harness.viewModel.schedule.value)
+        harness.viewModel.sendMessage()
+        val request = harness.api.sendCalls.first { it.isNotEmpty() }.single().second
+        assertEquals(301_000L, request.scheduledAt)
+        assertEquals("queue", request.deliveryMode)
+        harness.viewModel.schedule.first { it == null }
+        testScheduler.runCurrent()
+        assertNull(harness.drafts.schedules[IX_SESSION])
+    }
+
+    @Test fun `failed scheduled send retains selection and retry preserves original timestamp`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.api.sendFailures += RuntimeException("network")
+        harness.viewModel.start()
+        harness.viewModel.setSchedule(app.hapi.companion.feature.chat.composer.SendSchedule(delayMinutes = 30))
+        harness.viewModel.setComposerText("later")
+        harness.viewModel.sendMessage()
+        harness.window().state.first { it.messages.any { row -> row.status == MessageStatus.Failed } }
+        assertNotNull(harness.viewModel.schedule.value)
+        harness.viewModel.retryFailedMessage("local-1")
+        harness.window().state.first { it.messages.any { row -> row.status == MessageStatus.Sent } }
+        val requests = harness.api.sendCalls.value.map { it.second }
+        assertEquals(requests[0].localId, requests[1].localId)
+        assertEquals(requests[0].scheduledAt, requests[1].scheduledAt)
+    }
+
+    @Test fun `invalid schedule and scheduled steer keep composer without posting`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.viewModel.start()
+        harness.viewModel.setComposerText("keep me")
+        harness.viewModel.setSchedule(app.hapi.companion.feature.chat.composer.SendSchedule(epochMs = 900_000_000L))
+        harness.viewModel.sendMessage()
+        harness.viewModel.setSchedule(app.hapi.companion.feature.chat.composer.SendSchedule(delayMinutes = 5))
+        harness.viewModel.sendMessage(steer = true)
+        testScheduler.runCurrent()
+        assertTrue(harness.api.sendCalls.value.isEmpty())
+        assertEquals("keep me", harness.viewModel.composer.value.text)
+    }
+
+    @Test fun `new mode controls confirm server state and reject inactive or terminal control`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "codex").copy(collaborationMode = "default"))
+        harness.viewModel.start()
+        testScheduler.runCurrent()
+        harness.viewModel.setCollaborationMode("plan")
+        assertEquals("default", harness.sessionStore.currentDetail(IX_SESSION)?.collaborationMode)
+        harness.api.configCalls.first { it.isNotEmpty() }
+        testScheduler.runCurrent()
+        harness.sessionStore.setDetail(detail(flavor = "codex", active = false))
+        harness.viewModel.setCollaborationMode("plan")
+        harness.sessionStore.setDetail(detail(flavor = "codex", agentState = AgentState(controlledByUser = true)))
+        harness.viewModel.setCollaborationMode("plan")
+        testScheduler.runCurrent()
+        assertEquals(listOf("collaboration:plan"), harness.api.configCalls.value)
+    }
+
+    @Test fun `Pi model switch sends provider qualified identity`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "pi", model = "same"))
+        harness.api.modelDirectory = app.hapi.protocol.wire.AgentModelDirectory(true, availableModels = listOf(
+            app.hapi.protocol.wire.AgentModelEntry("same", provider = "a"),
+            app.hapi.protocol.wire.AgentModelEntry("same", provider = "b"),
+        ))
+        harness.viewModel.start()
+        harness.viewModel.loadModelOptions()
+        val config = harness.viewModel.config.first { !it.modelOptionsLoading && it.modelOptions.orEmpty().size >= 2 }
+        val selection = harness.api.modelDirectory.availableModels.last().selectionKey
+        assertTrue(config.modelOptions.orEmpty().any { it.value == selection })
+        harness.viewModel.setModel(selection)
+        harness.api.configCalls.first { it.isNotEmpty() }
+        assertEquals(listOf("provider:b:same"), harness.api.configCalls.value)
+    }
+
 
     private fun planDetail(): Session = detail(
         flavor = "codex", agentState = AgentState(codexPlanProposalId = "plan-1"),

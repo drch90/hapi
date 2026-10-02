@@ -33,6 +33,25 @@ import okio.Buffer
 
 /** Request/response shapes of [HapiApi] against MockWebServer. */
 class HapiApiTest {
+    @Test fun `agent directories and mode controls use the native client contract`() = runBlocking {
+        for (flavor in listOf("pi", "opencode", "grok", "copilot")) {
+            server.enqueue(ok("""{"success":true,"availableModels":[{"modelId":"custom"}]}"""))
+            assertEquals("custom", session.api.getAgentModelDirectory("s1", flavor, "m1", false).availableModels.single().modelId)
+            assertEquals("/api/sessions/s1/$flavor-models", server.takeRequest().path)
+        }
+        server.enqueue(ok("""{"success":true,"availableModels":[]}"""))
+        session.api.getAgentModelDirectory("s1", "agy", "m1", true)
+        assertEquals("/api/machines/m1/agy-models?refresh=true", server.takeRequest().path)
+        server.enqueue(ok("{}"))
+        session.api.setCollaborationMode("s1", "plan")
+        val collaboration = server.takeRequest()
+        assertEquals("/api/sessions/s1/collaboration-mode", collaboration.path)
+        assertTrue(collaboration.body.readUtf8().contains("plan"))
+        server.enqueue(ok("{}"))
+        session.api.setCopilotAgentMode("s1", "autopilot")
+        assertEquals("/api/sessions/s1/copilot-agent-mode", server.takeRequest().path)
+    }
+
 
     private lateinit var server: MockWebServer
     private lateinit var session: HubSession

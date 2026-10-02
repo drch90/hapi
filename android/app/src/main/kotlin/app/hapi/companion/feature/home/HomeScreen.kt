@@ -56,6 +56,8 @@ fun HomeScreen(
     onNewSession: (() -> Unit)? = null,
     /** Hub menu → settings scaffold (B-M4e). */
     onOpenSettings: (() -> Unit)? = null,
+    onOpenWorkspace: (() -> Unit)? = null,
+    onNewInDirectory: ((String?, String) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     var showFilters by rememberSaveable(activeHubUrl) { mutableStateOf(false) }
@@ -66,12 +68,13 @@ fun HomeScreen(
             HomeTopBar(
                 activeHubUrl = activeHubUrl,
                 pairedHubs = pairedHubs,
-                hasMachineFilters = state.hasMachineFilters,
-                hasActiveFilter = state.activeMachineFilter != null,
+                hasMachineFilters = true,
+                hasActiveFilter = state.activeMachineFilter != null || state.filters.applied,
                 onOpenFilters = { showFilters = true },
                 onSwitchHub = onSwitchHub,
                 onPairAnotherHub = onPairAnotherHub,
                 onOpenSettings = onOpenSettings,
+                onOpenWorkspace = onOpenWorkspace,
                 onSignOut = { showSignOutConfirm = true },
             )
         },
@@ -81,11 +84,12 @@ fun HomeScreen(
             onOpenSession = onOpenSession,
             modifier = Modifier.fillMaxSize().padding(padding),
             onNewSession = onNewSession,
+            onNewInDirectory = onNewInDirectory,
         )
     }
 
     if (showFilters) {
-        SessionFilterSheet(state, select = { viewModel.setMachineFilter(it); showFilters = false }, dismiss = { showFilters = false })
+        SessionFilterSheet(state, select = viewModel::setMachineFilter, dismiss = { showFilters = false }, update = viewModel::setFilters, clear = viewModel::clearFilters)
     }
     if (showSignOutConfirm) {
         AlertDialog(
@@ -123,6 +127,7 @@ internal fun HomeTopBar(
     onPairAnotherHub: () -> Unit,
     onOpenSettings: (() -> Unit)?,
     onSignOut: () -> Unit,
+    onOpenWorkspace: (() -> Unit)? = null,
 ) {
     var menuOpen by rememberSaveable(activeHubUrl) { mutableStateOf(false) }
     CenterAlignedTopAppBar(
@@ -158,6 +163,10 @@ internal fun HomeTopBar(
                         leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) },
                         onClick = { menuOpen = false; onPairAnotherHub() },
                     )
+                    if (onOpenWorkspace != null) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.workspace_title)) },
+                            onClick = { menuOpen = false; onOpenWorkspace() })
+                    }
                     HorizontalDivider()
                     if (onOpenSettings != null) {
                         DropdownMenuItem(

@@ -76,6 +76,7 @@ import kotlinx.coroutines.withContext
 
 object Routes {
     const val HOME = "home"
+    const val WORKSPACE = "workspace"
 
     /** Read-only chat (B-M2d2). */
     const val CHAT = "chat/{sessionId}"
@@ -123,10 +124,16 @@ object Routes {
     fun scratchlist(sessionId: String) = "chat/$sessionId/scratchlist"
 
     /** New-session form (B-M3d); optional machine preselect. */
-    const val NEW_SESSION = "newSession?machineId={machineId}"
+    const val NEW_SESSION = "newSession?machineId={machineId}&directory={directory}"
 
-    fun newSession(machineId: String? = null) =
-        if (machineId == null) "newSession" else "newSession?machineId=$machineId"
+    fun newSession(machineId: String? = null, directory: String? = null): String = buildString {
+        append("newSession")
+        val args = buildList {
+            machineId?.let { add("machineId=" + android.net.Uri.encode(it)) }
+            directory?.let { add("directory=" + encodeFilePath(it)) }
+        }
+        if (args.isNotEmpty()) append("?").append(args.joinToString("&"))
+    }
 
     /** Nested pairing graph (landing ⇄ scan ⇄ manual share one ViewModel). */
     const val PAIRING = "pairing"
@@ -196,7 +203,7 @@ fun HapiNavigation() {
             if (active == null) {
                 val onPairing = navController.currentDestination?.hierarchy?.any { it.route == Routes.PAIRING } == true
                 if (!onPairing) navController.navigateClearingBackStack(Routes.PAIRING)
-            } else if (navController.currentDestination?.route in setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST)) {
+            } else if (navController.currentDestination?.route in setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST, Routes.WORKSPACE, Routes.NEW_SESSION)) {
                 navController.popBackStack(Routes.HOME, inclusive = false)
             }
         }
@@ -236,8 +243,19 @@ fun HapiNavigation() {
                 onSignOut = { scope.launch { graph.signOut(activeHubUrl) } },
                 onOpenSession = { sessionId -> navController.navigate(Routes.chat(sessionId)) },
                 onNewSession = { navController.navigate(Routes.newSession()) },
+                onOpenWorkspace = { navController.navigate(Routes.WORKSPACE) },
+                onNewInDirectory = { machine, directory -> navController.navigate(Routes.newSession(machine, directory)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
+        }
+
+        composable(Routes.WORKSPACE) {
+            val hubGraph = activeHubGraph ?: return@composable
+            val machines by hubGraph.machineStore.machines.collectAsState()
+            LaunchedEffect(hubGraph) { runCatching { hubGraph.machineStore.refresh() } }
+            app.hapi.companion.feature.directorybrowser.WorkspaceScreen(hubGraph.session.api, machines,
+                onBack = { navController.popBackStack() },
+                onStart = { machine, directory -> navController.navigate(Routes.newSession(machine, directory)) })
         }
 
         composable(Routes.SETTINGS) {
@@ -312,6 +330,8 @@ fun HapiNavigation() {
                     }
                 },
                 onBack = { navController.popBackStack() },
+                onOpenReference = { id -> navController.navigate(Routes.chat(id)) { launchSingleTop = true } },
+                onNewInDirectory = { machine, directory -> navController.navigate(Routes.newSession(machine, directory)) },
                 onNavigateToSession = { supersededId ->
                     // Resume/reopen handed the conversation to a different id:
                     // replace this chat entry with the superseding session.
@@ -450,6 +470,7 @@ fun HapiNavigation() {
         composable(
             route = Routes.NEW_SESSION,
             arguments = listOf(
+                navArgument("directory") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("machineId") {
                     type = NavType.StringType
                     nullable = true
@@ -466,6 +487,7 @@ fun HapiNavigation() {
                     NewSessionViewModelHolder(
                         hubGraph, graph.newSessionPrefs, machineId,
                         newSessionStrings(formContext),
+                        initialDirectory = entry.arguments?.getString("directory")?.let(Routes::decodeFilePath),
                     )
                 },
             )
@@ -749,6 +771,7 @@ private class NewSessionViewModelHolder(
     prefs: NewSessionPrefs,
     initialMachineId: String?,
     strings: NewSessionStrings,
+    initialDirectory: String? = null,
 ) : ViewModel() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -758,6 +781,7 @@ private class NewSessionViewModelHolder(
         prefs = prefs,
         scope = scope,
         initialMachineId = initialMachineId,
+        initialDirectory = initialDirectory,
         strings = strings,
     )
 

@@ -1,5 +1,8 @@
 package app.hapi.companion.feature.sessions
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -95,11 +98,14 @@ fun SessionListScreen(
     modifier: Modifier = Modifier,
     /** Shows the "+" FAB (new-session form, B-M3d) when non-null. */
     onNewSession: (() -> Unit)? = null,
+    onNewInDirectory: ((String?, String) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var sheetRow by remember { mutableStateOf<SessionRowUi?>(null) }
     var renameRow by remember { mutableStateOf<SessionRowUi?>(null) }
+    var archiveRow by remember { mutableStateOf<SessionRowUi?>(null) }
+    var markAllRead by remember { mutableStateOf(false) }
     var deleteRow by remember { mutableStateOf<SessionRowUi?>(null) }
 
     DisposableEffect(viewModel) {
@@ -141,6 +147,13 @@ fun SessionListScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
+            OutlinedTextField(value = state.filters.query,
+                onValueChange = { viewModel.setFilters(state.filters.copy(query = it)) },
+                label = { Text(stringResource(R.string.sessions_search)) }, singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            if (state.unreadCount > 0) {
+                TextButton(onClick = { markAllRead = true }) { Text(stringResource(R.string.sessions_mark_all_read, state.unreadCount)) }
+            }
             if (state.isOffline) {
                 OfflineBanner()
             }
@@ -159,7 +172,9 @@ fun SessionListScreen(
                     .weight(1f),
             ) {
                 if (state.rows.isEmpty()) {
-                    EmptyState(hasLoaded = state.hasLoaded, isOffline = state.isOffline)
+                    if (state.filters.applied || state.activeMachineFilter != null) {
+                        Text(stringResource(R.string.sessions_no_matches), modifier = Modifier.padding(16.dp))
+                    } else EmptyState(hasLoaded = state.hasLoaded, isOffline = state.isOffline)
                 } else {
                     SessionRows(
                         rows = state.rows,
@@ -191,16 +206,21 @@ fun SessionListScreen(
         )
     }
 
-    sheetRow?.let { row ->
+    sheetRow?.let { selected ->
+        val row = state.rows.firstOrNull { it.id == selected.id } ?: selected
         SessionActionsSheet(
             row = row,
+            onUnread = { viewModel.markUnread(row.id) },
+            onNewInDirectory = row.summary.metadata?.let { meta -> onNewInDirectory?.let { createSession ->
+                { createSession(meta.machineId, meta.worktree?.basePath ?: meta.path) }
+            } },
             onDismiss = { sheetRow = null },
             onSetPinMode = { mode ->
                 viewModel.setPinMode(row.id, mode)
                 sheetRow = null
             },
             onArchive = {
-                viewModel.archiveSession(row.id)
+                archiveRow = row
                 sheetRow = null
             },
             onRename = {
@@ -216,6 +236,18 @@ fun SessionListScreen(
                 sheetRow = null
             },
         )
+    }
+    archiveRow?.let { row ->
+        ArchiveSessionDialog(row.title, onDismiss = { archiveRow = null }, onConfirm = {
+            viewModel.archiveSession(row.id); archiveRow = null
+        })
+    }
+    if (markAllRead) {
+        AlertDialog(onDismissRequest = { markAllRead = false },
+            text = { Text(stringResource(R.string.sessions_mark_all_read_confirm, state.unreadCount)) },
+            confirmButton = { TextButton(onClick = { viewModel.markAllRead(); markAllRead = false }) {
+                Text(stringResource(R.string.sessions_mark_all_read, state.unreadCount)) } },
+            dismissButton = { TextButton(onClick = { markAllRead = false }) { Text(stringResource(R.string.chat_cancel)) } })
     }
     renameRow?.let { row ->
         RenameSessionDialog(
@@ -503,40 +535,14 @@ private fun EmptyState(hasLoaded: Boolean, isOffline: Boolean) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SessionActionsSheet(
-    row: SessionRowUi,
-    onDismiss: () -> Unit,
-    onSetPinMode: (PinMode) -> Unit,
-    onArchive: () -> Unit,
-    onRename: () -> Unit,
-    onReopen: () -> Unit,
-    onDelete: () -> Unit,
+    row: SessionRowUi, onDismiss: () -> Unit, onSetPinMode: (PinMode) -> Unit,
+    onArchive: () -> Unit, onRename: () -> Unit, onReopen: () -> Unit, onDelete: () -> Unit,
+    onUnread: () -> Unit, onNewInDirectory: (() -> Unit)?,
 ) {
-    val summary = row.summary
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(
-            text = row.title,
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        HorizontalDivider()
-        if (summary.pinned == true || summary.globalPinned == true) {
-            SheetAction(stringResource(R.string.sessions_action_unpin)) { onSetPinMode(PinMode.None) }
-        }
-        if (summary.pinned != true) {
-            SheetAction(stringResource(R.string.sessions_action_pin_project)) { onSetPinMode(PinMode.Project) }
-        }
-        if (summary.globalPinned != true) {
-            SheetAction(stringResource(R.string.sessions_action_pin_global)) { onSetPinMode(PinMode.Global) }
-        }
-        SheetAction(stringResource(R.string.sessions_action_rename), onClick = onRename)
-        if (!summary.active) {
-            SheetAction(stringResource(R.string.sessions_action_reopen), onClick = onReopen)
-        }
-        SheetAction(stringResource(R.string.sessions_action_archive), destructive = true, onClick = onArchive)
-        SheetAction(stringResource(R.string.sessions_action_delete), destructive = true, onClick = onDelete)
-        Spacer(modifier = Modifier.size(16.dp))
+        Text(row.title, modifier = Modifier.padding(16.dp), maxLines = 2)
+        SessionActionItems(row.id, row.title, row.summary.active, row.summary.pinned == true, row.summary.globalPinned == true,
+            onDismiss, onRename, onSetPinMode, onUnread, onArchive, onReopen, onDelete, onNewInDirectory)
     }
 }
 

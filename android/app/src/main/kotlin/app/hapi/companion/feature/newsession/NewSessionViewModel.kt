@@ -171,6 +171,7 @@ class NewSessionViewModel(
     private val prefs: NewSessionPrefs,
     private val scope: CoroutineScope,
     initialMachineId: String? = null,
+    initialDirectory: String? = null,
     private val debounceMs: Long = 250L,
     private val strings: NewSessionStrings = NewSessionStrings(),
 ) {
@@ -242,6 +243,7 @@ class NewSessionViewModel(
                     initial = initial.copy(machineId = initialMachineId)
                 }
             }
+            if (initialDirectory != null) initial = initial.copy(directory = initialDirectory, sessionType = SESSION_TYPE_SIMPLE, worktreeName = "")
             form.value = initial
             refreshAgentAvailability()
             refreshCodexModelsIfNeeded()
