@@ -65,6 +65,7 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
     override fun getText(): Editable = requireNotNull(super.getText())
     var changed: (String) -> Unit = {}
     var selectionChanged: (() -> Unit)? = null
+    var focusChanged: ((Boolean) -> Unit)? = null
     var linkColor: Int = 0
     var chipColor: Int = 0
     private var replacing = false
@@ -86,6 +87,12 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) { if (!replacing) { changed(serialize()); selectionChanged?.invoke() } }
         })
+    }
+    override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+        super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+        // AndroidView owns its platform focus listener. Observe the callback
+        // without replacing Compose's listener or breaking focus interop.
+        focusChanged?.invoke(gainFocus)
     }
     override fun onSelectionChanged(start: Int, end: Int) { super.onSelectionChanged(start, end); selectionChanged?.invoke() }
     fun serialize(start: Int = 0, end: Int = text.length): String {
@@ -200,7 +207,7 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
                 view.linkColor = colors.primary.toArgb(); view.chipColor = colors.secondaryContainer.toArgb()
                 view.setTextColor(colors.onSurface.toArgb()); view.setHintTextColor(colors.onSurfaceVariant.toArgb())
                 view.textSize = 16f; view.hint = hint
-                view.onFocusChangeListener = android.view.View.OnFocusChangeListener { _, focused -> isFocused = focused }
+                view.focusChanged = { isFocused = it }
                 view.changed = { latestChange(it) }
                 view.selectionChanged = { query = view.query()?.second }
                 view.syncValue(value)
