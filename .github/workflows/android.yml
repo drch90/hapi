@@ -104,6 +104,9 @@ jobs:
                   # separate instrumentation process from Compose layout tests.
                   script: |
                       cd android && ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.notClass=app.hapi.companion.feature.chat.BackgroundNotificationDeliveryTest --stacktrace
+                      mkdir -p android/build/ci-transcript-reports android/build/ci-transcript-results
+                      cp -R android/app/build/reports/androidTests/. android/build/ci-transcript-reports/
+                      cp -R android/app/build/outputs/androidTest-results/. android/build/ci-transcript-results/
                       cd android && ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.hapi.companion.feature.chat.BackgroundNotificationDeliveryTest --stacktrace
             - name: Annotate instrumentation failures
               if: failure()
@@ -134,5 +137,7 @@ jobs:
                   path: |
                       android/app/build/reports/androidTests/
                       android/app/build/outputs/androidTest-results/
+                      android/build/ci-transcript-reports/
+                      android/build/ci-transcript-results/
                   if-no-files-found: ignore
                   retention-days: 7
