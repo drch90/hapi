@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -1671,11 +1672,12 @@ class ChatViewModel(
         val flavor = currentFlavor()
         if (flavor == "cursor" && (model == null || model == "auto") && liveConfig.cursorAutoUnavailable) return
         val providerModel = if (flavor == "pi") (dynamicModels.value.directory?.availableModels.orEmpty().ifEmpty { currentDetail()?.metadata?.piAvailableModels.orEmpty() }).firstOrNull { it.selectionKey == model } else null
-        if (flavor == "pi" && providerModel?.provider == null) return
+        val provider = providerModel?.provider
+        if (flavor == "pi" && provider == null) return
         runConfigChange(
             optimistic = { it.copy(model = model) },
             call = {
-                if (providerModel?.provider != null) api.setProviderModel(sessionId, providerModel.provider, providerModel.modelId)
+                if (provider != null && providerModel != null) api.setProviderModel(sessionId, provider, providerModel.modelId)
                 else {
                     val previousEffort = currentDetail()?.modelReasoningEffort
                     if (flavor == "opencode" && previousEffort != null) api.setModelReasoningEffort(sessionId, null)
