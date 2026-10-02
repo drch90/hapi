@@ -13,7 +13,7 @@ import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
 import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
+import androidx.appcompat.widget.AppCompatEditText
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,27 +36,33 @@ import app.hapi.protocol.session.SessionReferences
 import app.hapi.protocol.wire.SessionSummary
 
 /** An editable atom occupies one UTF-16 slot; wire/draft text always contains the full id. */
-private class SessionSpan(val id: String, val title: String, val color: Int, val background: Int) : ReplacementSpan() {
+private class SessionSpan(val id: String, val title: String, val color: Int, val background: Int, val availableWidth: () -> Int) : ReplacementSpan() {
     private val label = run {
         val boundary = android.icu.text.BreakIterator.getCharacterInstance().apply { setText(title) }
         var end = 0
         repeat(32) { val next = boundary.next(); if (next != java.text.BreakIterator.DONE) end = next }
         " @" + title.substring(0, end) + (if (end < title.length) "…" else "") + " "
     }
+    private fun displayLabel(paint: Paint): String = android.text.TextUtils.ellipsize(
+        label, android.text.TextPaint(paint), (availableWidth() - 8).coerceAtLeast(24).toFloat(), android.text.TextUtils.TruncateAt.END,
+    ).toString()
     override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int =
-        paint.measureText(label).toInt() + 8
+        paint.measureText(displayLabel(paint)).toInt() + 8
     override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
         val old = paint.color
-        val width = paint.measureText(label) + 8
+        val displayed = displayLabel(paint)
+        val width = paint.measureText(displayed) + 8
         paint.color = background
         canvas.drawRoundRect(RectF(x, y + paint.ascent() - 2, x + width, y + paint.descent() + 2), 8f, 8f, paint)
         paint.color = color
-        canvas.drawText(label, x + 4, y.toFloat(), paint)
+        canvas.drawText(displayed, x + 4, y.toFloat(), paint)
         paint.color = old
     }
 }
 
-internal class SessionEditText(context: Context) : EditText(context) {
+internal class SessionEditText(context: Context) : AppCompatEditText(context) {
+    // AppCompat's nullable declaration is wider than EditText's editable contract.
+    override fun getText(): Editable = requireNotNull(super.getText())
     var changed: (String) -> Unit = {}
     var selectionChanged: (() -> Unit)? = null
     var linkColor: Int = 0
@@ -100,7 +106,9 @@ internal class SessionEditText(context: Context) : EditText(context) {
             out.append(value.substring(cursor, mention.start))
             val start = out.length
             out.append('\uFFFC')
-            out.setSpan(SessionSpan(mention.id, mention.title, linkColor, chipColor), start, start + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.setSpan(SessionSpan(mention.id, mention.title, linkColor, chipColor) {
+                (width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) - paddingLeft - paddingRight
+            }, start, start + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             cursor = mention.end
         }
         out.append(value.substring(cursor))

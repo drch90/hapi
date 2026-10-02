@@ -478,7 +478,7 @@ class ChatViewModel(
         scheduleEdited = true
         scheduleState.value = value
         scheduleSaveJob?.cancel()
-        scheduleSaveJob = scope.launch { drafts?.saveSchedule(sessionId, value?.encode()) }
+        scheduleSaveJob = scope.launch { runCatching { drafts?.saveSchedule(sessionId, value?.encode()) } }
     }
     private val sendInFlight = MutableStateFlow(false)
 
@@ -1064,7 +1064,7 @@ class ChatViewModel(
                         if (pendingSchedule != null && scheduleState.value == pendingSchedule) {
                             setSchedule(null)
                             scheduleSaveJob?.join()
-                            if (target != sessionId) drafts?.saveSchedule(target, null)
+                            if (target != sessionId) runCatching { drafts?.saveSchedule(target, null) }
                         }
                     },
                     scheduledAt = scheduledAt,
