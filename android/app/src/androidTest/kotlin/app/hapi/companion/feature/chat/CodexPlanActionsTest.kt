@@ -14,7 +14,7 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -31,7 +31,7 @@ import org.junit.Rule
 import org.junit.Test
 
 class CodexPlanActionsTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<androidx.activity.ComponentActivity>()
 
     private fun proposal(name: String = "ExitPlanMode"): ToolCallBlock {
         val block = previewToolCall("message", name, input = mapOf("plan" to "# Plan document\n\nKeep the complete proposal."))
@@ -108,12 +108,17 @@ class CodexPlanActionsTest {
         compose.onNodeWithTag("plan-continue-proposal").performScrollTo().assertIsDisplayed().performClick()
         // Focus crosses the AndroidView boundary; verify the platform editor
         // itself as well as the Compose semantics exposed to accessibility.
-        androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(
-            app.hapi.companion.feature.chat.composer.SessionEditText::class.java,
-        )).check { view, error ->
-            if (error != null) throw error
-            assertTrue("native focus=${view.hasFocus()}, focusable=${view.isFocusable}, touch=${view.isFocusableInTouchMode}, " +
-                "window=${view.hasWindowFocus()}, request=${composer.value.focusRequest}", view.hasFocus())
+        compose.runOnIdle {
+            fun editorIn(view: android.view.View): app.hapi.companion.feature.chat.composer.SessionEditText? {
+                if (view is app.hapi.companion.feature.chat.composer.SessionEditText) return view
+                if (view is android.view.ViewGroup) {
+                    for (index in 0 until view.childCount) editorIn(view.getChildAt(index))?.let { return it }
+                }
+                return null
+            }
+            val editor = requireNotNull(editorIn(compose.activity.window.decorView))
+            assertTrue("native focus=${editor.hasFocus()}, focusable=${editor.isFocusable}, touch=${editor.isFocusableInTouchMode}, " +
+                "window=${editor.hasWindowFocus()}, request=${composer.value.focusRequest}", editor.hasFocus())
         }
         compose.onNodeWithTag("chat-composer-input").assertIsFocused().assertTextContains("Refine step two")
         compose.runOnIdle { assertEquals("Refine step two", composer.value.text) }
