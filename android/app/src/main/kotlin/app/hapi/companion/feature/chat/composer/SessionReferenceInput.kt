@@ -19,6 +19,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.focused
@@ -168,6 +170,7 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
 @Composable
 internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, sessionId: String,
     sessions: List<SessionSummary>, machineLabel: (String?) -> String, focusRequest: Long, modifier: Modifier = Modifier) {
+    val focusRequester = remember { FocusRequester() }
     var editor by remember { mutableStateOf<SessionEditText?>(null) }
     var isFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf<String?>(null) }
@@ -188,9 +191,9 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
             }
         }
         AndroidView(factory = { context -> SessionEditText(context).also { editor = it } },
-            modifier = Modifier.fillMaxWidth().testTag("chat-composer-input").semantics {
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).testTag("chat-composer-input").semantics {
                 focused = isFocused
-                requestFocus { editor?.requestFocus() ?: false }
+                requestFocus { focusRequester.requestFocus(); true }
                 editableText = AnnotatedString(value)
                 insertTextAtCursor { input ->
                     editor?.let { view ->
@@ -217,7 +220,16 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
     LaunchedEffect(focusRequest) {
         if (handledFocus != focusRequest) {
             handledFocus = focusRequest
-            editor?.let { view -> view.requestFocus(); (view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(view, InputMethodManager.SHOW_IMPLICIT) }
+            // The triggering button can leave composition in this frame. Let
+            // Compose finish that focus transaction, then focus the interop node
+            // before requesting the native editor and its keyboard.
+            withFrameNanos { }
+            focusRequester.requestFocus()
+            editor?.let { view ->
+                view.requestFocus()
+                (view.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+            }
         }
     }
 }
