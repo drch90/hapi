@@ -105,6 +105,15 @@ class CodexPlanActionsTest {
         }
         compose.onNodeWithTag("chat-composer-input").assertIsNotFocused()
         compose.onNodeWithTag("plan-continue-proposal").performScrollTo().assertIsDisplayed().performClick()
+        // Focus crosses the AndroidView boundary; verify the platform editor
+        // itself as well as the Compose semantics exposed to accessibility.
+        androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(
+            app.hapi.companion.feature.chat.composer.SessionEditText::class.java,
+        )).check { view, error ->
+            if (error != null) throw error
+            assertTrue("native focus=${view.hasFocus()}, focusable=${view.isFocusable}, touch=${view.isFocusableInTouchMode}, " +
+                "window=${view.hasWindowFocus()}, request=${composer.value.focusRequest}", view.hasFocus())
+        }
         compose.onNodeWithTag("chat-composer-input").assertIsFocused().assertTextContains("Refine step two")
         compose.runOnIdle { assertEquals("Refine step two", composer.value.text) }
     }
