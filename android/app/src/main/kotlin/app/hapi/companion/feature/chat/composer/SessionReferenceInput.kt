@@ -82,6 +82,9 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
         background = null
         setPadding(0, 0, 0, 0)
         inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        // The surrounding Compose host need not supply AppCompat editTextStyle.
+        // Editable behavior must not depend on that theme's touch-focus default.
+        isFocusableInTouchMode = true
         minLines = 1
         maxLines = 6
         addTextChangedListener(object : TextWatcher {
