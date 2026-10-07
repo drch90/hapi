@@ -29,6 +29,12 @@ differences, pairing and features currently available through the web.
   slash suggestions and dictation remain available. The clock schedules text
   for 5/30/60/240 minutes later or a local date/time within seven days, using the
   hub's durable queue. Scheduled sends cannot include attachments or steering.
+- **Context usage:** below the composer, the compact Web-style label opens
+  cache/used/remaining token details. It follows the latest parent-thread usage
+  (excluding subagents), with warnings at 70%/90%. Reported limits take priority,
+  then Pi's provider-qualified live/cached catalog, then Web's conservative
+  Claude/Codex/Pi/Cursor budgets. Unknown limits show used tokens only; no usage
+  report means no indicator.
 - **Conversation navigation:** the outline lists invoked/failed user messages
   from loaded history, supports loading older messages and highlights a selected
   message without following the tail.

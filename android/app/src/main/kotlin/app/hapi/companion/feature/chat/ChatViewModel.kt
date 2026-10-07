@@ -82,7 +82,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -154,6 +153,7 @@ data class ChatUiState(
     val messagesVersion: Long = 0,
     val requiresLatestReset: Boolean = false,
     val processSteps: Map<String, Int> = emptyMap(),
+    val latestUsage: app.hapi.protocol.chat.LatestUsage? = null,
 )
 
 /** Composer bar state (M3a). */
@@ -495,12 +495,18 @@ class ChatViewModel(
     private val dynamicModels = MutableStateFlow(DynamicModels())
     private var dynamicModelsJob: Job? = null
     private var dynamicModelsGeneration = 0L
+    private data class ModelSelection(val model: String?, val piModel: ProviderModel?, val active: Boolean, val flavor: String?)
     init {
         scope.launch {
             sessionStore.sessionDetail(sessionId)
-                .map { Triple(it?.model, it?.metadata?.piSelectedModel, it?.active) }
-                .distinctUntilChanged().drop(1).collect {
-                    if (dynamicModelsGeneration > 0 && currentFlavor() in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy")) loadDynamicModels()
+                .map { ModelSelection(it?.model, it?.metadata?.piSelectedModel, it?.active == true, it?.metadata?.flavor) }
+                .distinctUntilChanged().collect { selection ->
+                    // Pi's live catalog supplies the context window even when
+                    // the user has never opened the configuration sheet.
+                    if ((selection.flavor == "pi" && selection.active) ||
+                        (dynamicModelsGeneration > 0 && selection.flavor in listOf("pi", "opencode", "cursor", "grok", "copilot", "agy"))) {
+                        loadDynamicModels()
+                    }
                 }
         }
     }
@@ -578,6 +584,18 @@ class ChatViewModel(
         .map(::buildUiState)
         .flowOn(pipelineDispatcher)
         .stateIn(scope, SharingStarted.Eagerly, initialState())
+
+    /** Catalog updates change the indicator without rerunning transcript reduction. */
+    val contextUsage: StateFlow<ContextUsageUi?> = combine(
+        uiState.map { it.latestUsage }.distinctUntilChanged(),
+        sessionStore.sessionDetail(sessionId),
+        summaryFlow(),
+        dynamicModels,
+    ) { usage, detail, summary, models ->
+        val metadata = detail?.metadata
+        val entries = models.directory?.availableModels?.takeIf { it.isNotEmpty() } ?: metadata?.piAvailableModels.orEmpty()
+        contextUsage(usage, metadata?.flavor ?: summary?.metadata?.flavor, detail?.model, entries, metadata?.piSelectedModel)
+    }.stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Composer bar state (text is VM-owned so drafts and edit-prefill flow through it). */
     val composer: StateFlow<ComposerUiState> = combine(
@@ -2103,6 +2121,7 @@ class ChatViewModel(
             historyVersion = window.historyVersion,
             messagesVersion = window.messagesVersion,
             requiresLatestReset = window.requiresLatestReset,
+            latestUsage = reduced.latestUsage,
         )
     }
 

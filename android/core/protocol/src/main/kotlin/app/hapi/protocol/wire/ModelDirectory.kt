@@ -19,6 +19,7 @@ data class AgentModelEntry(
     val modelId: String,
     val name: String? = null,
     val provider: String? = null,
+    val contextWindow: Double? = null,
     val reasoning: Boolean? = null,
     val thinkingLevelMap: Map<String, String?>? = null,
     val reasoningEfforts: List<AgentEffortOption> = emptyList(),

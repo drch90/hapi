@@ -266,7 +266,11 @@ private class RecordingChatApi : ChatSessionApi {
     }
 
     var modelDirectory = app.hapi.protocol.wire.AgentModelDirectory(false)
-    override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean) = modelDirectory
+    var modelDirectoryCalls = 0
+    override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean): app.hapi.protocol.wire.AgentModelDirectory {
+        modelDirectoryCalls++
+        return modelDirectory
+    }
     override suspend fun getAgentEffortDirectory(sessionId: String, flavor: String) = app.hapi.protocol.wire.AgentEffortDirectory(false)
     override suspend fun setProviderModel(sessionId: String, provider: String, modelId: String) { configCalls.value += "provider:$provider:$modelId" }
     override suspend fun setServiceTier(sessionId: String, serviceTier: String) { configCalls.value += "tier:$serviceTier"; configFailure?.let { throw it } }
@@ -461,6 +465,90 @@ private class InteractionHarness(
 // ------------------------------------------------------------------ tests --
 
 class ChatViewModelInteractionTest {
+    private fun usageMessage(id: String, seq: Long, input: Int, cache: Int = 0, model: String? = null,
+        window: Int? = null, sidechain: Boolean = false): app.hapi.protocol.window.WindowMessage =
+        app.hapi.protocol.window.WindowMessage(DecryptedMessage(
+            id = id, seq = seq, createdAt = seq * 1_000,
+            content = buildJsonObject {
+                put("role", "agent")
+                putJsonObject("content") {
+                    put("type", "output")
+                    putJsonObject("data") {
+                        put("type", "assistant")
+                        put("uuid", id)
+                        put("isSidechain", sidechain)
+                        putJsonObject("message") {
+                            put("model", model)
+                            put("content", "Response $id")
+                            putJsonObject("usage") {
+                                put("input_tokens", input)
+                                put("output_tokens", 100)
+                                put("cache_read_input_tokens", cache)
+                                if (window != null) put("context_window", window)
+                            }
+                        }
+                    }
+                }
+            },
+        ))
+
+    @Test fun `context indicator follows latest parent usage and ignores child updates`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "claude"))
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        assertNull(harness.viewModel.contextUsage.value)
+        harness.window().ingestSseMessages(listOf(usageMessage("parent", 1, 500, 120_000, "claude-fable-5")))
+        val first = harness.viewModel.contextUsage.first { it?.used == 120_500.0 }
+        assertEquals(990_000.0, first?.window)
+        harness.window().ingestSseMessages(listOf(usageMessage("child", 2, 5, 10, "sonnet", sidechain = true)))
+        val childVersion = harness.window().state.value.messagesVersion
+        harness.viewModel.uiState.first { it.messagesVersion == childVersion }
+        testScheduler.runCurrent()
+        assertEquals(first, harness.viewModel.contextUsage.value)
+        // Compaction/new turns may reduce usage; output tokens are not context.
+        harness.window().ingestSseMessages(listOf(usageMessage("next", 3, 1_500, 2_000, window = 10_000)))
+        val next = harness.viewModel.contextUsage.first { it?.used == 3_500.0 }
+        assertEquals(10_000.0, next?.window)
+        assertEquals(35, next?.usedPercentage)
+        assertEquals(2_000.0, next?.cacheRead)
+    }
+
+    @Test fun `Pi context catalog loads on chat entry and follows provider changes without opening settings`() = runTest {
+        val initial = detail(flavor = "pi", model = "shared").let {
+            it.copy(metadata = it.metadata!!.copy(piSelectedModel = app.hapi.protocol.wire.ProviderModel("b", "shared")))
+        }
+        val harness = InteractionHarness(this, initial)
+        harness.api.modelDirectory = app.hapi.protocol.wire.AgentModelDirectory(true, availableModels = listOf(
+            app.hapi.protocol.wire.AgentModelEntry("shared", provider = "a", contextWindow = 100_000.0),
+            app.hapi.protocol.wire.AgentModelEntry("shared", provider = "b", contextWindow = 200_000.0),
+        ))
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.window().ingestSseMessages(listOf(usageMessage("pi", 1, 90_000)))
+        harness.viewModel.contextUsage.first { it?.window == 200_000.0 }
+        assertEquals(1, harness.api.modelDirectoryCalls)
+        harness.sessionStore.setDetail(initial.copy(metadata = initial.metadata!!.copy(
+            piSelectedModel = app.hapi.protocol.wire.ProviderModel("a", "shared"),
+        )))
+        val switched = harness.viewModel.contextUsage.first { it?.window == 100_000.0 }
+        assertEquals(90, switched?.usedPercentage)
+    }
+
+    @Test fun `inactive Pi uses cached provider catalog without a model RPC`() = runTest {
+        val session = detail(flavor = "pi", model = "shared", active = false).let {
+            it.copy(metadata = it.metadata!!.copy(
+                piSelectedModel = app.hapi.protocol.wire.ProviderModel("b", "shared"),
+                piAvailableModels = listOf(app.hapi.protocol.wire.AgentModelEntry("shared", provider = "b", contextWindow = 500_000.0)),
+            ))
+        }
+        val harness = InteractionHarness(this, session)
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.window().ingestSseMessages(listOf(usageMessage("pi", 1, 90_000)))
+        harness.viewModel.contextUsage.first { it?.window == 500_000.0 }
+        assertEquals(0, harness.api.modelDirectoryCalls)
+    }
+
     @Test fun `scheduled send persists selection until acceptance and carries exact timestamp`() = runTest {
         val harness = InteractionHarness(this)
         harness.viewModel.start()

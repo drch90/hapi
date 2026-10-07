@@ -674,4 +674,13 @@
     <string name="workspace_hidden">Show hidden directories</string>
     <string name="workspace_start">New session here</string>
     <string name="workspace_offline">Machine offline</string>
+    <string name="chat_context_details">Context details</string>
+    <!-- Match Web's deliberately compact, language-independent status label. -->
+    <string name="chat_context_compact">ctx %1$s (%2$d%% left)</string>
+    <string name="chat_context_compact_tokens">ctx %1$s</string>
+    <string name="chat_context_cache">Cache: %1$s</string>
+    <string name="chat_context_used">Used: %1$s (%2$d%%)</string>
+    <string name="chat_context_used_tokens">Used: %1$s</string>
+    <string name="chat_context_remaining">Remaining: %1$s (%2$d%%)</string>
+    <string name="chat_context_close">Close</string>
 </resources>

@@ -80,6 +80,7 @@ fun ChatComposer(
     onSendSteer: () -> Unit,
     onAbort: () -> Unit,
     modifier: Modifier = Modifier,
+    contextUsage: app.hapi.companion.feature.chat.ContextUsageUi? = null,
     schedule: SendSchedule? = null,
     onSchedule: (SendSchedule?) -> Unit = {},
     sessionId: String = "",
@@ -177,6 +178,7 @@ fun ChatComposer(
                     }
                 }
             }
+            contextUsage?.let { ContextUsageIndicator(it) }
         }
     }
 }

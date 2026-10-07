@@ -681,4 +681,12 @@
     <string name="workspace_hidden">显示隐藏目录</string>
     <string name="workspace_start">在此新建会话</string>
     <string name="workspace_offline">机器离线</string>
+    <string name="chat_context_details">上下文详情</string>
+    <string name="chat_context_compact">ctx %1$s (%2$d%% left)</string>
+    <string name="chat_context_compact_tokens">ctx %1$s</string>
+    <string name="chat_context_cache">缓存：%1$s</string>
+    <string name="chat_context_used">使用：%1$s（%2$d%%）</string>
+    <string name="chat_context_used_tokens">使用：%1$s</string>
+    <string name="chat_context_remaining">剩余：%1$s（%2$d%%）</string>
+    <string name="chat_context_close">关闭</string>
 </resources>
