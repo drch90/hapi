@@ -11,7 +11,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
@@ -24,7 +24,7 @@ import org.junit.Test
 import java.util.Locale
 
 class ContextUsageIndicatorTest {
-    @get:Rule val compose = createComposeRule()
+    @get:Rule val compose = createAndroidComposeRule<androidx.activity.ComponentActivity>()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val configuration = mutableStateOf(Configuration(context.resources.configuration).apply { setLocale(Locale.ENGLISH) })
     private val usage = mutableStateOf<ContextUsageUi?>(null)
@@ -74,24 +74,36 @@ class ContextUsageIndicatorTest {
         compose.onAllNodesWithText("Cache:", substring = true).assertCountEquals(0)
     }
 
+    @Suppress("DEPRECATION")
     @Test fun detailsRemainAccessibleAtLargeFontsInBothLanguages() {
         usage.value = ContextUsageUi(69.0, 200.0, 20.0)
         mount()
-        for (locale in listOf(Locale.ENGLISH, Locale.SIMPLIFIED_CHINESE)) {
-            for (fontScale in listOf(1f, 2f)) {
-                compose.runOnIdle {
-                    configuration.value = Configuration(configuration.value).apply { setLocale(locale); this.fontScale = fontScale }
+        val resources = compose.activity.resources
+        val originalConfiguration = Configuration(resources.configuration)
+        try {
+            for (locale in listOf(Locale.ENGLISH, Locale.SIMPLIFIED_CHINESE)) {
+                for (fontScale in listOf(1f, 2f)) {
+                    compose.runOnIdle {
+                        val updated = Configuration(originalConfiguration).apply { setLocale(locale); this.fontScale = fontScale }
+                        // Dialog creates a separate Android window using the
+                        // activity's resources. Composition locals alone only
+                        // change the composer, not that window's locale/scale.
+                        resources.updateConfiguration(updated, resources.displayMetrics)
+                        configuration.value = updated
+                    }
+                    val trigger = compose.onNodeWithTag("chat-context-usage").assertIsDisplayed()
+                    val bounds = trigger.getUnclippedBoundsInRoot()
+                    val composer = compose.onNodeWithTag("composer").getUnclippedBoundsInRoot()
+                    assertTrue("Usage fits narrow composer at $locale / $fontScale", bounds.right <= composer.right)
+                    trigger.performClick()
+                    compose.onNodeWithText(label(R.string.chat_context_cache, "20")).performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText(label(R.string.chat_context_used, "69", 35)).performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText(label(R.string.chat_context_remaining, "131", 65)).performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText(label(R.string.chat_context_close)).performClick()
                 }
-                val trigger = compose.onNodeWithTag("chat-context-usage").assertIsDisplayed()
-                val bounds = trigger.getUnclippedBoundsInRoot()
-                val composer = compose.onNodeWithTag("composer").getUnclippedBoundsInRoot()
-                assertTrue("Usage fits narrow composer at $locale / $fontScale", bounds.right <= composer.right)
-                trigger.performClick()
-                compose.onNodeWithText(label(R.string.chat_context_cache, "20")).performScrollTo().assertIsDisplayed()
-                compose.onNodeWithText(label(R.string.chat_context_used, "69", 35)).performScrollTo().assertIsDisplayed()
-                compose.onNodeWithText(label(R.string.chat_context_remaining, "131", 65)).performScrollTo().assertIsDisplayed()
-                compose.onNodeWithText(label(R.string.chat_context_close)).performClick()
             }
+        } finally {
+            compose.runOnIdle { resources.updateConfiguration(originalConfiguration, resources.displayMetrics) }
         }
     }
 }
