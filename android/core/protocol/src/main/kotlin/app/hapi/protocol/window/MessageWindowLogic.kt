@@ -268,7 +268,10 @@ object MessageWindowLogic {
         replaceServerRows: Boolean,
         requestBaseline: Map<String, WindowMessage>,
     ): MessageWindowState {
-        val retainedResponseMessages = responseMessages.filter { shouldRetainWindowMessage(it) }
+        val dismissedIds = previous.messages.filter { it.queueDismissed }.mapTo(HashSet()) { it.id }
+        val retainedResponseMessages = responseMessages.filter { shouldRetainWindowMessage(it) }.map { message ->
+            if (message.id in dismissedIds && message.isIndeterminate) message.copy(queueDismissed = true) else message
+        }
         val concurrentServerRows = previous.messages.filter { message ->
             !message.isOptimistic && requestBaseline[message.id] !== message
         }
@@ -567,11 +570,12 @@ object MessageWindowLogic {
         val ids = localIds.toSet()
         var changed = false
         val messages = previous.messages.map { message ->
-            if (message.localId == null || message.localId !in ids || message.status == MessageStatus.Indeterminate) {
+            if (message.localId == null || message.localId !in ids || !message.isQueuedForInvocation ||
+                (message.status == MessageStatus.Indeterminate && message.wire.deliveryState == "indeterminate")) {
                 message
             } else {
                 changed = true
-                message.copy(status = MessageStatus.Indeterminate)
+                message.copy(status = MessageStatus.Indeterminate, wire = message.wire.copy(deliveryState = "indeterminate"))
             }
         }
         return if (changed) previous.withMessages(messages) else previous
@@ -582,11 +586,12 @@ object MessageWindowLogic {
         val ids = localIds.toSet()
         var changed = false
         val messages = previous.messages.map { message ->
-            if (message.localId == null || message.localId !in ids || message.status != MessageStatus.Indeterminate) {
+            if (message.localId == null || message.localId !in ids || !message.isQueuedForInvocation ||
+                (!message.isIndeterminate && !message.queueDismissed)) {
                 message
             } else {
                 changed = true
-                message.copy(status = MessageStatus.Queued)
+                message.copy(status = MessageStatus.Queued, queueDismissed = false, wire = message.wire.copy(deliveryState = null))
             }
         }
         return if (changed) previous.withMessages(messages) else previous
@@ -616,9 +621,10 @@ object MessageWindowLogic {
             }
             val needsStatus = message.status != MessageStatus.Sent
             val needsInvokedAt = message.wire.hasExplicitNullInvokedAt
-            if (!needsStatus && !needsInvokedAt) return@map message
+            val needsClearHold = message.queueDismissed || message.wire.deliveryState != null
+            if (!needsStatus && !needsInvokedAt && !needsClearHold) return@map message
             changed = true
-            var next = message
+            var next = if (needsClearHold) message.copy(queueDismissed = false, wire = message.wire.copy(deliveryState = null)) else message
             if (needsStatus) next = next.copy(status = MessageStatus.Sent)
             if (needsInvokedAt) next = next.withInvokedAt(invokedAt)
             next
@@ -635,7 +641,7 @@ object MessageWindowLogic {
     private fun isQueuedReconcileCandidate(message: WindowMessage): Boolean {
         if (message.localId == null || !message.isQueuedForInvocation) return false
         if (!message.isOptimistic) return true
-        return message.status == MessageStatus.Queued || message.status == MessageStatus.Sent
+        return message.status == MessageStatus.Queued || message.status == MessageStatus.Sent || message.isIndeterminate
     }
 
     /** Candidate localIds for the queued-state round trip, in window order. */

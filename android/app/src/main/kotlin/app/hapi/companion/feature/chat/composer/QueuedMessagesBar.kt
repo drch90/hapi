@@ -31,7 +31,8 @@ import java.util.Date
  * Floating bar above the composer for queued (uninvoked) sends — the Compose
  * twin of `QueuedMessagesBar.tsx`. Per row: Steer (while a turn is active),
  * Edit (cancel + prefill composer) and Cancel. Rows without a server echo yet
- * (`id == localId`) keep their actions disabled until the SSE echo lands.
+ * (`id == localId`) keep their actions disabled until the SSE echo lands,
+ * except unknown deliveries, which can be resolved by their local id.
  */
 @Composable
 fun QueuedMessagesBar(
@@ -98,7 +99,7 @@ private fun QueuedRow(
                 )
                 if (row.indeterminate) {
                     Text(
-                        text = "Delivery outcome unknown",
+                        text = stringResource(R.string.chat_queued_unknown),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -115,7 +116,7 @@ private fun QueuedRow(
                 }
             }
             if (row.indeterminate) {
-                TextButton(onClick = { onRetry(row.id) }, enabled = row.canAct) { Text("Retry") }
+                TextButton(onClick = { onRetry(row.id) }, enabled = row.canAct) { Text(stringResource(R.string.chat_retry)) }
             } else if (row.canSteer) {
                 TextButton(onClick = { onSteer(row.id) }) { Text(stringResource(R.string.chat_queued_steer)) }
             }

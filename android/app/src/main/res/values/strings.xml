@@ -683,4 +683,6 @@
     <string name="chat_context_used_tokens">Used: %1$s</string>
     <string name="chat_context_remaining">Remaining: %1$s (%2$d%%)</string>
     <string name="chat_context_close">Close</string>
+    <string name="chat_queued_unknown">Delivery outcome unknown</string>
+    <string name="chat_queued_dismissed">Removed from pending messages on this device. Delivery is still unconfirmed.</string>
 </resources>

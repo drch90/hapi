@@ -169,6 +169,18 @@ class StoreSyncTargetsTest {
 
     // ---------------------------------------- window forwarding (M2c half) --
 
+    @Test fun `both event scopes remove a cancelled optimistic message by its local id`() = runTest {
+        val (windows, store) = openWindow(backgroundScope)
+        val router = SyncEventRouter(StoreSyncTargets(FakeSessionListStore(), FakeMachineListStore(), backgroundScope, windows))
+        for ((index, eventScope) in listOf(global, sessionScope).withIndex()) {
+            val localId = "local-$index"
+            store.appendOptimistic(app.hapi.protocol.window.buildOptimisticMessage(localId, "unknown", 1_000,
+                status = app.hapi.protocol.window.MessageStatus.Indeterminate))
+            router.route(eventScope, sync("""{"type":"message-cancelled","sessionId":"s1","messageId":"server-$index","localId":"$localId"}"""))
+            store.state.first { it.messages.isEmpty() }
+        }
+    }
+
     /** Latest-page-scripted api + an opened window for "s1". */
     private suspend fun openWindow(scope: kotlinx.coroutines.CoroutineScope): Pair<MessageWindowStores, MessageWindowStore> {
         val api = object : MessagesApi {

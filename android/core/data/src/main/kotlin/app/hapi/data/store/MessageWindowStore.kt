@@ -71,6 +71,9 @@ class MessageWindowStore(
     private val historyRetentionLimit: Int = HISTORY_WINDOW_SIZE,
 ) {
     private val stateMutex = Mutex()
+    private val persistMutex = Mutex()
+    /** Confirmed deletions must beat REST/SSE copies already in flight. Guarded by stateMutex. */
+    private val cancelledMessageIds = LinkedHashSet<String>()
     private val _state = MutableStateFlow((initialState ?: MessageWindowLogic.createState(sessionId))
         .copy(historyRetentionLimit = historyRetentionLimit))
 
@@ -426,7 +429,7 @@ class MessageWindowStore(
             is SyncEvent.MessagesConsumed -> markConsumed(event.localIds, event.invokedAt)
             is SyncEvent.MessagesIndeterminate -> markIndeterminate(event.localIds)
             is SyncEvent.MessagesRequeued -> markRequeued(event.localIds)
-            is SyncEvent.MessageCancelled -> removeMessage(event.messageId)
+            is SyncEvent.MessageCancelled -> removeMessage(event.messageId, event.localId, confirmed = true)
             is SyncEvent.MessagesInvalidated -> {
                 clear()
                 scope.launch { syncTail() }
@@ -439,7 +442,7 @@ class MessageWindowStore(
     /** SSE `message-received` ingest (web `ingestIncomingMessages`). */
     suspend fun ingestSseMessages(messages: List<WindowMessage>) {
         if (messages.isEmpty()) return
-        update { MessageWindowLogic.ingestIncoming(it, messages) }
+        update { MessageWindowLogic.ingestIncoming(it, messages.filterNot(::wasCancelled)) }
         persist()
     }
 
@@ -461,8 +464,20 @@ class MessageWindowStore(
     }
 
     /** SSE `message-cancelled` / optimistic DELETE removal (web `removeOptimisticMessage`). */
-    suspend fun removeMessage(localIdOrId: String) {
-        update { MessageWindowLogic.removeByLocalIdOrId(it, localIdOrId) }
+    suspend fun removeMessage(localIdOrId: String, alternateId: String? = null, confirmed: Boolean = false) {
+        update {
+            if (confirmed) {
+                rememberCancelled(localIdOrId, alternateId)
+                for (message in it.messages) {
+                    if (message.id == localIdOrId || message.localId == localIdOrId ||
+                        (alternateId != null && (message.id == alternateId || message.localId == alternateId))) {
+                        rememberCancelled(message.id, message.localId)
+                    }
+                }
+            }
+            val removed = MessageWindowLogic.removeByLocalIdOrId(it, localIdOrId)
+            if (alternateId != null) MessageWindowLogic.removeByLocalIdOrId(removed, alternateId) else removed
+        }
         persist()
     }
 
@@ -470,7 +485,7 @@ class MessageWindowStore(
 
     /** Append a pre-built optimistic row (web `appendOptimisticMessage`). */
     suspend fun appendOptimistic(message: WindowMessage) {
-        update { MessageWindowLogic.appendOptimistic(it, message) }
+        update { if (wasCancelled(message)) it else MessageWindowLogic.appendOptimistic(it, message) }
         persist()
     }
 
@@ -521,7 +536,16 @@ class MessageWindowStore(
         MessageWindowLogic.queuedReconcileCandidateLocalIds(_state.value)
 
     suspend fun reconcileQueuedLocalIds(candidateLocalIds: List<String>, queuedLocalIds: List<String>) {
-        update { MessageWindowLogic.reconcileQueuedLocalIds(it, candidateLocalIds, queuedLocalIds) }
+        update { previous ->
+            val reconciled = MessageWindowLogic.reconcileQueuedLocalIds(previous, candidateLocalIds, queuedLocalIds)
+            if (reconciled !== previous) {
+                val retainedIds = reconciled.messages.mapTo(HashSet()) { it.id }
+                previous.messages.filter { it.id !in retainedIds }.forEach {
+                    rememberCancelled(it.id, it.localId)
+                }
+            }
+            reconciled
+        }
         persist()
     }
 
@@ -551,6 +575,7 @@ class MessageWindowStore(
         for ((invokedAt, localIds) in invokedByTimestamp) {
             markConsumed(localIds, invokedAt)
         }
+        markRequeued(queuedLocalIds)
         markIndeterminate(indeterminateLocalIds)
         reconcileQueuedLocalIds(candidateLocalIds, queuedLocalIds + indeterminateLocalIds)
     }
@@ -591,13 +616,13 @@ class MessageWindowStore(
             running = null
             trailingRequested = false
         }
-        snapshots?.delete(sessionId)
         update { previous ->
             MessageWindowLogic.createState(sessionId).copy(
                 syncGeneration = previous.syncGeneration + 1,
                 olderGeneration = previous.olderGeneration + 1,
             )
         }
+        persist()
     }
 
     /**
@@ -632,19 +657,36 @@ class MessageWindowStore(
         _state.value.messages.associateBy { it.id }
 
     private fun MessagesResponse.windowMessages(): List<WindowMessage> =
-        messages.map { it.asWindowMessage() }
+        messages.map { it.asWindowMessage() }.filterNot(::wasCancelled)
+
+    // Ignore stale pending copies, including a failed DELETE's restoration.
+    // A positive delivery acknowledgement must still appear in the transcript.
+    private fun wasCancelled(message: WindowMessage): Boolean =
+        message.invokedAtOrNull == null && (message.id in cancelledMessageIds || message.localId in cancelledMessageIds)
+
+    private fun rememberCancelled(vararg ids: String?) {
+        ids.filterNotNull().forEach(cancelledMessageIds::add)
+        while (cancelledMessageIds.size > MAX_CANCELLED_MESSAGE_IDS) {
+            cancelledMessageIds.remove(cancelledMessageIds.first())
+        }
+    }
 
     private suspend fun persist() {
         val snapshotStore = snapshots ?: return
-        val state = _state.value
-        if (MessageWindowLogic.shouldPersist(state)) {
-            snapshotStore.save(sessionId, MessageWindowLogic.toPersisted(state))
-        } else {
-            snapshotStore.delete(sessionId)
+        // Read after acquiring the writer lock: an older suspended save must
+        // never overwrite a cancellation/dismissal persisted by a newer update.
+        persistMutex.withLock {
+            val state = _state.value
+            if (MessageWindowLogic.shouldPersist(state)) {
+                snapshotStore.save(sessionId, MessageWindowLogic.toPersisted(state))
+            } else {
+                snapshotStore.delete(sessionId)
+            }
         }
     }
 
     private companion object {
         const val QUEUED_STATE_BATCH_SIZE = 1000
+        const val MAX_CANCELLED_MESSAGE_IDS = 2_048
     }
 }

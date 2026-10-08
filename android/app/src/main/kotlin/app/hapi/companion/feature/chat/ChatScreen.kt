@@ -652,6 +652,7 @@ internal fun chatNoticeText(context: Context, notice: ChatNotice): String = when
     ChatNotice.ResumeFailed -> context.getString(R.string.chat_notice_resume_failed)
     ChatNotice.QueuedEditKeptDraft -> context.getString(R.string.chat_notice_edit_kept_draft)
     ChatNotice.QueuedAlreadyDelivered -> context.getString(R.string.chat_notice_already_delivered)
+    ChatNotice.QueuedDismissed -> context.getString(R.string.chat_queued_dismissed)
     ChatNotice.PermissionAlreadyHandled -> context.getString(R.string.chat_notice_request_already_handled)
     ChatNotice.DeleteConflictActive -> context.getString(R.string.sessions_error_delete_active)
     is ChatNotice.AbortFailed -> notice.detail ?: context.getString(R.string.chat_notice_abort_failed)

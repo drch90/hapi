@@ -35,6 +35,11 @@ differences, pairing and features currently available through the web.
   then Pi's provider-qualified live/cached catalog, then Web's conservative
   Claude/Codex/Pi/Cursor budgets. Unknown limits show used tokens only; no usage
   report means no indicator.
+- **Unknown deliveries:** Cancel dismisses a held unknown send on this device
+  when the hub still reports it busy, matching Web. The dismissal survives
+  refresh/restart; a later delivery acknowledgement appears in the transcript,
+  while an explicit requeue makes the pending row visible again. Confirmed
+  remote deletions reconcile by both server and local message identities.
 - **Conversation navigation:** the outline lists invoked/failed user messages
   from loaded history, supports loading older messages and highlights a selected
   message without following the tail.

@@ -17,6 +17,7 @@ import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -51,6 +52,8 @@ enum class MessageStatus(val wire: String) {
 data class WindowMessage(
     val wire: DecryptedMessage,
     val status: MessageStatus? = null,
+    /** Local dismissal of an unknown delivery; retain the row for later acknowledgement. */
+    val queueDismissed: Boolean = false,
 ) {
     val id: String get() = wire.id
     val seq: Long? get() = wire.seq
@@ -73,6 +76,9 @@ data class WindowMessage(
      */
     val isQueuedForInvocation: Boolean
         get() = wire.isUserMessage && wire.hasExplicitNullInvokedAt && status != MessageStatus.Failed
+
+    val isIndeterminate: Boolean
+        get() = isQueuedForInvocation && (status == MessageStatus.Indeterminate || wire.deliveryState == "indeterminate")
 
     /** Copy with `invokedAt` stamped to an explicit number. */
     fun withInvokedAt(invokedAt: Long): WindowMessage =
@@ -101,6 +107,7 @@ internal object WindowMessageSerializer : KSerializer<WindowMessage> {
         return WindowMessage(
             wire = input.json.decodeFromJsonElement(DecryptedMessage.serializer(), obj),
             status = MessageStatus.fromWire(obj["status"].stringOrNull),
+            queueDismissed = (obj["queueDismissed"] as? JsonPrimitive)?.booleanOrNull == true,
         )
     }
 
@@ -111,6 +118,7 @@ internal object WindowMessageSerializer : KSerializer<WindowMessage> {
         output.encodeJsonElement(buildJsonObject {
             wireObject.forEach { (key, element) -> put(key, element) }
             value.status?.let { put("status", JsonPrimitive(it.wire)) }
+            if (value.queueDismissed) put("queueDismissed", true)
         })
     }
 }

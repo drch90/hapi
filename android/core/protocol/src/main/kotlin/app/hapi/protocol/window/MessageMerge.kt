@@ -55,11 +55,16 @@ object MessageMerge {
             // JS `existing.invokedAt != null && msg.invokedAt == null` — keep a
             // locally-known invocation stamp when the incoming copy has none
             // (explicit null or absent).
-            byId[message.id] = if (current != null && current.invokedAtOrNull != null && message.invokedAtOrNull == null) {
+            var updated = if (current != null && current.invokedAtOrNull != null && message.invokedAtOrNull == null) {
                 message.withInvokedAt(current.invokedAtOrNull!!)
             } else {
                 message
             }
+            val dismissed = updated.isIndeterminate && (updated.queueDismissed || current?.queueDismissed == true)
+            if (updated.queueDismissed != dismissed) {
+                updated = updated.copy(queueDismissed = dismissed)
+            }
+            byId[message.id] = updated
         }
 
         var merged: List<WindowMessage> = byId.values.toList()
@@ -74,10 +79,12 @@ object MessageMerge {
         if (incomingStoredLocalIds.isNotEmpty()) {
             val optimisticStatusByLocalId = HashMap<String, MessageStatus>()
             val optimisticInvokedAtByLocalId = HashMap<String, Long?>()
+            val optimisticDismissedLocalIds = HashSet<String>()
             for (message in merged) {
                 val localId = message.localId ?: continue
                 if (!message.isOptimistic || localId !in incomingStoredLocalIds) continue
                 message.status?.let { optimisticStatusByLocalId[localId] = it }
+                if (message.queueDismissed) optimisticDismissedLocalIds.add(localId)
                 if (message.wire.invokedAt is OptionalField.Present) {
                     optimisticInvokedAtByLocalId[localId] = message.invokedAtOrNull
                 }
@@ -86,12 +93,12 @@ object MessageMerge {
                 val localId = message.localId
                 localId == null || localId !in incomingStoredLocalIds || !message.isOptimistic
             }
-            if (optimisticStatusByLocalId.isNotEmpty() || optimisticInvokedAtByLocalId.isNotEmpty()) {
+            if (optimisticStatusByLocalId.isNotEmpty() || optimisticInvokedAtByLocalId.isNotEmpty() || optimisticDismissedLocalIds.isNotEmpty()) {
                 merged = merged.map { message ->
                     val localId = message.localId ?: return@map message
                     var updated = message
                     val preservedStatus = optimisticStatusByLocalId[localId]
-                    if (preservedStatus != null && message.status == null) {
+                    if (preservedStatus != null && message.status == null && preservedStatus != MessageStatus.Indeterminate) {
                         updated = updated.copy(status = preservedStatus)
                     }
                     if (optimisticInvokedAtByLocalId.containsKey(localId) && message.invokedAtOrNull == null) {
@@ -99,6 +106,9 @@ object MessageMerge {
                         if (optimisticInvokedAt != null) {
                             updated = updated.withInvokedAt(optimisticInvokedAt)
                         }
+                    }
+                    if (localId in optimisticDismissedLocalIds && updated.isIndeterminate) {
+                        updated = updated.copy(queueDismissed = true)
                     }
                     updated
                 }

@@ -22,6 +22,7 @@ import app.hapi.data.store.SessionScratchlist
 import app.hapi.data.store.StoreSyncTargets
 import app.hapi.protocol.catalog.PermissionMode
 import app.hapi.protocol.window.MessageStatus
+import app.hapi.protocol.window.asWindowMessage
 import app.hapi.protocol.wire.AgentState
 import app.hapi.protocol.wire.AgentStateRequest
 import app.hapi.protocol.wire.ApprovePermissionRequest
@@ -163,6 +164,8 @@ private class RecordingChatApi : ChatSessionApi {
     val resumeCalls = MutableStateFlow<List<Pair<String, String?>>>(emptyList())
 
     var cancelResult: CancelMessageResponse = CancelMessageResponse(status = "cancelled")
+    var cancelGate: CompletableDeferred<Unit>? = null
+    var cancelFailure: Exception? = null
     val cancelCalls = MutableStateFlow<List<String>>(emptyList())
 
     var steerResult: SteerQueuedMessageResponse = SteerQueuedMessageResponse(status = "steered")
@@ -195,8 +198,14 @@ private class RecordingChatApi : ChatSessionApi {
             ),
         )
 
-    override suspend fun getQueuedState(sessionId: String, localIds: List<String>): QueuedStateResponse =
-        QueuedStateResponse(queuedLocalIds = localIds, invokedLocalMessages = emptyList())
+    var queuedStateResult: QueuedStateResponse? = null
+    var queuedStateGate: CompletableDeferred<Unit>? = null
+    val queuedStateCalls = MutableStateFlow<List<List<String>>>(emptyList())
+    override suspend fun getQueuedState(sessionId: String, localIds: List<String>): QueuedStateResponse {
+        queuedStateCalls.value += listOf(localIds)
+        queuedStateGate?.await()
+        return queuedStateResult ?: QueuedStateResponse(queuedLocalIds = localIds, invokedLocalMessages = emptyList())
+    }
 
     override suspend fun sendMessage(sessionId: String, message: SendMessageRequest) {
         sendCalls.value = sendCalls.value + (sessionId to message)
@@ -205,6 +214,8 @@ private class RecordingChatApi : ChatSessionApi {
 
     override suspend fun cancelMessage(sessionId: String, messageId: String): CancelMessageResponse {
         cancelCalls.value = cancelCalls.value + messageId
+        cancelGate?.await()
+        cancelFailure?.let { throw it }
         return cancelResult
     }
 
@@ -1008,6 +1019,133 @@ class ChatViewModelInteractionTest {
     }
 
     // ---------------------------------------------------------- queued bar --
+
+    @Test fun `cancel unknown delivery dismisses a busy row without sending again`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        h.api.cancelResult = CancelMessageResponse("busy", "local")
+        h.api.queuedStateResult = QueuedStateResponse(emptyList(), emptyList(), listOf("local"))
+        h.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "unknown").copy(deliveryState = "indeterminate").asWindowMessage()))
+        h.viewModel.queuedRows.first { it.singleOrNull()?.canAct == true }
+        h.viewModel.cancelQueuedMessage("server")
+        h.window().state.first { it.messages.singleOrNull()?.queueDismissed == true }
+        h.viewModel.queuedRows.first { it.isEmpty() }
+        testScheduler.runCurrent()
+        assertTrue(h.window().state.value.messages.single().queueDismissed)
+        assertTrue(h.api.sendCalls.value.isEmpty())
+        assertEquals(listOf("server"), h.api.cancelCalls.value)
+    }
+
+    @Test fun `first busy cancel exposes unknown state and a second explicit cancel dismisses it`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        h.api.cancelResult = CancelMessageResponse("busy", "local")
+        h.api.queuedStateResult = QueuedStateResponse(emptyList(), emptyList(), listOf("local"))
+        h.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "queued").asWindowMessage()))
+        h.viewModel.queuedRows.first { it.isNotEmpty() }
+        h.viewModel.cancelQueuedMessage("server")
+        h.viewModel.queuedRows.first { it.singleOrNull()?.let { row -> row.indeterminate && row.canAct } == true }
+        h.viewModel.cancelQueuedMessage("server")
+        h.window().state.first { it.messages.singleOrNull()?.queueDismissed == true }
+        h.viewModel.queuedRows.first { it.isEmpty() }
+        assertEquals(listOf("server", "server"), h.api.cancelCalls.value)
+    }
+
+    @Test fun `edit unknown busy delivery does not prefill and preserves a concurrent acknowledgement`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        h.viewModel.setComposerText("keep draft")
+        h.api.cancelResult = CancelMessageResponse("busy", "local")
+        h.api.queuedStateResult = QueuedStateResponse(emptyList(), emptyList(), listOf("local"))
+        val gate = CompletableDeferred<Unit>()
+        h.api.queuedStateGate = gate
+        h.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "unknown").copy(deliveryState = "indeterminate").asWindowMessage()))
+        h.viewModel.queuedRows.first { it.isNotEmpty() }
+        h.viewModel.editQueuedMessage("server")
+        h.api.queuedStateCalls.first { it.any { ids -> "local" in ids } }
+        h.window().markConsumed(listOf("local"), 900)
+        gate.complete(Unit)
+        testScheduler.runCurrent()
+        val delivered = h.window().state.value.messages.single()
+        assertEquals(900L, delivered.invokedAtOrNull)
+        assertFalse(delivered.queueDismissed)
+        assertEquals(MessageStatus.Sent, delivered.status)
+        assertEquals("keep draft", h.viewModel.composer.value.text)
+        assertTrue(h.api.sendCalls.value.isEmpty())
+    }
+
+    @Test fun `unknown optimistic rows can cancel by local id while sending rows cannot`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        val unknown = app.hapi.protocol.window.buildOptimisticMessage("local", "unknown", 500, status = MessageStatus.Indeterminate)
+        val sending = app.hapi.protocol.window.buildOptimisticMessage("sending", "sending", 600, status = MessageStatus.Sending)
+        h.window().ingestSseMessages(listOf(unknown, sending))
+        val rows = h.viewModel.queuedRows.first { it.size == 2 }
+        assertTrue(rows.single { it.id == "local" }.canAct)
+        assertFalse(rows.single { it.id == "sending" }.canAct)
+        h.viewModel.cancelQueuedMessage("sending")
+        h.viewModel.cancelQueuedMessage("local")
+        h.window().state.first { it.messages.none { row -> row.id == "local" } }
+        assertEquals(listOf("local"), h.api.cancelCalls.value)
+        assertEquals(listOf("sending"), h.window().state.value.messages.map { it.id })
+    }
+
+    @Test fun `confirmed cancellation removes an echo received while DELETE was pending`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        val gate = CompletableDeferred<Unit>()
+        h.api.cancelGate = gate
+        val row = queuedServerRow("server", "local", "unknown").copy(deliveryState = "indeterminate").asWindowMessage()
+        h.window().ingestSseMessages(listOf(row))
+        h.viewModel.queuedRows.first { it.isNotEmpty() }
+        h.viewModel.cancelQueuedMessage("server")
+        h.api.cancelCalls.first { it.isNotEmpty() }
+        h.window().ingestSseMessages(listOf(row))
+        gate.complete(Unit)
+        h.window().state.first { it.messages.isEmpty() }
+        h.viewModel.queuedRows.first { it.isEmpty() }
+    }
+
+    @Test fun `failed cancellation restores the unknown row and permits another attempt`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        h.api.cancelFailure = IllegalStateException("offline")
+        val row = queuedServerRow("server", "local", "unknown").copy(deliveryState = "indeterminate").asWindowMessage()
+        h.window().ingestSseMessages(listOf(row))
+        h.viewModel.queuedRows.first { it.isNotEmpty() }
+        h.viewModel.cancelQueuedMessage("server")
+        h.api.cancelCalls.first { it.isNotEmpty() }
+        testScheduler.runCurrent()
+        assertEquals(row, h.window().state.value.messages.single())
+        assertTrue(h.viewModel.queuedRows.value.single().canAct)
+    }
+
+    @Test fun `remote deletion cannot be undone by a late busy cancellation response`() = runTest {
+        val h = InteractionHarness(this)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        val gate = CompletableDeferred<Unit>()
+        h.api.cancelGate = gate
+        h.api.cancelResult = CancelMessageResponse("busy", "local")
+        h.api.queuedStateResult = QueuedStateResponse(emptyList(), emptyList(), listOf("local"))
+        val row = queuedServerRow("server", "local", "unknown").copy(deliveryState = "indeterminate").asWindowMessage()
+        h.window().ingestSseMessages(listOf(row))
+        h.viewModel.queuedRows.first { it.isNotEmpty() }
+        h.viewModel.cancelQueuedMessage("server")
+        h.api.cancelCalls.first { it.isNotEmpty() }
+        h.window().onMessageEvent(SyncEvent.MessageCancelled(sessionId = IX_SESSION, messageId = "server", localId = "local"))
+        gate.complete(Unit)
+        testScheduler.runCurrent()
+        assertTrue(h.window().state.value.messages.isEmpty())
+        assertTrue(h.viewModel.queuedRows.value.isEmpty())
+        assertTrue(h.api.sendCalls.value.isEmpty())
+    }
 
     /** Server-echoed queued row (id != localId, explicit `invokedAt: null`). */
     private fun queuedServerRow(id: String, localId: String, text: String): DecryptedMessage =

@@ -259,6 +259,7 @@ sealed interface ChatNotice {
     data class DeleteFailed(val detail: String?) : ChatNotice
     data class ReopenFailed(val detail: String?) : ChatNotice
     data class CancelQueuedFailed(val detail: String?) : ChatNotice
+    data object QueuedDismissed : ChatNotice
     data class SteerFailed(val detail: String?) : ChatNotice
     data class PermissionRequestFailed(val detail: String?) : ChatNotice
     data class ModelsLoadFailed(val detail: String?) : ChatNotice
@@ -1350,24 +1351,43 @@ class ChatViewModel(
         scope.launch { cancelQueuedInternal(messageId) }
     }
 
-    /** @return the cancel verdict: `"cancelled"`, `"invoked"`, or null on guard/error. */
+    /** A busy unknown delivery can be dismissed locally; Edit still requires a confirmed cancel. */
     private suspend fun cancelQueuedInternal(messageId: String): String? {
         val store = awaitWindowStore()
         val row = store.state.value.messages.firstOrNull { it.id == messageId } ?: return null
         if (!canActOnQueuedRow(row)) return null
         if (!queuedOpPending.compareAndSet(expect = false, update = true)) return null
         val localId = row.localId ?: row.id
-        store.removeMessage(localId)
         return try {
+            store.removeMessage(localId)
             val response = api.cancelMessage(sessionId, messageId)
             val invokedMessage = response.message
             if (response.status == "invoked" && invokedMessage != null) {
                 store.appendOptimistic(invokedMessage.asWindowMessage(MessageStatus.Sent))
+                "invoked"
             } else if (response.status == "busy") {
-                store.appendOptimistic(row.copy(status = MessageStatus.Indeterminate))
+                // Match Web's queueDismissed hold: keep acknowledgement data
+                // while honoring a second explicit removal of an unknown send.
+                store.appendOptimistic(row.copy(
+                    status = MessageStatus.Indeterminate,
+                    wire = row.wire.copy(deliveryState = "indeterminate"),
+                    queueDismissed = row.isIndeterminate,
+                ))
                 runCatching { store.reconcileQueuedState() }
+                val settled = store.state.value.messages.firstOrNull { it.id == messageId || it.localId == localId }
+                if (settled?.invokedAtOrNull != null) "invoked" else {
+                    if (settled?.queueDismissed == true) _events.tryEmit(ChatEvent.Notice(ChatNotice.QueuedDismissed))
+                    "busy"
+                }
+            } else if (response.status == "cancelled") {
+                // A late echo may have arrived during DELETE. Clear it again
+                // using both identities before persisting the confirmed result.
+                store.removeMessage(response.localId ?: localId, messageId, confirmed = true)
+                "cancelled"
+            } else {
+                store.appendOptimistic(row)
+                null
             }
-            response.status
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {
@@ -1442,7 +1462,7 @@ class ChatViewModel(
         scope.launch {
             val store = awaitWindowStore()
             val row = store.state.value.messages.firstOrNull { it.id == messageId } ?: return@launch
-            if (!canActOnQueuedRow(row) || row.wire.scheduledAt != null) return@launch
+            if (!canActOnQueuedRow(row) || row.isIndeterminate || row.wire.scheduledAt != null) return@launch
             if (!queuedOpPending.compareAndSet(expect = false, update = true)) return@launch
             try {
                 val response = api.steerMessage(sessionId, messageId)
@@ -1472,7 +1492,7 @@ class ChatViewModel(
 
     private fun canActOnQueuedRow(row: WindowMessage): Boolean {
         val hasServerEcho = row.localId == null || row.id != row.localId
-        return hasServerEcho && !queuedOpPending.value
+        return row.isQueuedForInvocation && !row.queueDismissed && (hasServerEcho || row.isIndeterminate) && !queuedOpPending.value
     }
 
     private class QueuedPreview(val text: String, val attachmentNames: List<String>)
@@ -1491,7 +1511,7 @@ class ChatViewModel(
         opPending: Boolean,
         thinking: Boolean,
     ): List<QueuedRowUi> {
-        val queued = window.messages.filter { it.isQueuedForInvocation }
+        val queued = window.messages.filter { it.isQueuedForInvocation && !it.queueDismissed }
         // Web `sortQueuedMessages`: immediate first (submission order), then
         // scheduled by fire time.
         val sorted = queued.sortedWith(
@@ -1501,7 +1521,7 @@ class ChatViewModel(
         return sorted.map { row ->
             val preview = queuedPreview(row)
             val hasServerEcho = row.localId == null || row.id != row.localId
-            val canAct = hasServerEcho && !opPending
+            val canAct = (hasServerEcho || row.isIndeterminate) && !opPending
             QueuedRowUi(
                 id = row.id,
                 localId = row.localId,
@@ -1510,8 +1530,8 @@ class ChatViewModel(
                 scheduledAt = row.wire.scheduledAt,
                 canAct = canAct,
                 canSteer = canAct && thinking && row.wire.scheduledAt == null
-                    && row.status != MessageStatus.Indeterminate,
-                indeterminate = row.status == MessageStatus.Indeterminate,
+                    && !row.isIndeterminate,
+                indeterminate = row.isIndeterminate,
             )
         }
     }

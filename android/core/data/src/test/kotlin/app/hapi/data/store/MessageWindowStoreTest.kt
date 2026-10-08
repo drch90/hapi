@@ -115,6 +115,8 @@ class MessageWindowStoreTest {
 
     /** Api whose responses are released manually, so tests control interleaving. */
     private class GatedMessagesApi : MessagesApi {
+        var queuedState = QueuedStateResponse(emptyList(), emptyList())
+        val queuedRequests = mutableListOf<List<String>>()
         val requests = mutableListOf<MessagesQuery>()
         private val responses = Channel<MessagesResponse>(Channel.UNLIMITED)
 
@@ -127,8 +129,10 @@ class MessageWindowStoreTest {
             return responses.receive()
         }
 
-        override suspend fun getQueuedState(sessionId: String, localIds: List<String>): QueuedStateResponse =
-            QueuedStateResponse(emptyList(), emptyList())
+        override suspend fun getQueuedState(sessionId: String, localIds: List<String>): QueuedStateResponse {
+            queuedRequests += localIds
+            return queuedState
+        }
     }
 
     // ------------------------------------------------------------ tail sync --
@@ -370,6 +374,119 @@ class MessageWindowStoreTest {
     }
 
     // ------------------------------------------------------------ snapshots --
+
+    @Test fun `confirmed cancel wins over a stale REST response and late SSE echo`() = runTest {
+        val api = GatedMessagesApi()
+        val store = MessageWindowStore("s", api, backgroundScope)
+        val local = buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate)
+        val row = local.copy(wire = local.wire.copy(id = "server", seq = 1, deliveryState = "indeterminate"))
+        store.appendOptimistic(row)
+        val sync = launch { store.syncTail() }
+        runCurrent()
+        store.onMessageEvent(app.hapi.protocol.wire.SyncEvent.MessageCancelled(sessionId = "s", messageId = "server", localId = "local"))
+        api.release(latestPage(listOf(row.wire), epoch = 1))
+        sync.join()
+        store.ingestSseMessages(listOf(row))
+        store.appendOptimistic(local)
+        store.appendOptimistic(row)
+        assertTrue(store.state.value.messages.isEmpty())
+    }
+
+    @Test fun `cancel by server id also suppresses its local copy without hiding positive delivery evidence`() = runTest {
+        val store = MessageWindowStore("s", GatedMessagesApi(), backgroundScope)
+        val local = buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate)
+        val server = local.copy(wire = local.wire.copy(id = "server", seq = 1, deliveryState = "indeterminate"))
+        store.appendOptimistic(server)
+        store.removeMessage("server", confirmed = true)
+        store.appendOptimistic(local)
+        assertTrue(store.state.value.messages.isEmpty())
+
+        val delivered = server.copy(status = MessageStatus.Sent, wire = server.wire.copy(
+            invokedAt = OptionalField.Present(2_000), deliveryState = null,
+        ))
+        store.ingestSseMessages(listOf(delivered))
+        assertEquals(listOf(delivered), store.state.value.messages)
+    }
+
+    @Test fun `a cancellation waits for an older disk write and persists the latest state`() = runTest {
+        class PausedIo : kotlinx.coroutines.CoroutineDispatcher() {
+            val pending = ArrayDeque<Runnable>()
+            override fun dispatch(context: kotlin.coroutines.CoroutineContext, block: Runnable) { pending.add(block) }
+        }
+        val io = PausedIo()
+        val dir = temp.newFolder()
+        val snapshots = WindowSnapshots(dir, io = io)
+        val store = MessageWindowStore("s", GatedMessagesApi(), backgroundScope, snapshots)
+        val save = launch { store.appendOptimistic(buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate)) }
+        runCurrent()
+        val cancel = launch { store.removeMessage("local", confirmed = true) }
+        runCurrent()
+        // Do not let a newer delete race the old save on the same temp file.
+        assertEquals(1, io.pending.size)
+        io.pending.removeFirst().run()
+        runCurrent()
+        assertEquals(1, io.pending.size)
+        io.pending.removeFirst().run()
+        runCurrent()
+        save.join()
+        cancel.join()
+        assertNull(WindowSnapshots(dir, io = Dispatchers.Unconfined).load("s"))
+    }
+
+    @Test fun `dismissed unknown survives restart and a remote deletion removes it from disk`() = runTest {
+        val snapshots = WindowSnapshots(temp.newFolder(), io = Dispatchers.Unconfined)
+        val api = GatedMessagesApi()
+        val store = MessageWindowStores(api, backgroundScope, snapshots).open("s")
+        val optimistic = buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate)
+        val held = optimistic.copy(wire = optimistic.wire.copy(id = "server", seq = 1, deliveryState = "indeterminate"), queueDismissed = true)
+        store.appendOptimistic(held)
+        val reopened = MessageWindowStores(api, backgroundScope, snapshots).open("s")
+        assertTrue(reopened.state.value.messages.single().queueDismissed)
+        api.release(latestPage(listOf(held.wire), epoch = 1))
+        reopened.syncTail()
+        assertTrue(reopened.state.value.messages.single().queueDismissed)
+        // The Web DELETE happened while the APK was closed; an incremental
+        // history response alone cannot report an older row's deletion.
+        api.release(afterPage(emptyList(), epoch = 1, nextAfter = null, hasMore = false))
+        reopened.reconcileQueuedState()
+        assertEquals(listOf(listOf("local")), api.queuedRequests)
+        assertTrue(reopened.state.value.messages.isEmpty())
+        reopened.ingestSseMessages(listOf(held))
+        assertTrue(reopened.state.value.messages.isEmpty())
+        assertTrue(MessageWindowStores(api, backgroundScope, snapshots).open("s").state.value.messages.isEmpty())
+    }
+
+    @Test fun `cancel event removes an unknown optimistic row using local identity and persists removal`() = runTest {
+        val snapshots = WindowSnapshots(temp.newFolder(), io = Dispatchers.Unconfined)
+        val api = GatedMessagesApi()
+        val store = MessageWindowStores(api, backgroundScope, snapshots).open("s")
+        store.appendOptimistic(buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate))
+        store.onMessageEvent(app.hapi.protocol.wire.SyncEvent.MessageCancelled(sessionId = "s", messageId = "server", localId = "local"))
+        assertTrue(store.state.value.messages.isEmpty())
+        assertTrue(MessageWindowStores(api, backgroundScope, snapshots).open("s").state.value.messages.isEmpty())
+    }
+
+    @Test fun `reconnect drops unknown optimistic messages missing from the hub`() = runTest {
+        val api = GatedMessagesApi()
+        val store = MessageWindowStore("s", api, backgroundScope)
+        store.appendOptimistic(buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate))
+        api.release(latestPage(emptyList(), epoch = 1))
+        store.reconcileQueuedState()
+        assertEquals(listOf(listOf("local")), api.queuedRequests)
+        assertTrue(store.state.value.messages.isEmpty())
+    }
+
+    @Test fun `reconnect exposes a dismissed row that the hub explicitly requeued`() = runTest {
+        val api = GatedMessagesApi().apply { queuedState = QueuedStateResponse(listOf("local"), emptyList()) }
+        val store = MessageWindowStore("s", api, backgroundScope)
+        store.appendOptimistic(buildOptimisticMessage("local", "unknown", 1_000, status = MessageStatus.Indeterminate).copy(queueDismissed = true))
+        api.release(latestPage(emptyList(), epoch = 1))
+        store.reconcileQueuedState()
+        val row = store.state.value.messages.single()
+        assertEquals(MessageStatus.Queued, row.status)
+        assertEquals(false, row.queueDismissed)
+        assertEquals(false, row.isIndeterminate)
+    }
 
     @Test
     fun `snapshot round-trip restores interrupted sends and flags stale snapshots`() = runBlocking {

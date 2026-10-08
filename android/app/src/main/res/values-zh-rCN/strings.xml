@@ -689,4 +689,6 @@
     <string name="chat_context_used_tokens">使用：%1$s</string>
     <string name="chat_context_remaining">剩余：%1$s（%2$d%%）</string>
     <string name="chat_context_close">关闭</string>
+    <string name="chat_queued_unknown">发送结果未知</string>
+    <string name="chat_queued_dismissed">已从本设备的暂存列表移除，发送结果仍待确认。</string>
 </resources>
