@@ -145,21 +145,34 @@ Lifecycle:
 1. Generate a client-side `localId` and append an **optimistic row**: `{id: localId, seq: null, localId, invokedAt: null, scheduledAt, createdAt: now, status:'sending', content: {role:'user', content:{type:'text', text, attachments?}, meta:{deliveryMode}}}`. A row is *optimistic* iff `id === localId`.
 2. On POST success: status → `queued` if the session is currently thinking, else `sent`. On failure: drop the row and restore the composer (or keep it as `failed` with a retry affordance when attachments are involved).
 3. **Echo**: the hub emits `message-received` carrying the stored row (server `id`, real `seq`, same `localId`). Merging a stored row whose `localId` matches an optimistic row **replaces** the optimistic one, preserving the client-side `status` and any already-known `invokedAt` the server row lacks. Fallback when no `localId` echo matches: drop an optimistic `sent` row when a server user message lands within **10 s** of the same position.
-4. **`messages-consumed {localIds, invokedAt}`** (SSE): stamp `invokedAt` and flip status to `sent` on matching rows (skip `failed` ones). This is what moves a message out of the queued bar and into the thread at its invocation position.
-5. **`messages-indeterminate {localIds}`** (SSE): a native dispatch or queue mutation has an unknown outcome. Keep `invokedAt: null`, mark `deliveryState:'indeterminate'`, and exclude the row from automatic replay. Retry/Cancel are explicit resolution actions and may remain unavailable until the native outcome can be reconciled.
-6. **`messages-requeued {localIds}`** (SSE): an explicit Retry restored normal queue delivery; clear `deliveryState`.
-7. **`message-cancelled {messageId, localId?}`** (SSE): remove the row (match either id).
+4. **`messages-consumed {localIds, invokedAt}`** (SSE): stamp `invokedAt` and flip status to `sent` on matching rows (skip `failed` ones). Clear `deliveryState` and any local `queueDismissed` hold. This moves a message out of the queued bar and into the thread at its invocation position, even if it was locally dismissed.
+5. **`messages-indeterminate {localIds}`** (SSE): a native dispatch or queue mutation has an unknown outcome. Keep `invokedAt: null`, mark `deliveryState:'indeterminate'`, and exclude the row from automatic replay. Do not downgrade a known invocation. Retry/Cancel are explicit resolution actions; Retry may remain unavailable, while an already unknown row can be [dismissed locally](#local-dismissal-of-unknown-deliveries).
+6. **`messages-requeued {localIds}`** (SSE): an explicit Retry restored normal queue delivery; clear `deliveryState` and `queueDismissed`, making the pending row visible again.
+7. **`message-cancelled {messageId, localId?}`** (SSE): remove all matching server/optimistic copies using both identities when supplied, and persist the removal.
 
-**Queued semantics**: a user message is "queued" iff `invokedAt === null` **strictly**, `deliveryState !== 'indeterminate'`, and `status !== 'failed'`. An indeterminate row remains visible in the unresolved-delivery bar but is not eligible for automatic delivery. `undefined` means already-invoked (rows from pre-V8 hubs omit the field) — only rows explicitly carrying `null` belong in the queued bar. Server-side, rows sent without a `localId` are stamped invoked at insert and can never be queued.
+**Client pending-row semantics**: retain a user row in pending bookkeeping iff
+`invokedAt === null` **strictly** and `status !== 'failed'`. This includes
+indeterminate rows, which stay out of automatic delivery and appear in the
+unresolved-delivery bar unless `queueDismissed` is true. A normally queued row
+has no indeterminate delivery marker. `undefined` means already-invoked (rows
+from pre-V8 hubs omit the field). Server-side, rows sent without a `localId` are
+stamped invoked at insert and can never be queued.
 
 ### Queued-state recovery
 
 After a reconnect whose handshake said `resume: 'gap'` (an `ok` resume replayed the consume/cancel events already), the consumed/cancelled events for your queued rows may have been lost. Reference: `web/src/lib/queued-state-reconciliation.ts`.
 
 1. Finish a tail sync.
-2. Collect candidate `localId`s: user rows with `invokedAt === null`, excluding optimistic rows still `sending`/`failed`.
+2. Collect candidate `localId`s: user rows with `invokedAt === null`, including indeterminate and locally dismissed rows, but excluding optimistic rows still `sending`/`failed`. An unknown optimistic row must participate even if its server echo never arrived.
 3. `POST /api/sessions/:id/messages/queued-state` with `{"localIds": […]}` (max 1000 per call; batch above that) → `{queuedLocalIds: string[], indeterminateLocalIds: string[], invokedLocalMessages: [{localId, invokedAt}]}`.
-4. Apply `invokedLocalMessages` exactly like `messages-consumed`; mark `indeterminateLocalIds` as unresolved delivery. Retain both queued and indeterminate rows; drop only candidates absent from **all three** result groups. An in-flight native dispatch is reported as indeterminate, not as a deleted message.
+4. Apply `invokedLocalMessages` exactly like `messages-consumed`; clear unknown/dismissal markers for `queuedLocalIds` as with `messages-requeued`; mark `indeterminateLocalIds` as unresolved delivery. Retain both queued and indeterminate rows; drop only candidates absent from **all three** result groups. An in-flight native dispatch is reported as indeterminate, not as a deleted message.
+
+Android also reconciles on ordinary chat entry after tail synchronization, so
+confirmed Web deletions made while the app was closed clear persisted rows.
+Confirmed cancellation and queued-state absence must win over stale uninvoked
+REST/SSE copies or a pending DELETE's error restoration. Serialize snapshot
+writes so an older save cannot overwrite the resolved state. A positive delivery
+acknowledgement remains eligible to appear in the transcript.
 
 ---
 
@@ -185,11 +198,39 @@ Response `{"ok": true}`. Sending to an inactive session returns `409 {"error":"S
 
 | Response | Meaning | Client action |
 |---|---|---|
-| `{"status":"cancelled","localId":string\|null}` | Row deleted (or already gone). Bumps the epoch. | Remove the row. |
+| `{"status":"cancelled","localId":string\|null}` | Row deleted (or already gone); a deletion bumps the epoch. | Remove matching server/local copies again after the response, including echoes received while DELETE was pending; persist the result. |
 | `{"status":"invoked","message":DecryptedMessage}` | Too late — the agent consumed it before the cancel landed. | **Ingest the returned message** as the authoritative row (correct `invokedAt`, status `sent`); do not resurrect the queued snapshot. |
-| `{"status":"busy","localId":string}` | Native delivery/removal is unresolved; cancellation cannot be confirmed. | Restore the row as indeterminate; reconcile queued state before allowing Retry/Cancel. |
+| `{"status":"busy","localId":string}` | Native delivery/removal is unresolved; cancellation cannot be confirmed. | First busy result: restore an indeterminate row. If it was already unknown when Cancel/Edit began, restore a hidden local hold instead. Reconcile as described below. |
 
-Other subscribers learn the same outcome via `message-cancelled` / `messages-consumed` SSE events.
+Other subscribers learn confirmed cancellation/delivery via `message-cancelled`
+or `messages-consumed` SSE events. Local dismissal does not emit a cancellation.
+
+### Local dismissal of unknown deliveries
+
+References: `web/src/hooks/mutations/useCancelQueuedMessage.ts`,
+`web/src/lib/message-window-store.ts`,
+`android/app/src/main/kotlin/app/hapi/companion/feature/chat/ChatViewModel.kt`,
+and `android/core/data/src/main/kotlin/app/hapi/data/store/MessageWindowStore.kt`.
+
+Web and Android support `queueDismissed: true` as **client-local persisted
+state**, separate from the hub's `DecryptedMessage` wire shape. A busy response
+to Cancel/Edit on an already indeterminate row retains a hidden copy for later
+acknowledgement. Restore that hold **before** awaiting queued-state recovery so
+a concurrent `messages-consumed` event can still find and update it. Edit must
+not prefill the composer unless cancellation is confirmed; an invocation result
+instead reports that delivery already happened. A network error restores the
+snapshot. Android suppresses that restoration if a concurrent confirmed
+cancellation has already removed the row.
+
+Preserve dismissal across refreshes, authoritative latest-page replacement and
+optimistic-to-server identity changes while the row is still indeterminate.
+Clear it on confirmed invocation or explicit requeue. A locally dismissed row
+still participates in queued-state recovery and pending-row retention, but is
+excluded from the visible bar. The choice is local to each Web/Android client;
+another device may still show the unresolved row until the hub confirms its
+outcome. Dismissal never means that agent delivery was stopped.
+
+### Steering and retry
 
 **Steer a queued message into the current turn**: `POST /api/sessions/:id/messages/:messageId/steer` → `SteerQueuedMessageResponseSchema`. Unlike the send-time `deliveryMode` option above, this endpoint supports Pi, Codex, and Cursor ACP sessions (`isSteeringSupportedForSession` in `shared/src/modes.ts`). It rejects all scheduled messages, and rejects terminal-controlled sessions unless they advertise `concurrentClients`.
 

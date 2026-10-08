@@ -21,6 +21,10 @@ type DecryptedMessage = {
 }
 ```
 
+`status` and `queueDismissed` are client bookkeeping fields, not fields to send
+to the hub. Web and Android persist local unknown-delivery holds alongside the
+window; see [local dismissal](./pagination.md#local-dismissal-of-unknown-deliveries).
+
 `content` is deliberately `unknown` on the wire. **Decoding must be total**:
 never crash on unfamiliar content. Use stringified fallbacks for unknown
 envelopes, and follow the family-specific skip/validation rules below for
@@ -219,6 +223,42 @@ plain text. Known event types also have the validation/empty-content skip
 rules listed above (for example, an image without an ID or unparseable usage).
 The golden fixtures and normalizer are authoritative; do not turn those
 transport-only records into fallback chat bubbles.
+
+---
+
+## Context usage
+
+References: `web/src/chat/reducer.ts`, `web/src/chat/modelConfig.ts`,
+`web/src/components/AssistantChat/StatusBar.tsx`, and
+`android/app/src/main/kotlin/app/hapi/companion/feature/chat/ContextUsage.kt`.
+
+The Web/Android indicator uses the most recent normalized usage sample visible
+in the **parent** conversation. Exclude sidechains and usage whose scope role
+is `child`. Use `context_tokens` when present; otherwise sum `input_tokens`,
+`cache_creation_input_tokens` and `cache_read_input_tokens`, treating missing
+cache values as zero. Output tokens are not added to this context total. This
+is a current-context reading, so a later sample may decrease after compaction.
+
+Resolve the limit in this order:
+
+1. A positive, finite `context_window` reported with the usage sample.
+2. For Pi, the selected provider/model's advertised context window from the live
+   model catalog, or cached session metadata. Match provider and model together
+   when a provider-qualified selection is available.
+3. The Web model/flavor fallback in `modelConfig.ts`, mirrored by Android:
+   Claude, Codex and Pi use supported defaults; Cursor can encode
+   `[context=...]` in its model ID. Only heuristic limits reserve 10,000 tokens
+   of headroom; reported and catalog limits are used as supplied. Prefer the
+   usage sample's model over the session model for the model heuristic.
+
+With a known limit, display used/remaining tokens and clamp percentages to
+0–100%, with warning/error tones at 70%/90% used. The compact mobile label shows
+the budget and percentage **remaining**. Without a known limit, show only used
+tokens; without a usable usage sample, hide the indicator. Cache-read details
+appear only for a positive reported value. Tapping Android's label below the
+composer opens a scrollable details dialog, with English/Chinese strings and
+system font scaling. No extra usage endpoint or owner-namespace privilege is
+required for the session indicator.
 
 ---
 

@@ -48,9 +48,9 @@ able to reach the hub. `localhost` on a physical phone refers to the phone.
 The network relay, an HTTPS reverse proxy, or Tailscale Serve can provide an
 endpoint; see [Deployment](./deployment.md).
 
-Android rejects HTTP URLs in manual entry, QR codes, deep links and saved hub
-state, including debug builds. iOS manual entry defaults to HTTPS and accepts
-HTTP only when explicitly selected or supplied in a full URL/pairing link. It
+Android accepts HTTP and HTTPS URLs in manual entry, QR codes, deep links and
+saved hub state, including LAN addresses. iOS manual entry defaults to HTTPS
+and accepts HTTP only when explicitly selected or supplied in a full URL/pairing link. It
 warns about unencrypted HTTP and never automatically downgrades HTTPS. HTTP
 connection success still depends on system network policy. The iOS project
 declares no ATS exceptions, so HTTP input acceptance does not guarantee a
@@ -80,6 +80,8 @@ directory browsing and session creation.
 |---|---|
 | Chat and permissions | Streaming messages, history, tool inspection, approvals and question answering on both platforms. |
 | Composer | Text, photos/camera/files, drafts, queued-message actions and steering when supported by the session. |
+| Context usage | Android shows the latest parent-conversation context below the composer, with a details dialog using Web's calculation rules. See [context usage](#android-context-usage). |
+| Unknown deliveries | Android can locally dismiss an unresolved pending message, retain the choice across restarts and reconcile confirmed deletions from other clients. See [pending messages](#android-pending-messages). |
 | Session controls | Both support pin/archive, stopping a turn and sending to resume an inactive session. Android also exposes Rename, Delete and explicit Reopen actions; iOS currently has no corresponding UI for those three actions. |
 | Files and Git | Open **Session files** from the chat menu to browse/search files, inspect Git status and read diffs. |
 | Scratchlist | On iOS, tap the tray beside the composer attachment button to enter **Save draft** mode; Android uses the chat menu. Text and attachments sync within the session. |
@@ -110,14 +112,51 @@ grant microphone permission when first using it. Configure providers on the hub
 or through **Web Settings → Voice**. Native dictation inserts text and does not
 send it automatically. See [Voice input and assistant](./voice-assistant.md).
 
+### Android context usage
+
+Tap the small context label below the composer to view used tokens, cache-read
+tokens when available, and remaining capacity. When a limit is known, the label
+shows the context budget and percentage remaining. It changes to a warning at
+70% used and an error color at 90% used. The details dialog supports English,
+Simplified Chinese and large system text sizes.
+
+The value follows the latest usage reported for the parent conversation;
+subagent usage does not replace it. It can decrease after compaction. If the
+agent has not reported usage, the indicator stays hidden. If usage is known but
+the limit is unknown, only used tokens appear. The separate **Usage and storage**
+page requires the hub owner; the session context indicator is available to
+anyone who can view that session. See the [calculation rules](../api/client-contract/messages.md#context-usage).
+
+### Android pending messages
+
+Use **Cancel** in the pending-message bar above the composer to remove an
+uninvoked message. If the hub cannot confirm cancellation, the row can show
+**Delivery outcome unknown**. Pressing **Cancel** on an already unknown row
+removes it from this device's bar even if the hub still cannot confirm the
+outcome. Android remembers that local removal across refreshes and app restarts.
+
+A local removal applies only to the client where it was made; Web and Android
+store their choices separately. It does not confirm that delivery stopped.
+Once the hub confirms cancellation from either client, Android clears its
+cached pending copy on synchronization. Old responses cannot restore that
+confirmed deleted pending row.
+
+A later delivery acknowledgement puts the message in the conversation. An
+explicit requeue makes it visible in the pending bar again. **Retry** asks the
+hub to requeue and may remain unavailable while delivery is unresolved; reopening
+the app does not automatically resend an unknown message. **Edit** prefills the
+composer only after confirmed cancellation and preserves text entered while
+the request was pending. A network failure restores the row for another attempt.
+
 ### Features available through the web
 
 Use the web app for the remote terminal, Work Graph, realtime dictation and
 voice assistant, session fork/rewind/export, and the skills picker. These have
 no native UI. Session history actions also depend on the agent's capabilities.
-Native apps display existing scheduled messages but do not provide a form to
-create scheduled sends. Android's full-text file export is a reader action,
-separate from exporting an entire session.
+Both native apps display existing scheduled messages. Android's composer clock
+also schedules text up to seven days ahead; scheduled sends cannot include
+attachments or steering. iOS currently has no scheduling form. Android's
+full-text file export is a reader action, separate from exporting an entire session.
 
 ## Multiple hubs and sign-out
 
@@ -141,7 +180,7 @@ is suppressed locally because the conversation is already visible.
 | Official Android Firebase configuration | A current hub uses the encrypted push relay by default when no private FCM credentials are configured. Google Play services and FCM connectivity are required. |
 | Official iOS signing | A current hub uses the encrypted push relay by default. No Apple developer credentials are needed on the user's hub. |
 | Private Android Firebase project | Bundle that project's client configuration and configure matching Firebase service-account credentials on the hub for direct FCM. |
-| Android without Firebase configuration | Session features work; FCM push is unavailable. |
+| Android without Firebase configuration | Session features work; FCM push is unavailable. **Settings → Background notifications** can use a foreground service while the phone can reach the hub; its alerts have no inline approval/reply actions. |
 | Self-signed iOS build | Configure direct APNs or a self-hosted push relay with credentials matching the app's developer account, bundle ID and APNs environment. Follow the iOS README's signing instructions. |
 
 The official push relay carries encrypted notification content and routing
@@ -165,6 +204,8 @@ the session.
 | Re-pairing requested | Use the current access token, including the intended namespace suffix. |
 | No machines for New Session | Start the Runner, verify its connection and namespace, and check agent availability on that machine. |
 | Microphone missing | Configure a standard transcription provider and ensure the hub is reachable. |
+| Android context label missing or lacking a percentage | The agent must report parent-conversation usage; a percentage also requires a known context limit. |
+| An unknown pending message remains on another client | Local removal affects that client only. Confirmed hub cancellation is reconciled across clients; see [pending messages](#android-pending-messages). |
 | Notifications missing | Check OS permission, the build's Firebase/APNs configuration, provider connectivity and hub push settings. |
 
 For development and conformance checks, use the platform READMEs and the

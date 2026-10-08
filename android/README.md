@@ -34,12 +34,16 @@ differences, pairing and features currently available through the web.
   (excluding subagents), with warnings at 70%/90%. Reported limits take priority,
   then Pi's provider-qualified live/cached catalog, then Web's conservative
   Claude/Codex/Pi/Cursor budgets. Unknown limits show used tokens only; no usage
-  report means no indicator.
+  report means no indicator. See the [usage calculation rules](../docs/api/client-contract/messages.md#context-usage).
 - **Unknown deliveries:** Cancel dismisses a held unknown send on this device
   when the hub still reports it busy, matching Web. The dismissal survives
   refresh/restart; a later delivery acknowledgement appears in the transcript,
   while an explicit requeue makes the pending row visible again. Confirmed
-  remote deletions reconcile by both server and local message identities.
+  remote deletions reconcile by both server and local message identities, and
+  stale responses or snapshot writes cannot restore a confirmed deleted pending
+  row. Local dismissal applies only to this device and does not confirm that
+  delivery stopped. Edit fills the composer only after confirmed cancellation;
+  an unknown result preserves the draft. See [pending-message actions](../docs/guide/native-apps.md#android-pending-messages).
 - **Conversation navigation:** the outline lists invoked/failed user messages
   from loaded history, supports loading older messages and highlights a selected
   message without following the tail.
@@ -77,7 +81,7 @@ only a JDK.
 ```sh
 cd android
 ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest
-./gradlew :app:assembleDebug :app:lintDebug
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
 ./gradlew :app:installDebug                  # connected device
 ./gradlew :app:connectedDebugAndroidTest     # emulator/device instrumentation
 ```
@@ -89,10 +93,18 @@ only the needed projects:
 ./gradlew --no-configuration-cache --configure-on-demand :core:protocol:test
 ```
 
-CI (`.github/workflows/android.yml`) runs protocol/data/app unit tests,
-`:app:assembleDebug`, `:app:lintDebug`, and Compose instrumentation on API 29, API 33
-and API 36, plus downloadable debug APK and reports. It also supports manual
-dispatch and the `android-session-parity` verification branch. It runs for PRs touching `android/**` or `shared/fixtures/**`.
+CI ([`android.yml`](../.github/workflows/android.yml)) runs protocol/data/app unit
+tests, assembles both the debug app and instrumentation APK, and runs lint.
+API 29/33/36 emulator jobs run the general instrumentation suite followed by
+`BackgroundNotificationDeliveryTest` in a separate process; reports retain both
+phases. It supports manual dispatch, pushes to `main` and
+`android-session-parity`, and PRs touching Android, fixtures or the workflow.
+
+In a matching commit's Actions run, download `hapi-android-debug-<full-commit-sha>`
+and extract the APK. Unit/lint results are in `android-unit-lint-reports`;
+emulator results are in `android-test-reports-api-29`, `-33` and `-36`. APK
+upload and emulator verification have separate jobs, so check all of them when
+assessing a build. See the [verification snapshot](#verification) below.
 
 ### Protocol conformance fixtures
 
@@ -475,7 +487,39 @@ store and filter even when switching back to a previously used hub URL.
 Pairing and Settings both link to the [privacy policy](https://hapi.run/docs/privacy).
 These controls and notices ship in English and Simplified Chinese.
 
-### Validation status (2026-09-12)
+## Verification
+
+### CI snapshot (2026-10-08)
+
+Verified code commit: [`4e2422cd`](https://github.com/drch90/hapi/commit/4e2422cdd72f8c1c78dd38450a6a0979e9e4be89),
+including context usage and unknown-delivery dismissal/deletion reconciliation.
+[Android run](https://github.com/drch90/hapi/actions/runs/37730858444):
+
+| Check | Result |
+|---|---|
+| Protocol/data/app unit tests | 820 passed: protocol 283, data 264, app 273. |
+| Debug APK, instrumentation APK and lint | Passed; debug APK uploaded for the commit above. |
+| API 29 / Android 10 | General and background-notification instrumentation passed. |
+| API 33 / Android 13 | General and background-notification instrumentation passed. |
+| API 36 / Android 16 | General suite: 46 passed, 1 failed, 1 skipped. Background phase did not run after the failure. |
+
+The API 36 failure was
+`LocalNotificationsTest.settingsStartAndStopForegroundReceptionWithoutFirebase`:
+waiting for missing-credentials reception to reach `PairingRequired` timed out
+with `enabled=true, status=Stopped`. This run was **not all green**. The skipped
+test was the opt-in frame profiler. The separate
+[Test workflow](https://github.com/drch90/hapi/actions/runs/37730858429) passed all
+three jobs (test, integration and Windows Codex MCP).
+
+New regression coverage checks dismissal persistence, remote cancellation by
+both message identities, stale REST/SSE responses, serialized snapshot writes,
+requeue/delivery acknowledgements and preserving drafts during unknown edits.
+Context-usage coverage includes parent/child usage selection, reported/catalog
+limits, fallback budgets, English/Chinese and large font scaling.
+
+### Earlier manual and emulator checks (2026-09-12)
+
+These observations apply to the earlier builds tested on that date.
 
 Protocol/data/app JVM suites: 722 tests passed. Debug APK, instrumentation APK
 and lint passed. Pixel 6 (Android 17/API 37): installed and visually checked the

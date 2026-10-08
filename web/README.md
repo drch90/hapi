@@ -71,7 +71,14 @@ See `src/router.tsx` for route definitions.
   and focuses the composer without sending a message or replacing its draft.
   The plan document remains readable; recycled cards stay dismissed and new
   proposals get fresh action menus.
-- Context size display.
+- Context usage label with cache/used/remaining details, parent-conversation
+  usage selection and 70%/90% warnings. The compact mobile label shows the
+  budget and percentage remaining; Android follows the same
+  [calculation rules](../docs/api/client-contract/messages.md#context-usage).
+- Unknown queued deliveries can be dismissed locally when cancellation still
+  returns busy. The hidden hold remains available for delivery/requeue
+  reconciliation; the choice is separate on each client. See
+  [cancellation and local dismissal](../docs/api/client-contract/pagination.md#local-dismissal-of-unknown-deliveries).
 - Per-session scratchlist (`src/components/AssistantChat/ScratchlistPanel.tsx`)
   - Workbench panel for held notes/drafts; **distinct from the queue**.
   - Add/delete/reorder entries; promote to composer (copy) or queue (send).
