@@ -1708,12 +1708,18 @@ class ChatViewModelInteractionTest {
         val harness = InteractionHarness(this)
         harness.viewModel.setComposerText("Please check this")
         harness.viewModel.insertFilePath("docs/中文 `notes`.md")
+        assertTrue(harness.viewModel.fileComposerReturnPending.value)
+        harness.viewModel.completeFileComposerReturn()
         val state = harness.viewModel.composer.first { it.focusRequest == 1L }
         assertEquals("Please check this\n``docs/中文 `notes`.md``", state.text)
         assertTrue(harness.api.sendCalls.value.isEmpty())
         testScheduler.advanceTimeBy(11)
         testScheduler.runCurrent()
         assertEquals(state.text, harness.drafts.map[IX_SESSION])
+        harness.viewModel.completeFileComposerReturn()
+        testScheduler.runCurrent()
+        assertEquals(1L, harness.viewModel.composer.value.focusRequest)
+        assertFalse(harness.viewModel.fileComposerReturnPending.value)
     }
 
     @Test
@@ -1721,8 +1727,10 @@ class ChatViewModelInteractionTest {
         val harness = InteractionHarness(this)
         harness.drafts.map[IX_SESSION] = "Saved before process recreation"
         harness.viewModel.insertFilePath("src")
-        val state = harness.viewModel.composer.first { it.focusRequest == 1L }
+        val state = harness.viewModel.composer.first { it.text.contains("`src`") }
         assertEquals("Saved before process recreation\n`src`", state.text)
+        assertEquals(0L, state.focusRequest)
+        assertTrue(harness.viewModel.fileComposerReturnPending.value)
         assertTrue(harness.api.sendCalls.value.isEmpty())
     }
 
@@ -1732,7 +1740,7 @@ class ChatViewModelInteractionTest {
         harness.drafts.map[IX_SESSION] = "Old draft awaiting save"
         harness.viewModel.setComposerText("")
         harness.viewModel.insertFilePath("README.md")
-        assertEquals("`README.md`", harness.viewModel.composer.first { it.focusRequest == 1L }.text)
+        assertEquals("`README.md`", harness.viewModel.composer.first { it.text.isNotEmpty() }.text)
     }
 
     @Test

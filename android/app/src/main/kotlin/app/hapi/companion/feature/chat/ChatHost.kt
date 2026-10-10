@@ -22,6 +22,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
@@ -66,6 +68,20 @@ internal fun ChatHost(
     val latestReference by rememberUpdatedState(onOpenReference)
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val fileComposerReturnPending by viewModel.fileComposerReturnPending.collectAsState()
+
+    LaunchedEffect(fileComposerReturnPending, lifecycleState, entry?.destination?.route) {
+        if (!fileComposerReturnPending || lifecycleState != Lifecycle.State.RESUMED) return@LaunchedEffect
+        // A file can also be opened from a tool inspector. Return to the
+        // conversation before issuing a fresh focus request to the editor.
+        if (entry?.destination?.route != "thread") {
+            navigation.popBackStack("thread", false)
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        viewModel.completeFileComposerReturn()
+    }
 
     // Keep session events alive while any inspector is covering the conversation.
     LaunchedEffect(viewModel, context) {

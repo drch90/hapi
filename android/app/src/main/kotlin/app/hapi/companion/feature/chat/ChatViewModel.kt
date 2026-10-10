@@ -514,6 +514,8 @@ class ChatViewModel(
         }
     }
     private val composerFocusRequest = MutableStateFlow(0L)
+    private val pendingFileComposerReturn = MutableStateFlow(false)
+    internal val fileComposerReturnPending = pendingFileComposerReturn.asStateFlow()
     private data class CodexPlanOperations(
         val pendingPlanId: String? = null,
         val implementedPlanIds: Set<String> = emptySet(),
@@ -987,7 +989,14 @@ class ChatViewModel(
         if (path.isEmpty()) return
         restoreDraft()
         insertComposerText(formatFileReference(path))
-        composerFocusRequest.update { it + 1 }
+        pendingFileComposerReturn.value = true
+    }
+
+    /** Focus only after the owning chat has returned and its editor is mounted. */
+    internal fun completeFileComposerReturn() {
+        if (pendingFileComposerReturn.compareAndSet(true, false)) {
+            composerFocusRequest.update { it + 1 }
+        }
     }
 
     /**
