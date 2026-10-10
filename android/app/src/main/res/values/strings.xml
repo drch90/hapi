@@ -202,6 +202,11 @@
     <!-- Session list (B-M2b / B-M3ce, extracted in B-M5a) -->
     <string name="sessions_section_pinned">Pinned</string>
     <string name="sessions_section_sessions">Sessions</string>
+    <string name="sessions_section_in_progress">In progress</string>
+    <string name="sessions_section_active">Active</string>
+    <string name="sessions_section_other_workspace">Other workspaces</string>
+    <string name="sessions_group_collapsed">Collapsed</string>
+    <string name="sessions_group_expanded">Expanded</string>
     <string name="sessions_filter_all">All</string>
     <string name="sessions_filter_unknown_machine">Unknown machine</string>
     <string name="sessions_offline_banner">Offline — showing cached sessions</string>
@@ -455,6 +460,10 @@
     <string name="files_error_read_file">Failed to read file</string>
     <string name="files_viewer_copied">Copied</string>
     <string name="files_viewer_copy_path">Copy path</string>
+    <string name="files_path_actions">Path actions</string>
+    <string name="files_folder_actions">Folder actions</string>
+    <string name="files_file_actions">File actions</string>
+    <string name="files_send_to_composer">Add to message</string>
     <string name="files_viewer_diff">Diff</string>
     <string name="files_viewer_file">File</string>
     <string name="files_viewer_unstaged">Unstaged</string>

@@ -1704,6 +1704,38 @@ class ChatViewModelInteractionTest {
     }
 
     @Test
+    fun `file path insertion appends to the live draft focuses the composer and never sends`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.viewModel.setComposerText("Please check this")
+        harness.viewModel.insertFilePath("docs/中文 `notes`.md")
+        val state = harness.viewModel.composer.first { it.focusRequest == 1L }
+        assertEquals("Please check this\n``docs/中文 `notes`.md``", state.text)
+        assertTrue(harness.api.sendCalls.value.isEmpty())
+        testScheduler.advanceTimeBy(11)
+        testScheduler.runCurrent()
+        assertEquals(state.text, harness.drafts.map[IX_SESSION])
+    }
+
+    @Test
+    fun `file path insertion restores a saved draft before the chat has started`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.drafts.map[IX_SESSION] = "Saved before process recreation"
+        harness.viewModel.insertFilePath("src")
+        val state = harness.viewModel.composer.first { it.focusRequest == 1L }
+        assertEquals("Saved before process recreation\n`src`", state.text)
+        assertTrue(harness.api.sendCalls.value.isEmpty())
+    }
+
+    @Test
+    fun `file path insertion respects a deliberately cleared composer over an older saved draft`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.drafts.map[IX_SESSION] = "Old draft awaiting save"
+        harness.viewModel.setComposerText("")
+        harness.viewModel.insertFilePath("README.md")
+        assertEquals("`README.md`", harness.viewModel.composer.first { it.focusRequest == 1L }.text)
+    }
+
+    @Test
     fun `scratchlist entry count feeds the top-bar badge`() = runTest {
         val scratch = FakeScratchlist()
         val harness = InteractionHarness(this, scratchlist = scratch)

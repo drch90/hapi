@@ -170,6 +170,39 @@ private fun TestScope.buildViewModel(
 // ------------------------------------------------------------------ tests --
 
 class SessionListViewModelTest {
+    @Test fun `workspace collapse survives refresh search and returning from chat`() = runTest {
+        val (vm, sessions) = buildViewModel()
+        sessions.set(summary("a", name = "Task", updatedAt = 10))
+        val workspace = vm.uiState.first { it.sections.size == 1 }.sections.single()
+        assertTrue(workspace.collapsed)
+        vm.toggleSection(workspace.id)
+        vm.uiState.first { !it.sections.single().collapsed }
+        vm.stop()
+        vm.start()
+        sessions.set(summary("a", name = "Task updated", updatedAt = 20))
+        assertFalse(vm.uiState.first { it.rows.single().title == "Task updated" }.sections.single().collapsed)
+        vm.toggleSection(workspace.id)
+        vm.uiState.first { it.sections.single().collapsed }
+        vm.setFilters(SessionFilters(query = "Task"))
+        assertFalse(vm.uiState.first { it.filters.query == "Task" }.sections.single().collapsed)
+        vm.clearFilters()
+        assertTrue(vm.uiState.first { !it.filters.applied }.sections.single().collapsed)
+    }
+
+    @Test fun `session state updates move rows between sections without losing workspace expansion`() = runTest {
+        val (vm, sessions) = buildViewModel()
+        sessions.set(summary("a", name = "Task"), summary("b", name = "History"))
+        val workspace = vm.uiState.first { it.rows.size == 2 }.sections.single()
+        vm.toggleSection(workspace.id)
+        vm.uiState.first { !it.sections.single().collapsed }
+        sessions.set(summary("a", active = true).copy(thinking = true), summary("b", name = "History"))
+        val running = vm.uiState.first { it.sections.size == 2 }
+        assertEquals(SessionSectionKind.IN_PROGRESS, running.sections.first().kind)
+        assertFalse(running.sections.last().collapsed)
+        sessions.set(summary("a", active = true), summary("b", name = "History"))
+        assertEquals(listOf("a"), vm.uiState.first { it.sections.first().kind == SessionSectionKind.ACTIVE }.sections.first().rows.map { it.id })
+    }
+
     @Test fun `metadata search composes with unread and active filters and clearing restores rows`() = runTest {
         val (vm, sessions) = buildViewModel()
         sessions.set(summary("active", active = true, name = "Fix login", updatedAt = 30),

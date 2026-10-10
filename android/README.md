@@ -23,6 +23,12 @@ differences, pairing and features currently available through the web.
   machine, active/unread state and local calendar dates. Machine/active preferences
   and read watermarks persist per hub/device. Mark all read includes visible
   session records outside the current filters.
+- **Session groups:** global pins precede In progress (thinking, background
+  work or pending requests), Active, then workspace history. Workspace identity
+  includes the machine and the worktree's base path. Project pins stay first
+  in their workspace; other history groups start collapsed. Tap a header to
+  expand/collapse it; choices survive chat navigation and refresh. Search
+  temporarily expands matching groups without changing those choices.
 - **Composer:** `@` finds other conversations with content and inserts atomic
   reference chips; drafts/copy/paste serialize full Markdown session links. Chat
   links open native conversations. Optimistic send, queue/steer, attachments,
@@ -50,6 +56,12 @@ differences, pairing and features currently available through the web.
 - **Workspace:** the home menu browses an online machine's configured workspace
   roots, with breadcrumbs, hidden folders and Create here. New in same directory
   preselects the machine and worktree base path (session path fallback).
+- **Session files:** long-press a file/folder in Browse, Changes or Search, or
+  tap/hold the path bar, to copy its path or add it to the current message.
+  Adding returns to the owning chat, preserves its draft and focuses the
+  composer. Browse/Search open the complete file; Markdown defaults to Preview
+  with a Source toggle, including modified files and `.markdown`/`.mdown`/`.mkd`
+  extensions. Changes entries open their staged/unstaged diff.
 - **Session configuration:** Codex collaboration/Fast modes, Copilot agent modes
   and capability-dependent permission/model/effort controls. Dynamic catalogs
   cover Pi (provider-qualified), OpenCode, Cursor, Grok, Copilot, Agy and Hermes;

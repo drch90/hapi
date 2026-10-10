@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Sessions whose metadata carries no machine id group under this filter id. */
@@ -79,6 +80,7 @@ data class SessionListUiState(
     val isOffline: Boolean,
     val filters: SessionFilters = SessionFilters(),
     val unreadCount: Int = 0,
+    val sections: List<SessionSectionUi> = emptyList(),
 ) {
     val hasMachineFilters: Boolean get() = machineFilters.size >= 2
 }
@@ -106,6 +108,7 @@ class SessionListViewModel(
 ) {
     private val machineFilter = MutableStateFlow(lastSeenStore.state.value.machineFilter)
     private val filters = MutableStateFlow(SessionFilters(activeOnly = lastSeenStore.state.value.activeOnly))
+    private val collapseOverrides = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     private val isRefreshing = MutableStateFlow(false)
     private val isOffline = MutableStateFlow(false)
     private val hasRefreshedOnce = MutableStateFlow(false)
@@ -154,7 +157,7 @@ class SessionListViewModel(
         sessionStore.sessions,
         machineStore.machines,
         lastSeenStore.state,
-        combine(machineFilter, filters) { machine, filters -> machine to filters },
+        combine(machineFilter, filters, collapseOverrides) { machine, filters, collapsed -> Triple(machine, filters, collapsed) },
         combine(isRefreshing, isOffline, hasRefreshedOnce) { refreshing, offline, loaded ->
             Triple(refreshing, offline, loaded)
         },
@@ -165,6 +168,7 @@ class SessionListViewModel(
             lastSeen = lastSeen.lastSeen,
             filter = filter.first,
             options = filter.second,
+            collapsed = filter.third,
             isRefreshing = refreshing,
             isOffline = offline,
             hasLoaded = refreshedOnce || sessions.isNotEmpty(),
@@ -241,6 +245,11 @@ class SessionListViewModel(
         lastSeenStore.setListPreferences(machineFilter.value, value.activeOnly)
     }
     fun clearFilters() { setMachineFilter(null); setFilters(SessionFilters()) }
+    fun toggleSection(id: String) {
+        if (filters.value.query.isNotBlank()) return
+        val section = uiState.value.sections.firstOrNull { it.id == id } ?: return
+        collapseOverrides.update { it + (id to !section.collapsed) }
+    }
     fun markUnread(id: String) {
         sessionStore.sessions.value.firstOrNull { it.id == id }?.let { lastSeenStore.markUnread(id, it.updatedAt) }
     }
@@ -339,6 +348,7 @@ class SessionListViewModel(
         lastSeen: Map<String, Long>,
         filter: String?,
         options: SessionFilters,
+        collapsed: Map<String, Boolean>,
         isRefreshing: Boolean,
         isOffline: Boolean,
         hasLoaded: Boolean,
@@ -419,6 +429,7 @@ class SessionListViewModel(
 
         return SessionListUiState(
             rows = rows,
+            sections = buildSessionSections(rows, collapsed, searching = options.query.isNotBlank()),
             machineFilters = filters,
             activeMachineFilter = activeFilter,
             isRefreshing = isRefreshing,
@@ -448,7 +459,7 @@ class SessionListViewModel(
          * sidebar's `getGroupDisplayName` rule (`SessionList.tsx`).
          */
         fun projectLabel(summary: SessionSummary): String? {
-            val path = summary.metadata?.worktree?.basePath ?: summary.metadata?.path
+            val path = summary.metadata?.worktree?.basePath?.takeIf { it.isNotEmpty() } ?: summary.metadata?.path
             if (path.isNullOrEmpty()) return null
             val parts = path.split('/', '\\').filter { it.isNotEmpty() }
             return when {

@@ -357,6 +357,7 @@ fun HapiNavigation() {
             val sessionId = entry.arguments?.getString("sessionId") ?: return@composable
             val hubGraph = activeHubGraph ?: return@composable
             val filesContext = LocalContext.current
+            val summaries by hubGraph.sessionStore.sessions.collectAsState()
             val holder = viewModel<FilesViewModelHolder>(
                 key = "files:${hubGraph.hubUrl}:$sessionId",
                 factory = viewModelFactory {
@@ -365,6 +366,8 @@ fun HapiNavigation() {
             )
             FilesScreen(
                 viewModel = holder.viewModel,
+                rootPath = summaries.firstOrNull { it.id == sessionId }?.metadata?.path,
+                onSendToComposer = rememberFileComposerAction(navController, entry, hubGraph, sessionId),
                 onBack = { navController.popBackStack() },
                 onOpenFile = { path, staged ->
                     navController.navigate(Routes.fileViewer(sessionId, path, staged = staged))
@@ -422,6 +425,7 @@ fun HapiNavigation() {
             FileViewerScreen(
                 viewModel = holder.viewModel,
                 onBack = { navController.popBackStack() },
+                onSendToComposer = rememberFileComposerAction(navController, entry, hubGraph, sessionId),
             )
         }
 
@@ -561,6 +565,33 @@ fun HapiNavigation() {
                     onDismissError = viewModel::dismissError,
                 )
             }
+        }
+    }
+}
+
+/** Reuse the owning chat, including its draft, and pop both viewer and browser on insertion. */
+@Composable
+private fun rememberFileComposerAction(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+    hubGraph: HubGraph,
+    sessionId: String,
+): ((String) -> Unit)? {
+    val appContext = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val chatEntry = remember(navController, entry, hubGraph, sessionId) {
+        runCatching { navController.getBackStackEntry(Routes.chat(sessionId)) }.getOrNull()
+            ?.takeIf { it.arguments?.getString("sessionId") == sessionId }
+    } ?: return null
+    val chat = viewModel<ChatViewModelHolder>(
+        viewModelStoreOwner = chatEntry,
+        key = "chat:${hubGraph.hubUrl}:$sessionId",
+        factory = viewModelFactory { ChatViewModelHolder(hubGraph, sessionId, appContext) },
+    )
+    return { path ->
+        scope.launch {
+            chat.viewModel.insertFilePath(path)
+            navController.popBackStack(Routes.chat(sessionId), inclusive = false)
         }
     }
 }

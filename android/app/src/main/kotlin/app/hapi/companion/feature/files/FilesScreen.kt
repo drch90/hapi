@@ -1,8 +1,10 @@
 package app.hapi.companion.feature.files
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,6 +71,8 @@ fun FilesScreen(
     onBack: () -> Unit,
     onOpenFile: (path: String, staged: Boolean?) -> Unit,
     modifier: Modifier = Modifier,
+    rootPath: String? = null,
+    onSendToComposer: ((String) -> Unit)? = null,
 ) {
     DisposableEffect(viewModel) {
         viewModel.start()
@@ -77,6 +83,7 @@ fun FilesScreen(
     val browse by viewModel.browse.collectAsState()
     val search by viewModel.search.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var pathTarget by remember(viewModel) { mutableStateOf<FilePathTarget?>(null) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -109,26 +116,32 @@ fun FilesScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            FilePathBar(rootPath ?: ".") { pathTarget = FilePathTarget(rootPath ?: ".", isDirectory = true) }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text(stringResource(R.string.files_tab_changes)) })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text(stringResource(R.string.files_tab_browse)) })
                 Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text(stringResource(R.string.files_tab_search)) })
             }
             when (tab) {
-                0 -> ChangesTab(changes, onOpenFile)
+                0 -> ChangesTab(changes, onOpenFile, onPathActions = { pathTarget = FilePathTarget(it) })
                 1 -> BrowseTab(
                     browse,
                     onToggleDirectory = viewModel::toggleDirectory,
                     onToggleHidden = viewModel::setShowHidden,
                     onOpenFile = { path -> onOpenFile(path, null) },
+                    onPathActions = { pathTarget = it },
                 )
                 else -> SearchTab(
                     search,
                     onQueryChange = viewModel::setSearchQuery,
                     onOpenFile = { path -> onOpenFile(path, null) },
+                    onPathActions = { pathTarget = FilePathTarget(it) },
                 )
             }
         }
+    }
+    pathTarget?.let { target ->
+        FilePathActionsSheet(target, onDismiss = { pathTarget = null }, onSendToComposer = onSendToComposer)
     }
 }
 
@@ -138,6 +151,7 @@ fun FilesScreen(
 private fun ChangesTab(
     state: ChangesUiState,
     onOpenFile: (path: String, staged: Boolean?) -> Unit,
+    onPathActions: (String) -> Unit,
 ) {
     val colors = MaterialTheme.hapi
 
@@ -194,7 +208,8 @@ private fun ChangesTab(
                                 key = { "staged-${status.stagedFiles[it].fullPath}-$it" },
                             ) { index ->
                                 val file = status.stagedFiles[index]
-                                GitFileRow(file) { onOpenFile(file.fullPath, true) }
+                                GitFileRow(file, onClick = { onOpenFile(file.fullPath, true) },
+                                    onLongClick = { onPathActions(file.fullPath) })
                             }
                         }
                         if (status.unstagedFiles.isNotEmpty()) {
@@ -206,7 +221,8 @@ private fun ChangesTab(
                                 key = { "unstaged-${status.unstagedFiles[it].fullPath}-$it" },
                             ) { index ->
                                 val file = status.unstagedFiles[index]
-                                GitFileRow(file) { onOpenFile(file.fullPath, false) }
+                                GitFileRow(file, onClick = { onOpenFile(file.fullPath, false) },
+                                    onLongClick = { onPathActions(file.fullPath) })
                             }
                         }
                     }
@@ -230,14 +246,16 @@ private fun SectionHeader(text: String) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GitFileRow(file: GitFileStatus, onClick: () -> Unit) {
+private fun GitFileRow(file: GitFileStatus, onClick: () -> Unit, onLongClick: () -> Unit) {
     val colors = MaterialTheme.hapi
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick,
+                onLongClickLabel = stringResource(R.string.files_path_actions))
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -298,6 +316,7 @@ private fun BrowseTab(
     onToggleDirectory: (String) -> Unit,
     onToggleHidden: (Boolean) -> Unit,
     onOpenFile: (path: String) -> Unit,
+    onPathActions: (FilePathTarget) -> Unit,
 ) {
     val colors = MaterialTheme.hapi
 
@@ -316,8 +335,10 @@ private fun BrowseTab(
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(state.rows.size) { index ->
                 when (val row = state.rows[index]) {
-                    is BrowseRow.Dir -> DirectoryRow(row, onToggleDirectory)
-                    is BrowseRow.File -> FileRow(row, onOpenFile)
+                    is BrowseRow.Dir -> DirectoryRow(row, onToggleDirectory,
+                        onLongClick = { onPathActions(FilePathTarget(row.path, isDirectory = true)) })
+                    is BrowseRow.File -> FileRow(row, onOpenFile,
+                        onLongClick = { onPathActions(FilePathTarget(row.path)) })
                     is BrowseRow.Loading -> Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -341,12 +362,14 @@ private fun BrowseTab(
 
 private fun rowIndent(depth: Int) = (depth * 16).dp
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DirectoryRow(row: BrowseRow.Dir, onToggle: (String) -> Unit) {
+private fun DirectoryRow(row: BrowseRow.Dir, onToggle: (String) -> Unit, onLongClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onToggle(row.path) }
+            .combinedClickable(onClick = { onToggle(row.path) }, onLongClick = onLongClick,
+                onLongClickLabel = stringResource(R.string.files_path_actions))
             .padding(start = rowIndent(row.depth) + 8.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -372,12 +395,14 @@ private fun DirectoryRow(row: BrowseRow.Dir, onToggle: (String) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FileRow(row: BrowseRow.File, onOpenFile: (String) -> Unit) {
+private fun FileRow(row: BrowseRow.File, onOpenFile: (String) -> Unit, onLongClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpenFile(row.path) }
+            .combinedClickable(onClick = { onOpenFile(row.path) }, onLongClick = onLongClick,
+                onLongClickLabel = stringResource(R.string.files_path_actions))
             // Files align with sibling directory names (chevron width offset).
             .padding(start = rowIndent(row.depth) + 30.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -403,6 +428,7 @@ private fun SearchTab(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
     onOpenFile: (path: String) -> Unit,
+    onPathActions: (String) -> Unit,
 ) {
     val colors = MaterialTheme.hapi
 
@@ -425,19 +451,22 @@ private fun SearchTab(
             state.searched && state.results.isEmpty() -> CenteredHint(stringResource(R.string.files_search_no_match))
             else -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(state.results, key = { it.fullPath }) { item ->
-                    SearchResultRow(item) { onOpenFile(item.fullPath) }
+                    SearchResultRow(item, onClick = { onOpenFile(item.fullPath) },
+                        onLongClick = { onPathActions(item.fullPath) })
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SearchResultRow(item: FileSearchItem, onClick: () -> Unit) {
+private fun SearchResultRow(item: FileSearchItem, onClick: () -> Unit, onLongClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick,
+                onLongClickLabel = stringResource(R.string.files_path_actions))
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

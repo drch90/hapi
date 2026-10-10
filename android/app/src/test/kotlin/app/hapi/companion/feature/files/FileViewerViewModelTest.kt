@@ -52,7 +52,7 @@ class FileViewerViewModelTest {
             diffFileResult = GitCommandResponse(success = true, stdout = sampleDiff)
             readFileResult = FileReadResponse(success = true, content = b64("keep\nnew\n"))
         }
-        val viewModel = buildViewModel(gateway)
+        val viewModel = buildViewModel(gateway, staged = false)
         viewModel.start()
         advanceUntilIdle()
 
@@ -70,7 +70,7 @@ class FileViewerViewModelTest {
             diffFileResult = GitCommandResponse(success = true, stdout = "")
             readFileResult = FileReadResponse(success = true, content = b64("hello"))
         }
-        val viewModel = buildViewModel(gateway)
+        val viewModel = buildViewModel(gateway, staged = false)
         viewModel.start()
         advanceUntilIdle()
 
@@ -89,7 +89,7 @@ class FileViewerViewModelTest {
             diffFileResult = GitCommandResponse(success = false, error = "not a repo")
             readFileResult = FileReadResponse(success = true, content = b64("x"))
         }
-        val viewModel = buildViewModel(gateway)
+        val viewModel = buildViewModel(gateway, staged = false)
         viewModel.start()
         advanceUntilIdle()
 
@@ -155,6 +155,30 @@ class FileViewerViewModelTest {
 
         viewModel.setMarkdownPreview(false)
         assertEquals(false, viewModel.state.value.markdownPreview)
+    }
+
+    @Test
+    fun `browsing modified markdown opens preview and source selection survives refresh`() = runTest {
+        for (extension in listOf("md", "MDX", "markdown", "mdown", "mkd")) {
+            val gateway = FakeFilesGateway().apply {
+                diffFileResult = GitCommandResponse(success = true, stdout = sampleDiff)
+                readFileResult = FileReadResponse(success = true, content = b64("# Title\n\nBody"))
+            }
+            val viewModel = buildViewModel(gateway, path = "docs/guide.$extension")
+            viewModel.start()
+            advanceUntilIdle()
+            assertEquals(ViewerMode.FILE, viewModel.state.value.mode)
+            assertTrue(assertIs<FileContentUiState.Text>(viewModel.state.value.content).isMarkdown)
+            assertTrue(viewModel.state.value.markdownPreview)
+            viewModel.setMarkdownPreview(false)
+            viewModel.refresh()
+            advanceUntilIdle()
+            assertEquals(false, viewModel.state.value.markdownPreview)
+            assertEquals("# Title\n\nBody", assertIs<FileContentUiState.Text>(viewModel.state.value.content).text)
+            viewModel.setMode(ViewerMode.DIFF)
+            assertIs<DiffUiState.Ready>(viewModel.state.value.diff)
+            assertEquals(ViewerMode.DIFF, viewModel.state.value.mode)
+        }
     }
 
     @Test

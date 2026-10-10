@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,7 +28,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,8 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,7 +47,6 @@ import app.hapi.companion.ui.components.DiffView
 import app.hapi.companion.ui.markdown.CodeBlock
 import app.hapi.companion.ui.markdown.Markdown
 import app.hapi.companion.ui.theme.hapi
-import kotlinx.coroutines.delay
 
 /**
  * Single-file viewer (`chat/{sessionId}/file`), the Android take on web
@@ -57,7 +54,7 @@ import kotlinx.coroutines.delay
  * toggle) ⇄ full mode ([CodeBlock] with its 400-line highlight cap and copy
  * button; markdown gets a Source/Preview toggle over the shared [Markdown]
  * renderer; images decode to a bitmap). Top bar shows the file name with the
- * middle-ellipsized path and a copy-path action.
+ * middle-ellipsized path; tapping/holding it opens copy/compose actions.
  *
  * Chat citations may carry a line number; per-line highlighting inside the
  * single-`Text` [CodeBlock] isn't cheap, so the viewer shows a "Line N" hint
@@ -69,6 +66,7 @@ fun FileViewerScreen(
     viewModel: FileViewerViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onSendToComposer: ((String) -> Unit)? = null,
 ) {
     DisposableEffect(viewModel) {
         viewModel.start()
@@ -77,6 +75,7 @@ fun FileViewerScreen(
 
     val state by viewModel.state.collectAsState()
     val colors = MaterialTheme.hapi
+    var pathActionsOpen by remember(viewModel) { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -116,7 +115,7 @@ fun FileViewerScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            PathRow(path = state.path)
+            FilePathBar(path = state.path, onActions = { pathActionsOpen = true })
             ModeToggleRow(state, viewModel)
 
             Column(
@@ -133,48 +132,11 @@ fun FileViewerScreen(
             }
         }
     }
-}
-
-@Composable
-private fun PathRow(path: String) {
-    val colors = MaterialTheme.hapi
-    // Sync clipboard API is the deliberate choice, matching CodeBlock's copy.
-    @Suppress("DEPRECATION")
-    val clipboard = LocalClipboardManager.current
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) {
-            delay(1600)
-            copied = false
-        }
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(
-            text = path,
-            fontSize = 12.sp,
-            color = colors.hint,
-            maxLines = 1,
-            overflow = TextOverflow.MiddleEllipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = stringResource(if (copied) R.string.files_viewer_copied else R.string.files_viewer_copy_path),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (copied) MaterialTheme.colorScheme.primary else colors.hint,
-            modifier = Modifier
-                .clickable {
-                    clipboard.setText(AnnotatedString(path))
-                    copied = true
-                }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+    if (pathActionsOpen) {
+        FilePathActionsSheet(
+            target = FilePathTarget(state.path),
+            onDismiss = { pathActionsOpen = false },
+            onSendToComposer = onSendToComposer,
         )
     }
 }
@@ -188,6 +150,7 @@ private fun ModeToggleRow(state: FileViewerUiState, viewModel: FileViewerViewMod
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),

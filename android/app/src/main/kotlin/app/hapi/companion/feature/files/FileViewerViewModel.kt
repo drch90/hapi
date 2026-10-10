@@ -75,8 +75,9 @@ data class FileViewerUiState(
  * One file, two modes (web `file.tsx`): **diff** — `git-diff-file` stdout
  * through `UnifiedDiffParser` into `DiffView`, with a staged/unstaged toggle —
  * and **full** — `file` read, base64-decoded into highlighted text, markdown
- * preview, or an image. Both loads run in parallel; like the web page, the
- * viewer auto-falls to full mode when the diff is empty/failed or the file is
+ * preview, or an image. Browse/search start in full mode; Changes starts in
+ * diff mode. Both loads run in parallel, and the viewer auto-falls to full
+ * mode when the diff is empty/failed or the file is
  * an image, until the user picks a mode explicitly.
  */
 class FileViewerViewModel(
@@ -93,7 +94,9 @@ class FileViewerViewModel(
         FileViewerUiState(
             path = path,
             fileName = path.substringAfterLast('/').ifEmpty { path },
-            mode = initialMode ?: ViewerMode.DIFF,
+            // Only Changes rows provide a staged side. Browse/search open
+            // the complete file, including Markdown preview for modified files.
+            mode = initialMode ?: if (initialStaged == null) ViewerMode.FILE else ViewerMode.DIFF,
             staged = initialStaged ?: false,
             focusLine = focusLine,
         ),
@@ -276,10 +279,10 @@ class FileViewerViewModel(
         fun imageMimeType(path: String): String? =
             fileExtension(path)?.let { IMAGE_MIME_BY_EXTENSION[it] }
 
-        /** Web `isMarkdownFile` (`file-markdown-preview.ts`): md / mdx only. */
+        /** Common Markdown extensions; MDX is shown as Markdown without executing JSX. */
         fun isMarkdownFile(path: String): Boolean {
             val ext = fileExtension(path)
-            return ext == "md" || ext == "mdx"
+            return ext in setOf("md", "mdx", "markdown", "mdown", "mkd")
         }
 
         /** Web `isBinaryContent`: NUL, or > 10% control chars (excluding \t \n \r). */

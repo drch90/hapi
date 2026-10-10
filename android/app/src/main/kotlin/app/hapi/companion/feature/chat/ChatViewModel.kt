@@ -11,6 +11,7 @@ import androidx.annotation.MainThread
 import app.hapi.companion.feature.chat.attachments.ComposerAttachments
 import app.hapi.companion.feature.chat.blocks.planProposalMarkdown
 import app.hapi.companion.feature.chat.composer.ChatDrafts
+import app.hapi.companion.feature.chat.composer.formatFileReference
 import app.hapi.companion.feature.chat.composer.SlashCommands
 import app.hapi.companion.feature.chat.composer.appendTranscript
 import app.hapi.companion.ui.markdown.MarkdownRenderCache
@@ -471,6 +472,7 @@ class ChatViewModel(
     // ------------------------------------------------------------ M3 state --
 
     private val composerText = MutableStateFlow("")
+    private var composerDraftInitialized = false
     private val scheduleState = MutableStateFlow<app.hapi.companion.feature.chat.composer.SendSchedule?>(null)
     val schedule = scheduleState.asStateFlow()
     private var scheduleEdited = false
@@ -947,6 +949,7 @@ class ChatViewModel(
     // ------------------------------------------------------------- composer --
 
     fun setComposerText(text: String) {
+        composerDraftInitialized = true
         // Fetch the RPC command list on the transition INTO slash mode (the
         // web refetches when the menu opens) — not on every keystroke, so a
         // wedged CLI cannot be hammered while the user types a command.
@@ -977,6 +980,14 @@ class ChatViewModel(
         if (text.isBlank()) return
         val current = composerText.value
         setComposerText(if (current.isBlank()) text else "${current.trimEnd()}\n$text")
+    }
+
+    /** Files may be restored above an unstarted chat after process recreation. */
+    suspend fun insertFilePath(path: String) {
+        if (path.isEmpty()) return
+        restoreDraft()
+        insertComposerText(formatFileReference(path))
+        composerFocusRequest.update { it + 1 }
     }
 
     /**
@@ -2025,10 +2036,14 @@ class ChatViewModel(
         .distinctUntilChanged()
 
     private suspend fun restoreDraft() {
-        val store = drafts ?: return
-        val draft = runCatching { store.load(sessionId) }.getOrNull() ?: return
-        if (composerText.value.isEmpty()) {
-            composerText.value = draft
+        if (composerDraftInitialized) return
+        val draft = runCatching { drafts?.load(sessionId) }.getOrElse {
+            if (it is CancellationException) throw it
+            null
+        }
+        if (!composerDraftInitialized) {
+            composerDraftInitialized = true
+            if (composerText.value.isEmpty() && draft != null) composerText.value = draft
         }
     }
 

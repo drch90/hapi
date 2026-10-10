@@ -209,6 +209,11 @@
     <!-- Session list (B-M2b / B-M3ce, extracted in B-M5a) -->
     <string name="sessions_section_pinned">置顶会话</string>
     <string name="sessions_section_sessions">会话</string>
+    <string name="sessions_section_in_progress">进行中</string>
+    <string name="sessions_section_active">活跃</string>
+    <string name="sessions_section_other_workspace">其他工作区</string>
+    <string name="sessions_group_collapsed">已折叠</string>
+    <string name="sessions_group_expanded">已展开</string>
     <string name="sessions_filter_all">全部</string>
     <string name="sessions_filter_unknown_machine">未知机器</string>
     <string name="sessions_offline_banner">离线 — 显示缓存的会话</string>
@@ -459,6 +464,10 @@
     <string name="files_error_read_file">读取文件失败</string>
     <string name="files_viewer_copied">已复制</string>
     <string name="files_viewer_copy_path">复制路径</string>
+    <string name="files_path_actions">路径操作</string>
+    <string name="files_folder_actions">文件夹操作</string>
+    <string name="files_file_actions">文件操作</string>
+    <string name="files_send_to_composer">添加到输入框</string>
     <string name="files_viewer_diff">Diff</string>
     <string name="files_viewer_file">文件</string>
     <string name="files_viewer_unstaged">未暂存</string>

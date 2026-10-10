@@ -10,10 +10,12 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,11 +26,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -53,6 +56,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -73,8 +79,8 @@ import app.hapi.protocol.wire.TodoProgress
  * Inventory (mirrors the web sidebar semantics):
  * - offline banner over snapshot data, machine filter chips (≥ 2 machines),
  *   pull-to-refresh, empty state;
- * - pinned section first (the sort already puts globalPinned/pinned rows on
- *   top; a header + divider make the boundary visible);
+ * - global pins, in-progress, active, then collapsible workspace groups;
+ *   project pins stay at the top of their workspace;
  * - per row: flavor brand icon + title, spinner while a turn is in flight,
  *   summary line, `project · worktree · machine` meta line (machine only
  *   when it disambiguates), relative `updatedAt`, pending-request badge,
@@ -177,7 +183,9 @@ fun SessionListScreen(
                     } else EmptyState(hasLoaded = state.hasLoaded, isOffline = state.isOffline)
                 } else {
                     SessionRows(
-                        rows = state.rows,
+                        sections = state.sections,
+                        searching = state.filters.query.isNotBlank(),
+                        onToggleSection = viewModel::toggleSection,
                         onOpen = { sessionId ->
                             viewModel.onSessionOpened(sessionId)
                             onOpenSession(sessionId)
@@ -274,44 +282,62 @@ fun SessionListScreen(
 // ------------------------------------------------------------------ list --
 
 @Composable
-private fun SessionRows(
-    rows: List<SessionRowUi>,
+internal fun SessionRows(
+    sections: List<SessionSectionUi>,
+    searching: Boolean,
+    onToggleSection: (String) -> Unit,
     onOpen: (String) -> Unit,
     onLongPress: (SessionRowUi) -> Unit,
 ) {
-    // The sort contract puts globalPinned/pinned rows first; the boundary
-    // index is where the pinned section ends.
-    val pinnedCount = rows.takeWhile {
-        it.summary.globalPinned == true || it.summary.pinned == true
-    }.size
-
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        if (pinnedCount > 0) {
-            item(key = "header-pinned") { SectionHeader(stringResource(R.string.sessions_section_pinned)) }
-        }
-        items(rows.take(pinnedCount), key = { it.id }) { row ->
-            SessionRow(row, onOpen = onOpen, onLongPress = onLongPress)
-        }
-        if (pinnedCount in 1 until rows.size) {
-            item(key = "divider-pinned") {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                SectionHeader(stringResource(R.string.sessions_section_sessions))
+    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
+        for (section in sections) {
+            item(key = "header:${section.id}", contentType = "section") {
+                SectionHeader(section, enabled = !searching, onToggle = { onToggleSection(section.id) })
             }
-        }
-        items(rows.drop(pinnedCount), key = { it.id }) { row ->
-            SessionRow(row, onOpen = onOpen, onLongPress = onLongPress)
+            if (!section.collapsed) {
+                items(section.rows, key = { "session:${it.id}" }, contentType = { "session" }) { row ->
+                    SessionRow(row, onOpen = onOpen, onLongPress = onLongPress)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-    )
+private fun SectionHeader(section: SessionSectionUi, enabled: Boolean, onToggle: () -> Unit) {
+    val title = when (section.kind) {
+        SessionSectionKind.PINNED -> stringResource(R.string.sessions_section_pinned)
+        SessionSectionKind.IN_PROGRESS -> stringResource(R.string.sessions_section_in_progress)
+        SessionSectionKind.ACTIVE -> stringResource(R.string.sessions_section_active)
+        SessionSectionKind.WORKSPACE -> section.title ?: stringResource(R.string.sessions_section_other_workspace)
+    }
+    val expansion = stringResource(if (section.collapsed) R.string.sessions_group_collapsed else R.string.sessions_group_expanded)
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
+            .semantics { stateDescription = expansion }
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            section.machine?.let { machine ->
+                Text(machineFilterLabel(machine), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (section.rows.any { it.unread }) UnreadDot()
+        Text(section.rows.size.toString(), style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -605,12 +631,14 @@ private fun SessionRowsPreview() {
     HapiTheme {
         Surface {
             SessionRows(
-                rows = listOf(
+                sections = buildSessionSections(listOf(
                     previewRow("s1", "Pinned build fix", pinned = true),
                     previewRow("s2", "Session list UI", active = true, thinking = true, unread = true, todo = TodoProgress(3, 5)),
                     previewRow("s3", "Fixture sweep", active = true, pending = 2),
                     previewRow("s4", "Old research"),
-                ),
+                )),
+                searching = false,
+                onToggleSection = {},
                 onOpen = {},
                 onLongPress = {},
             )
