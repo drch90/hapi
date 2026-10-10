@@ -28,14 +28,21 @@ differences, pairing and features currently available through the web.
   includes the machine and the worktree's base path. Project pins stay first
   in their workspace; other history groups start collapsed. Tap a header to
   expand/collapse it; choices survive chat navigation and refresh. Search
-  temporarily expands matching groups without changing those choices.
+  temporarily expands matching groups without changing those choices. The
+  **+** beside a workspace header opens New session with that workspace's
+  machine and base directory preselected, including while the group is
+  collapsed or search is active.
 - **Composer:** `@` finds other conversations with content and inserts atomic
   reference chips; drafts/copy/paste serialize full Markdown session links. Chat
   links open native conversations. Optimistic send, queue/steer, attachments,
   slash suggestions and dictation remain available. The clock schedules text
   for 5/30/60/240 minutes later or a local date/time within seven days, using the
   hub's durable queue. Scheduled sends cannot include attachments or steering.
-- **Context usage:** below the composer, the compact Web-style label opens
+- **Agent status:** above the composer, a Web-style colored dot and label follow
+  live session state: offline, permission required, thinking, background-task
+  count, then online, in that priority order. Pending requests and running work
+  pulse; status and context usage wrap on narrow screens or at large font sizes.
+- **Context usage:** beside the agent status, the compact Web-style label opens
   cache/used/remaining token details. It follows the latest parent-thread usage
   (excluding subagents), with warnings at 70%/90%. Reported limits take priority,
   then Pi's provider-qualified live/cached catalog, then Web's conservative
@@ -505,6 +512,38 @@ Pairing and Settings both link to the [privacy policy](https://hapi.run/docs/pri
 These controls and notices ship in English and Simplified Chinese.
 
 ## Verification
+
+### CI snapshot (2026-10-10)
+
+Verified commit: [`bc6353df`](https://github.com/drch90/hapi/commit/bc6353df75be480395d8421e020e580d5fefec76),
+including session groups, file/folder path actions, return-to-composer handling
+and Markdown preview/source selection.
+[Android run](https://github.com/drch90/hapi/actions/runs/38047835348):
+
+| Check | Result |
+|---|---|
+| Protocol/data/app unit tests | 831 passed: protocol 283, data 264, app 284. |
+| Debug APK, instrumentation APK and lint | Passed; [debug APK artifact](https://github.com/drch90/hapi/actions/runs/38047835348/artifacts/11668606242) uploaded for the commit above. |
+| API 29 / Android 10 | General suite: 51 passed, 1 skipped. Background-notification phase: 1 passed. |
+| API 33 / Android 13 | General suite: 50 passed, 1 failed, 1 skipped. Background phase did not run after the failure. |
+| API 36 / Android 16 | General suite: 50 passed, 1 failed, 1 skipped. Background phase did not run after the failure. |
+
+All four new instrumentation tests passed on all three API levels: workspace
+group ordering/collapse, file/folder long-press paths, Changes/Search path
+actions, and modified Markdown preview/source switching at 320dp width.
+Unit coverage also passed for preserving/restoring composer drafts, deferring
+the focus request until chat return, worktree/machine grouping, collapse
+preferences during refresh/search, and the additional Markdown extensions.
+
+Both failures were in the existing
+`LocalNotificationsTest.settingsStartAndStopForegroundReceptionWithoutFirebase`:
+API 33 timed out waiting for missing-credentials reception to reach
+`PairingRequired` (`enabled=true, status=Stopped`); API 36 timed out waiting for
+the foreground-service notification to disappear after stopping reception
+(`enabled=false, status=Stopped`). The notification test and reception code
+were unchanged by these feature commits, and the missing-credentials timeout
+also occurred in the preceding snapshot. This run was **not all green**.
+The skipped test on each API level was the opt-in frame profiler.
 
 ### CI snapshot (2026-10-08)
 

@@ -6,6 +6,7 @@ import app.hapi.protocol.wire.WorktreeMetadata
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SessionSectionsTest {
@@ -56,7 +57,13 @@ class SessionSectionsTest {
         ))
         assertEquals(5, sections.size)
         assertEquals(5, sections.map { it.id }.toSet().size)
-        assertEquals(listOf("base", "tree"), sections.single { it.rows.any { row -> row.id == "base" } }.rows.map { it.id })
+        val workspace = sections.single { it.rows.any { row -> row.id == "base" } }
+        assertEquals(listOf("base", "tree"), workspace.rows.map { it.id })
+        assertEquals("/repo/app", workspace.directory)
+        assertEquals("machine-a", workspace.machineId)
+        assertNull(workspace.machine)
+        assertEquals("machine-b", sections.single { it.rows.singleOrNull()?.id == "other-machine" }.machineId)
+        assertNull(sections.single { it.rows.singleOrNull()?.id == "unknown" }.machineId)
     }
 
     @Test fun `project pins lead their workspace and workspace history is ordered by recency`() {

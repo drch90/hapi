@@ -80,6 +80,7 @@ fun ChatComposer(
     onSendSteer: () -> Unit,
     onAbort: () -> Unit,
     modifier: Modifier = Modifier,
+    agentStatus: app.hapi.companion.feature.chat.AgentStatusUi? = null,
     contextUsage: app.hapi.companion.feature.chat.ContextUsageUi? = null,
     schedule: SendSchedule? = null,
     onSchedule: (SendSchedule?) -> Unit = {},
@@ -101,6 +102,7 @@ fun ChatComposer(
     if (scheduleOpen) ScheduleSendPicker({ scheduleOpen = false }, onSchedule)
     Surface(color = MaterialTheme.colorScheme.surface, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
+            AgentStatusBar(agentStatus, contextUsage)
             if (schedule != null) TextButton(onClick = { scheduleOpen = true }) { Text(scheduleLabel(schedule)) }
             if (slashSuggestions.isNotEmpty()) {
                 SlashCommandDropdown(
@@ -178,7 +180,6 @@ fun ChatComposer(
                     }
                 }
             }
-            contextUsage?.let { ContextUsageIndicator(it) }
         }
     }
 }

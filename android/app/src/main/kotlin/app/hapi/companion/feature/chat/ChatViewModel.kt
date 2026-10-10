@@ -602,6 +602,12 @@ class ChatViewModel(
         contextUsage(usage, metadata?.flavor ?: summary?.metadata?.flavor, detail?.model, entries, metadata?.piSelectedModel)
     }.stateIn(scope, SharingStarted.Eagerly, null)
 
+    val agentStatus: StateFlow<AgentStatusUi> = combine(
+        sessionStore.sessionDetail(sessionId),
+        summaryFlow(),
+    ) { detail, summary -> deriveAgentStatus(detail, summary) }
+        .stateIn(scope, SharingStarted.Eagerly, AgentStatusUi.Offline)
+
     /** Composer bar state (text is VM-owned so drafts and edit-prefill flow through it). */
     val composer: StateFlow<ComposerUiState> = combine(
         composerText,

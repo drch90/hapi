@@ -125,6 +125,7 @@ internal fun ChatScreen(
     val jumpToken by viewModel.jumpToken.collectAsState()
     val jumpingLatest by viewModel.jumpingLatest.collectAsState()
     val composerState by viewModel.composer.collectAsState()
+    val agentStatus by viewModel.agentStatus.collectAsState()
     val contextUsage by viewModel.contextUsage.collectAsState()
     val codexPlanActions by viewModel.codexPlanActions.collectAsState()
     val queuedRows by viewModel.queuedRows.collectAsState()
@@ -369,6 +370,7 @@ internal fun ChatScreen(
                     )
                     ChatComposer(
                         state = composerState,
+                        agentStatus = agentStatus,
                         contextUsage = contextUsage,
                         onTextChange = viewModel::setComposerText,
                         sessionId = viewModel.sessionId, sessions = allSessions,

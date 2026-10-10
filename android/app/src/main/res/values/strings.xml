@@ -205,6 +205,7 @@
     <string name="sessions_section_in_progress">In progress</string>
     <string name="sessions_section_active">Active</string>
     <string name="sessions_section_other_workspace">Other workspaces</string>
+    <string name="sessions_new_in_workspace">New session in %1$s</string>
     <string name="sessions_group_collapsed">Collapsed</string>
     <string name="sessions_group_expanded">Expanded</string>
     <string name="sessions_filter_all">All</string>
@@ -284,6 +285,12 @@
     <string name="chat_notice_config_failed">Failed to update session</string>
 
     <!-- Composer (B-M3a/ce/f) -->
+    <string name="chat_agent_offline">offline</string>
+    <string name="chat_agent_permission_required">permission required</string>
+    <string name="chat_agent_thinking">thinking…</string>
+    <string name="chat_agent_background_one">1 background task running</string>
+    <string name="chat_agent_background_many">%1$d background tasks running</string>
+    <string name="chat_agent_online">online</string>
     <string name="chat_composer_placeholder">Message the agent…</string>
     <string name="chat_attachment_uploading">Uploading…</string>
     <string name="chat_attachment_failed_retry">Failed — tap to retry</string>

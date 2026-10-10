@@ -33,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -191,6 +192,7 @@ fun SessionListScreen(
                             onOpenSession(sessionId)
                         },
                         onLongPress = { sheetRow = it },
+                        onNewInDirectory = onNewInDirectory,
                     )
                 }
             }
@@ -288,11 +290,13 @@ internal fun SessionRows(
     onToggleSection: (String) -> Unit,
     onOpen: (String) -> Unit,
     onLongPress: (SessionRowUi) -> Unit,
+    onNewInDirectory: ((String?, String) -> Unit)? = null,
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
         for (section in sections) {
             item(key = "header:${section.id}", contentType = "section") {
-                SectionHeader(section, enabled = !searching, onToggle = { onToggleSection(section.id) })
+                SectionHeader(section, enabled = !searching, onToggle = { onToggleSection(section.id) },
+                    onNewInDirectory = onNewInDirectory)
             }
             if (!section.collapsed) {
                 items(section.rows, key = { "session:${it.id}" }, contentType = { "session" }) { row ->
@@ -304,7 +308,12 @@ internal fun SessionRows(
 }
 
 @Composable
-private fun SectionHeader(section: SessionSectionUi, enabled: Boolean, onToggle: () -> Unit) {
+private fun SectionHeader(
+    section: SessionSectionUi,
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    onNewInDirectory: ((String?, String) -> Unit)?,
+) {
     val title = when (section.kind) {
         SessionSectionKind.PINNED -> stringResource(R.string.sessions_section_pinned)
         SessionSectionKind.IN_PROGRESS -> stringResource(R.string.sessions_section_in_progress)
@@ -313,30 +322,44 @@ private fun SectionHeader(section: SessionSectionUi, enabled: Boolean, onToggle:
     }
     val expansion = stringResource(if (section.collapsed) R.string.sessions_group_collapsed else R.string.sessions_group_expanded)
     Row(
-        modifier = Modifier.fillMaxWidth()
-            .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
-            .semantics { stateDescription = expansion }
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(
-            if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-        )
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            section.machine?.let { machine ->
-                Text(machineFilterLabel(machine), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(
+            modifier = Modifier.weight(1f)
+                .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
+                .semantics { stateDescription = expansion }
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                section.machine?.let { machine ->
+                    Text(machineFilterLabel(machine), style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (section.rows.any { it.unread }) UnreadDot()
+            Text(section.rows.size.toString(), style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        val directory = section.directory?.takeIf { section.kind == SessionSectionKind.WORKSPACE && it.isNotEmpty() }
+        if (directory != null && onNewInDirectory != null) {
+            IconButton(
+                onClick = { onNewInDirectory(section.machineId, directory) },
+                modifier = Modifier.padding(end = 8.dp),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = stringResource(R.string.sessions_new_in_workspace, title))
             }
         }
-        if (section.rows.any { it.unread }) UnreadDot()
-        Text(section.rows.size.toString(), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -641,6 +664,7 @@ private fun SessionRowsPreview() {
                 onToggleSection = {},
                 onOpen = {},
                 onLongPress = {},
+                onNewInDirectory = { _, _ -> },
             )
         }
     }

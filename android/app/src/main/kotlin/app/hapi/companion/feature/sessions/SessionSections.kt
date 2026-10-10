@@ -8,6 +8,7 @@ data class SessionSectionUi(
     val rows: List<SessionRowUi>,
     val title: String? = null,
     val directory: String? = null,
+    val machineId: String? = null,
     val machine: MachineFilterUi? = null,
     val collapsed: Boolean = false,
 )
@@ -59,6 +60,7 @@ internal fun buildSessionSections(
                 rows = group.sortedByDescending { it.summary.pinned == true },
                 title = SessionListViewModel.projectLabel(group.first().summary),
                 directory = key.directory,
+                machineId = key.machineId,
                 machine = group.first().machine,
             )
         }

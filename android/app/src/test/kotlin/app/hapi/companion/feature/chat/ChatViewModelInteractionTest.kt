@@ -1704,6 +1704,25 @@ class ChatViewModelInteractionTest {
     }
 
     @Test
+    fun `agent status follows session updates without starting the transcript`() = runTest {
+        val harness = InteractionHarness(this)
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.Online }
+        harness.sessionStore.setDetail(detail(thinking = true))
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.Thinking }
+        harness.sessionStore.setDetail(detail(thinking = true,
+            agentState = AgentState(requests = mapOf("permission" to bashRequest()))))
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.PermissionRequired }
+        harness.sessionStore.setDetail(detail().copy(backgroundTaskCount = 2))
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.BackgroundTasks(2) }
+        harness.sessionStore.setDetail(detail(active = false, thinking = true))
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.Offline }
+        harness.sessionStore.releaseDetail(IX_SESSION)
+        harness.sessionStore.summaries.value = listOf(SessionSummary(IX_SESSION, active = true, backgroundTaskCount = 1))
+        harness.viewModel.agentStatus.first { it == AgentStatusUi.BackgroundTasks(1) }
+        assertTrue(harness.sessionStore.calls.value.none { it.startsWith("loadDetail:") })
+    }
+
+    @Test
     fun `file path insertion appends to the live draft focuses the composer and never sends`() = runTest {
         val harness = InteractionHarness(this)
         harness.viewModel.setComposerText("Please check this")
