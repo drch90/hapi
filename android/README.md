@@ -112,6 +112,11 @@ API 29/33/36 emulator jobs run the general instrumentation suite followed by
 phases. It supports manual dispatch, pushes to `main` and
 `android-session-parity`, and PRs touching Android, fixtures or the workflow.
 
+To start a build manually, open **Actions → android → Run workflow** in GitHub
+and select the branch containing your changes. The workflow on the repository's
+default branch must also declare `workflow_dispatch` for the button to appear;
+adding it only on a feature branch does not enable the button.
+
 In a matching commit's Actions run, download `hapi-android-debug-<full-commit-sha>`
 and extract the APK. Unit/lint results are in `android-unit-lint-reports`;
 emulator results are in `android-test-reports-api-29`, `-33` and `-36`. APK
