@@ -124,30 +124,4 @@ class FilePathLinksTest {
         assertNull(MarkdownTransforms.matchWholeFilePath("Math.PI"))
         assertNull(MarkdownTransforms.matchWholeFilePath(""))
     }
-
-    // ── rewriteExplicitLinkTarget ────────────────────────────────────────────
-
-    @Test
-    fun `rewrites repo-relative link targets`() {
-        assertEquals("docs/guide.md", MarkdownTransforms.rewriteExplicitLinkTarget("docs/guide.md#install"))
-        assertEquals("src/a.ts", MarkdownTransforms.rewriteExplicitLinkTarget("src/a.ts:12"))
-        assertEquals("./readme.md", MarkdownTransforms.rewriteExplicitLinkTarget("./readme.md"))
-        assertEquals("sub/dir/img.png", MarkdownTransforms.rewriteExplicitLinkTarget("sub/dir/img.png?x=1"))
-    }
-
-    @Test
-    fun `keeps url semantics for absolute schemed and unknown targets`() {
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("/abs/a.ts"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("https://x.com/a.ts"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("mailto:a@b.c"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("../up.ts"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("/settings"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("#section"))
-    }
-
-    @Test
-    fun `windows absolute targets need an allowlisted extension`() {
-        assertEquals("C:/w/a.ts", MarkdownTransforms.rewriteExplicitLinkTarget("C:/w/a.ts"))
-        assertNull(MarkdownTransforms.rewriteExplicitLinkTarget("C:/w/a"))
-    }
 }

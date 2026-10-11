@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import app.hapi.companion.ui.theme.HapiExtendedColors
 import app.hapi.companion.ui.theme.hapi
+import app.hapi.protocol.markdown.FileLinkPolicy
+import app.hapi.protocol.markdown.FileLinkTarget
 import app.hapi.protocol.markdown.HrefDecision
 import app.hapi.protocol.markdown.HrefPolicy
 import app.hapi.protocol.markdown.MarkdownTransforms
@@ -88,9 +90,12 @@ import org.commonmark.node.ThematicBreak
 /**
  * Receives clicks on markdown links. The chat screen provides a confirm-aware
  * URL opener (`rememberChatLinkHandler`); file taps route to the session file
- * viewer once it exists (M4).
+ * viewer.
  */
 interface MarkdownLinkHandler {
+    /** Resolve file destinations using the host's session workspace when available. */
+    fun resolveFileLink(href: String): FileLinkTarget? = FileLinkPolicy.resolve(href)
+
     /** A workspace file citation (`src/a.ts`, `hub/src/x.ts:345`, ...). */
     fun onFilePath(path: String, line: Int?)
 
@@ -576,6 +581,16 @@ private fun AnnotatedString.Builder.appendInlineCode(literal: String, ctx: Inlin
 private fun AnnotatedString.Builder.appendLink(node: Link, ctx: InlineContext) {
     val destination = node.destination.orEmpty()
 
+    // Resolve files before the autolink heuristic: a file link may use its path as its label.
+    val file = ctx.handler.resolveFileLink(destination)
+    if (file != null) {
+        val listener = LinkInteractionListener { ctx.handler.onFilePath(file.path, file.line) }
+        withLink(LinkAnnotation.Clickable("hapi-file:" + file.path, ctx.linkStyles, listener)) {
+            appendInlineChildren(node, ctx, insideLink = true)
+        }
+        return
+    }
+
     // Autolinked URLs (text == destination) may have swallowed trailing CJK
     // punctuation; split it back out as plain text (web parity).
     val onlyChild = node.firstChild
@@ -584,16 +599,6 @@ private fun AnnotatedString.Builder.appendLink(node: Link, ctx: InlineContext) {
         val split = MarkdownTransforms.stripCjkAutolinkArtifacts(destination)
         appendClassifiedLink(split.url, ctx) { append(split.url) }
         if (split.trailing.isNotEmpty()) append(split.trailing)
-        return
-    }
-
-    // Explicit [label](relative/file.ext) → session file viewer.
-    val filePath = MarkdownTransforms.rewriteExplicitLinkTarget(destination)
-    if (filePath != null) {
-        val listener = LinkInteractionListener { ctx.handler.onFilePath(filePath, null) }
-        withLink(LinkAnnotation.Clickable("hapi-file:$filePath", ctx.linkStyles, listener)) {
-            appendInlineChildren(node, ctx, insideLink = true)
-        }
         return
     }
 

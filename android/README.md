@@ -69,6 +69,12 @@ differences, pairing and features currently available through the web.
   composer. Browse/Search open the complete file; Markdown defaults to Preview
   with a Source toggle, including modified files and `.markdown`/`.mdown`/`.mkd`
   extensions. Changes entries open their staged/unstaged diff.
+- **Chat file links:** Explicit Markdown file citations open the native preview. Relative
+  paths and absolute paths inside the session's working directory are supported,
+  including percent-encoded spaces/Unicode and a path used as the link label.
+  Home-relative paths resolve when the home directory can be inferred from the
+  session path. Line suffixes are preserved as the viewer's line hint. Absolute
+  paths outside the current session workspace remain inert.
 - **Session configuration:** Codex collaboration/Fast modes, Copilot agent modes
   and capability-dependent permission/model/effort controls. Dynamic catalogs
   cover Pi (provider-qualified), OpenCode, Cursor, Grok, Copilot, Agy and Hermes;

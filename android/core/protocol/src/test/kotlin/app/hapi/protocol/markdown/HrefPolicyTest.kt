@@ -49,7 +49,7 @@ class HrefPolicyTest {
     fun `scheme-less targets are inert on native`() {
         // No SPA router here: app routes, anchors, and protocol-relative URLs
         // from the web policy all fail closed (workspace files are handled by
-        // rewriteExplicitLinkTarget before classify is consulted).
+        // FileLinkPolicy.resolve before classify is consulted).
         assertEquals(HrefDecision.Blocked, HrefPolicy.classify(""))
         assertEquals(HrefDecision.Blocked, HrefPolicy.classify("/settings"))
         assertEquals(HrefDecision.Blocked, HrefPolicy.classify("docs/a.md"))

@@ -22,7 +22,7 @@ import org.commonmark.parser.Parser
  *                                (micromark `disable: codeIndented` == commonmark-java
  *                                `enabledBlockTypes` without `IndentedCodeBlock`)
  * - [stripCjkAutolinkArtifacts] <- `web/src/lib/remark-strip-cjk-autolink.ts`
- * - [detectFilePathLinks] / [matchWholeFilePath] / [rewriteExplicitLinkTarget]
+ * - [detectFilePathLinks] / [matchWholeFilePath]
  *                             <- `web/src/lib/remark-file-path-links.ts`
  *
  * Pure JVM on purpose: everything here is unit-tested in `:core:protocol`.
@@ -390,35 +390,5 @@ object MarkdownTransforms {
             column = column,
             display = trimmed,
         )
-    }
-
-    /**
-     * Explicit `[label](target)` rewrite (web `rewriteFileLinkNode`): returns the
-     * workspace file path a markdown link should open, or null when the target
-     * must keep its URL semantics. `#fragment` / `?query` / `:line` suffixes are
-     * stripped; POSIX-absolute and scheme-bearing (colon) targets are rejected;
-     * Windows-absolute targets require an allowlisted extension.
-     */
-    fun rewriteExplicitLinkTarget(url: String): String? {
-        if (url.isEmpty()) return null
-
-        val hashIdx = url.indexOf('#')
-        val queryIdx = url.indexOf('?')
-        val cut = when {
-            hashIdx >= 0 && queryIdx >= 0 -> minOf(hashIdx, queryIdx)
-            hashIdx >= 0 -> hashIdx
-            queryIdx >= 0 -> queryIdx
-            else -> -1
-        }
-        val withoutMeta = if (cut >= 0) url.substring(0, cut) else url
-        val target = stripLineSuffix(withoutMeta)
-
-        if (isWindowsAbsolutePath(target)) {
-            return if (hasKnownFileExtension(target)) target else null
-        }
-        if (target.startsWith("/") && !target.startsWith("//")) return null
-        if (target.contains(':')) return null
-        if (!shouldLinkPath(target)) return null
-        return target
     }
 }

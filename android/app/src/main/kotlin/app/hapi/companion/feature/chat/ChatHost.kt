@@ -144,7 +144,9 @@ internal fun ChatHost(
             LocalChatInteractions provides interactions,
             LocalChatMedia provides media,
             LocalMarkdownRenderCache provides viewModel.markdownCache,
-            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = openFile, onOpenSession = viewModel::openReference),
+            LocalMarkdownLinkHandler provides rememberChatLinkHandler(
+                onOpenFile = openFile, onOpenSession = viewModel::openReference, workspacePath = state.basePath,
+            ),
         ) {
             Box(Modifier.fillMaxSize()) {
                 NavHost(navigation, startDestination = "thread") {

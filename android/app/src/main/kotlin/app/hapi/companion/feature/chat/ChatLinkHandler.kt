@@ -17,6 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.core.net.toUri
 import app.hapi.companion.R
 import app.hapi.companion.ui.markdown.MarkdownLinkHandler
+import app.hapi.protocol.markdown.FileLinkPolicy
 import app.hapi.protocol.markdown.HrefDecision
 
 /**
@@ -31,6 +32,7 @@ import app.hapi.protocol.markdown.HrefDecision
 fun rememberChatLinkHandler(
     onOpenFile: (path: String, line: Int?) -> Unit = { _, _ -> },
     onOpenSession: (String) -> Unit = {},
+    workspacePath: String? = null,
 ): MarkdownLinkHandler {
     val context = LocalContext.current
     var confirmUrl by remember { mutableStateOf<String?>(null) }
@@ -54,8 +56,10 @@ fun rememberChatLinkHandler(
         )
     }
 
-    return remember(context, onOpenFile, onOpenSession) {
+    return remember(context, onOpenFile, onOpenSession, workspacePath) {
         object : MarkdownLinkHandler {
+            override fun resolveFileLink(href: String) = FileLinkPolicy.resolve(href, workspacePath)
+
             override fun onFilePath(path: String, line: Int?) = onOpenFile(path, line)
 
             override fun onUrl(url: String, decision: HrefDecision) {

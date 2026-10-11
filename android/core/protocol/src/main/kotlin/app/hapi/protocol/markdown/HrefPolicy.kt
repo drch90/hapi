@@ -17,7 +17,7 @@ import java.io.ByteArrayOutputStream
  * Scheme-less targets differ from the web on purpose: the SPA-route branch
  * (`/settings`, `#anchor`, protocol-relative `//host`) has no native equivalent,
  * so those fall to Blocked. Workspace-file targets are the caller's job:
- * run [MarkdownTransforms.rewriteExplicitLinkTarget] BEFORE [classify]; anything
+ * run [FileLinkPolicy.resolve] BEFORE [classify]; anything
  * that survives to classify() without a scheme is inert.
  */
 sealed interface HrefDecision {
@@ -78,7 +78,7 @@ object HrefPolicy {
 
     /**
      * Classify a markdown link destination. Callers handle workspace file paths
-     * first (see [MarkdownTransforms.rewriteExplicitLinkTarget]); everything else
+     * first (see [FileLinkPolicy.resolve]); everything else
      * flows through here.
      */
     fun classify(url: String): HrefDecision {

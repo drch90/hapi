@@ -396,7 +396,9 @@ internal fun ChatScreen(
         CompositionLocalProvider(
             LocalMarkdownRenderCache provides viewModel.markdownCache,
             LocalChatMedia provides media,
-            LocalMarkdownLinkHandler provides rememberChatLinkHandler(onOpenFile = onOpenFile, onOpenSession = viewModel::openReference),
+            LocalMarkdownLinkHandler provides rememberChatLinkHandler(
+                onOpenFile = onOpenFile, onOpenSession = viewModel::openReference, workspacePath = state.basePath,
+            ),
             LocalChatInteractions provides interactions,
         ) {
             Column(
