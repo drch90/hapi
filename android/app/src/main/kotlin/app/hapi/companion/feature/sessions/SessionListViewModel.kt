@@ -248,6 +248,7 @@ class SessionListViewModel(
     fun toggleSection(id: String) {
         if (filters.value.query.isNotBlank()) return
         val section = uiState.value.sections.firstOrNull { it.id == id } ?: return
+        if (section.rows.isEmpty()) return
         collapseOverrides.update { it + (id to !section.collapsed) }
     }
     fun markUnread(id: String) {

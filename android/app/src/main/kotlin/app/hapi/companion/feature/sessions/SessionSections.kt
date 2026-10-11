@@ -18,6 +18,13 @@ private data class WorkspaceKey(val machineId: String?, val directory: String?) 
     val id: String get() = "workspace:${machineId?.length ?: -1}:${machineId.orEmpty()}:${directory.orEmpty()}"
 }
 
+private fun workspaceKey(row: SessionRowUi): WorkspaceKey {
+    val metadata = row.summary.metadata
+    val directory = metadata?.worktree?.basePath?.takeIf { it.isNotEmpty() }
+        ?: metadata?.path?.takeIf { it.isNotEmpty() }
+    return WorkspaceKey(metadata?.machineId, directory)
+}
+
 /** Global pins, running/attention, connected, then workspace history (web sidebar order). */
 internal fun buildSessionSections(
     rows: List<SessionRowUi>,
@@ -40,11 +47,7 @@ internal fun buildSessionSections(
                 }
             }
             else -> {
-                val metadata = summary.metadata
-                val directory = metadata?.worktree?.basePath?.takeIf { it.isNotEmpty() }
-                    ?: metadata?.path?.takeIf { it.isNotEmpty() }
-                val key = WorkspaceKey(metadata?.machineId, directory)
-                workspaces.getOrPut(key) { mutableListOf() }.add(row)
+                workspaces.getOrPut(workspaceKey(row)) { mutableListOf() }.add(row)
             }
         }
     }
@@ -71,6 +74,26 @@ internal fun buildSessionSections(
                 .thenByDescending { section -> section.rows.maxOf { it.summary.updatedAt } }
                 .thenBy { it.id },
         ))
+        // Keep creation available when every row in a workspace floated to the
+        // running/active sections. Only the header is repeated, never its rows.
+        val actionOnlyGroups = (inProgress + active).groupBy(::workspaceKey)
+            .filterKeys { it.directory != null && it !in workspaces }
+        addAll(actionOnlyGroups.entries.sortedWith(
+            compareBy<Map.Entry<WorkspaceKey, List<SessionRowUi>>> { (_, group) ->
+                if (searching) group.minOf { searchOrder.getValue(it.id) } else 0
+            }.thenByDescending { (_, group) -> group.maxOf { it.summary.updatedAt } }
+                .thenBy { it.key.id },
+        ).map { (key, group) ->
+            SessionSectionUi(
+                id = key.id,
+                kind = SessionSectionKind.WORKSPACE,
+                rows = emptyList(),
+                title = SessionListViewModel.projectLabel(group.first().summary),
+                directory = key.directory,
+                machineId = key.machineId,
+                machine = group.first().machine,
+            )
+        })
     }
     return sections.map { section ->
         val defaultCollapsed = section.kind == SessionSectionKind.WORKSPACE &&

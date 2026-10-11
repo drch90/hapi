@@ -22,6 +22,44 @@ class SessionGroupsTest {
     @get:Rule val compose = createComposeRule()
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun creationRemainsAvailableWhenTheLastWorkspaceSessionStartsRunning() {
+        val running = mutableStateOf(false)
+        val searching = mutableStateOf(false)
+        val collapsed = mutableStateOf<Map<String, Boolean>>(emptyMap())
+        val created = mutableListOf<Pair<String?, String>>()
+        compose.setContent {
+            HapiTheme {
+                val row = SessionRowUi(
+                    SessionSummary("task", active = running.value, thinking = running.value,
+                        metadata = SessionSummaryMetadata(path = "/repo/app", machineId = "machine-a")),
+                    title = "Task", subtitle = null, meta = null, flavor = null, unread = false,
+                )
+                val sections = buildSessionSections(listOf(row), collapsed.value, searching.value)
+                SessionRows(sections, searching.value,
+                    onToggleSection = { id -> collapsed.value += id to !sections.single { it.id == id }.collapsed },
+                    onOpen = {}, onLongPress = {},
+                    onNewInDirectory = { machine, directory -> created += machine to directory })
+            }
+        }
+        compose.onNodeWithText("repo/app").performClick()
+        compose.onNodeWithText("Task").assertIsDisplayed()
+        compose.runOnIdle { running.value = true }
+        compose.onNodeWithText("repo/app").assertIsDisplayed().assertHasNoClickAction()
+        compose.onAllNodesWithText("Task").assertCountEquals(1)
+        val create = compose.onNodeWithContentDescription(context.getString(R.string.sessions_new_in_workspace, "repo/app"))
+        create.assertIsEnabled().performClick()
+        compose.runOnIdle { searching.value = true }
+        create.assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(List(2) { "machine-a" to "/repo/app" }, created)
+            running.value = false
+            searching.value = false
+        }
+        compose.onNodeWithText("Task").assertIsDisplayed()
+        compose.onAllNodesWithText("Task").assertCountEquals(1)
+        compose.onNodeWithText("repo/app").assertHasClickAction()
+    }
+
     @Test fun progressAndActivePrecedeCollapsibleWorkspaceHistory() {
         fun row(id: String, active: Boolean = false, thinking: Boolean = false) = SessionRowUi(
             SessionSummary(id, active, thinking, metadata = SessionSummaryMetadata(path = "/repo/app")),

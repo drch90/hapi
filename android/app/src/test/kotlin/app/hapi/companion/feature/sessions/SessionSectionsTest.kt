@@ -89,4 +89,37 @@ class SessionSectionsTest {
         assertTrue(buildSessionSections(rows, overrides, searching = true).none { it.collapsed })
         assertEquals(changed, buildSessionSections(rows, overrides))
     }
+
+    @Test fun liveWorkspacesKeepCreationTargetsWithoutDuplicatingTheirSessions() {
+        val rows = listOf(
+            row("ready", active = true, updatedAt = 20),
+            row("working", active = true, path = "/tmp/feature", updatedAt = 30) {
+                it.copy(thinking = true, metadata = it.metadata!!.copy(
+                    worktree = WorktreeMetadata(basePath = "/repo/app", worktreePath = "/tmp/feature",
+                        name = "feature", branch = "feature"),
+                ))
+            },
+            row("other-machine", active = true, machineId = "machine-b", updatedAt = 10),
+            row("global", active = true, path = "/repo/global") { it.copy(globalPinned = true) },
+            row("unknown", active = true) { it.copy(metadata = null) },
+        )
+        val sections = buildSessionSections(rows)
+        val workspaces = sections.filter { it.kind == SessionSectionKind.WORKSPACE }
+        assertEquals(listOf("machine-a" to "/repo/app", "machine-b" to "/repo/app"),
+            workspaces.map { it.machineId to it.directory })
+        assertTrue(workspaces.all { it.rows.isEmpty() })
+        assertEquals(rows.map { it.id }.sorted(), sections.flatMap { it.rows }.map { it.id }.sorted())
+        assertEquals(sections.size, sections.map { it.id }.toSet().size)
+    }
+
+    @Test fun liveWorkspaceHeadersFollowSearchRelevanceOrLatestActivity() {
+        val rows = listOf(
+            row("best-match", active = true, path = "/repo/first", updatedAt = 1),
+            row("recent", active = true, path = "/repo/second", updatedAt = 20) { it.copy(thinking = true) },
+        )
+        fun directories(searching: Boolean) = buildSessionSections(rows, searching = searching)
+            .filter { it.kind == SessionSectionKind.WORKSPACE }.map { it.directory }
+        assertEquals(listOf("/repo/second", "/repo/first"), directories(false))
+        assertEquals(listOf("/repo/first", "/repo/second"), directories(true))
+    }
 }

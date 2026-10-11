@@ -170,6 +170,29 @@ private fun TestScope.buildViewModel(
 // ------------------------------------------------------------------ tests --
 
 class SessionListViewModelTest {
+    @Test fun liveWorkspaceHeaderPreservesExpansionWhenItsLastSessionReturnsToHistory() = runTest {
+        val (vm, sessions) = buildViewModel()
+        sessions.set(summary("a", name = "Task"))
+        val workspace = vm.uiState.first { it.sections.size == 1 }.sections.single()
+        vm.toggleSection(workspace.id)
+        vm.uiState.first { !it.sections.single().collapsed }
+        sessions.set(summary("a", name = "Task", active = true).copy(thinking = true))
+        val live = vm.uiState.first { it.sections.size == 2 }
+        assertEquals(workspace.id, live.sections.last().id)
+        assertTrue(live.sections.last().rows.isEmpty())
+        vm.toggleSection(workspace.id)
+        vm.setFilters(SessionFilters(query = "Task"))
+        val searched = vm.uiState.first { it.filters.query == "Task" }
+        assertEquals(workspace.directory, searched.sections.last().directory)
+        assertTrue(searched.sections.last().rows.isEmpty())
+        sessions.set(summary("a", name = "Task"))
+        vm.uiState.first { it.sections.size == 1 }
+        vm.clearFilters()
+        val restored = vm.uiState.first { !it.filters.applied }
+        assertFalse(restored.sections.single().collapsed)
+        assertEquals(listOf("a"), restored.sections.single().rows.map { it.id })
+    }
+
     @Test fun `workspace collapse survives refresh search and returning from chat`() = runTest {
         val (vm, sessions) = buildViewModel()
         sessions.set(summary("a", name = "Task", updatedAt = 10))

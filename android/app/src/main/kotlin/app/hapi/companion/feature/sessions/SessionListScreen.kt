@@ -321,25 +321,30 @@ private fun SectionHeader(
         SessionSectionKind.WORKSPACE -> section.title ?: stringResource(R.string.sessions_section_other_workspace)
     }
     val expansion = stringResource(if (section.collapsed) R.string.sessions_group_collapsed else R.string.sessions_group_expanded)
+    val hasRows = section.rows.isNotEmpty()
+    val headerInteraction = if (hasRows) Modifier
+        .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
+        .semantics { stateDescription = expansion } else Modifier
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             modifier = Modifier.weight(1f)
-                .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
-                .semantics { stateDescription = expansion }
+                .then(headerInteraction)
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(
-                if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
+            if (hasRows) {
+                Icon(
+                    if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 section.machine?.let { machine ->
@@ -348,8 +353,10 @@ private fun SectionHeader(
                 }
             }
             if (section.rows.any { it.unread }) UnreadDot()
-            Text(section.rows.size.toString(), style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (hasRows) {
+                Text(section.rows.size.toString(), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         val directory = section.directory?.takeIf { section.kind == SessionSectionKind.WORKSPACE && it.isNotEmpty() }
         if (directory != null && onNewInDirectory != null) {

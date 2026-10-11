@@ -31,7 +31,8 @@ differences, pairing and features currently available through the web.
   temporarily expands matching groups without changing those choices. The
   **+** beside a workspace header opens New session with that workspace's
   machine and base directory preselected, including while the group is
-  collapsed or search is active.
+  collapsed or search is active. Workspaces with only active/in-progress
+  conversations retain their creation header while their rows appear above.
 - **Composer:** `@` finds other conversations with content and inserts atomic
   reference chips; drafts/copy/paste serialize full Markdown session links. Chat
   links open native conversations. Optimistic send, queue/steer, attachments,
