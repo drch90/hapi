@@ -143,9 +143,11 @@ trimmed tools/messages/groups. A missing group keeps its previous membership;
 epoch invalidation clears selections and returns to the thread. Group browsing
 starts at the latest tool once, then uses explicit navigation to latest. Tool and
 agent-process pages render nested call bodies directly in one lazy timeline;
-no second expansion is needed. No hidden history request originates in the
-browser. `TranscriptProjection` omits member payloads and ordinary tool results
-from the transcript, retaining summary identity through output-only updates
+no second expansion is needed. Initial/explicit latest-tool navigation settles
+as its input/result bodies finish measuring. Touching the list, scrolling, or
+receiving another tool snapshot cancels that settling intent. No hidden history
+request originates in the browser. `TranscriptProjection` omits member payloads
+and ordinary tool results from the transcript, retaining summary identity through output-only updates
 without changing protocol groups or detail data. Inline plan proposals retain
 results so diagnostics and Source stay live.
 

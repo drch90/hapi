@@ -88,9 +88,21 @@ class InspectionReadersTest {
                 }
             }
         } catch (timeout: ComposeTimeoutException) {
-            val failure = AssertionError("Timed out waiting for displayed node <$tag>")
+            val failure = AssertionError("Timed out waiting for displayed node <$tag>\n" +
+                compose.onRoot(useUnmergedTree = true).printToString().take(8_000))
             failure.initCause(timeout)
             throw failure
+        }
+    }
+
+    private fun waitForInput(path: String) {
+        compose.waitUntil(10_000) {
+            try {
+                compose.onNodeWithText(path, substring = true).assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
         }
     }
 
@@ -100,6 +112,7 @@ class InspectionReadersTest {
             HapiTheme { ToolGroupBrowser(inspected.value, "/repo", { _, _ -> }, {}, {}) }
         }
         waitForDisplayed("inspection-tool-tool-200")
+        waitForInput("/repo/file-200.kt")
         compose.onNodeWithTag("inspection-tools").performScrollToIndex(30)
         waitForDisplayed("inspection-tool-tool-31")
         compose.runOnIdle { inspected.value = Inspected(group(201), false) }
@@ -113,6 +126,7 @@ class InspectionReadersTest {
         waitForDisplayed("inspection-latest-tool")
         compose.onNodeWithTag("inspection-latest-tool").performClick()
         waitForDisplayed("inspection-tool-tool-201")
+        waitForInput("/repo/file-201.kt")
         compose.runOnIdle { inspected.value = inspected.value.copy(stale = true) }
         waitForDisplayed("inspection-notice")
     }

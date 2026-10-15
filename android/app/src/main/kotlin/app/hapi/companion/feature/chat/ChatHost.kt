@@ -1,6 +1,8 @@
 package app.hapi.companion.feature.chat
 
 import android.net.Uri
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,6 +19,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -36,7 +40,9 @@ import app.hapi.companion.ui.markdown.LocalMarkdownRenderCache
 import app.hapi.companion.ui.theme.HapiTypography
 import app.hapi.companion.ui.theme.ReadingColumn
 import app.hapi.protocol.chat.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Session lifetime surrounds native navigation. The holder stops the pipe on exit,
  * not when a recycled row, a covered destination, or an activity leaves composition. */
@@ -241,14 +247,51 @@ internal fun ToolGroupBrowser(
     val group = inspected.value
     val rows = inspectionTimeline(group.tools)
     val list = rememberLazyListState(initialFirstVisibleItemIndex = rows.lastIndex.coerceAtLeast(0))
-    val scope = rememberCoroutineScope()
     val interactions = LocalChatInteractions.current.takeUnless { inspected.stale }
-    LaunchedEffect(Unit) {
-        if (rows.isNotEmpty()) list.scrollToItem(rows.lastIndex)
+    val currentGroup by rememberUpdatedState(group)
+    val currentRows by rememberUpdatedState(rows)
+    var revealFor by remember { mutableStateOf<ToolGroupBlock?>(group) }
+    var geometryRevision by remember { mutableIntStateOf(0) }
+    var revealing by remember { mutableStateOf(false) }
+    val heights = remember { mutableMapOf<String, Int>() }
+    LaunchedEffect(group) {
+        // Only settle the content that was present at navigation time. A live
+        // update must preserve reading position, rather than follow new tools.
+        if (revealFor !== group) revealFor = null
+        heights.keys.retainAll(rows.mapTo(mutableSetOf()) { it.id })
+    }
+    LaunchedEffect(list) {
+        snapshotFlow { list.isScrollInProgress to revealing }.collect { (scrolling, ownScroll) ->
+            if (scrolling && !ownScroll) revealFor = null
+        }
+    }
+    LaunchedEffect(list) {
+        snapshotFlow {
+            val request = revealFor
+            if (request == null || request !== currentGroup || list.isScrollInProgress) null
+            else Triple(request, geometryRevision, list.layoutInfo.totalItemsCount)
+        }.collect { report ->
+            if (report == null) return@collect
+            // Expanded inputs/results finish measuring asynchronously. Keep
+            // this explicit destination visible as those bodies replace their
+            // loading placeholders, without scrolling from a layout callback.
+            withContext(Dispatchers.Main) {
+                if (revealFor !== report.first || currentGroup !== report.first || list.isScrollInProgress) return@withContext
+                val current = currentRows
+                val info = list.layoutInfo
+                if (current.isEmpty() || info.totalItemsCount != current.size) return@withContext
+                val target = info.visibleItemsInfo.firstOrNull { it.key == current.last().id }
+                val viewportHeight = info.viewportEndOffset - info.viewportStartOffset
+                if (target != null && target.offset >= info.viewportStartOffset &&
+                    target.offset + minOf(target.size, viewportHeight) <= info.viewportEndOffset) return@withContext
+                revealing = true
+                try { list.scrollToItem(current.lastIndex) } finally { revealing = false }
+            }
+        }
     }
     InspectionScaffold(stringResource(R.string.chat_group_tools_many, group.summary.totalTools), back, close,
         actions = {
-            IconButton(onClick = { scope.launch { if (rows.isNotEmpty()) list.scrollToItem(rows.lastIndex) } },
+            IconButton(onClick = { revealFor = currentGroup; geometryRevision++ },
                 modifier = Modifier.testTag("inspection-latest-tool")) {
                 Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.chat_latest_tool))
             }
@@ -259,12 +302,20 @@ internal fun ToolGroupBrowser(
                 InspectionNotice(inspected.stale, group.needsOlderHistory)
                 LazyColumn(
                     state = list,
-                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("inspection-tools"),
+                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("inspection-tools").pointerInput(list) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            revealFor = null
+                        }
+                    },
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(rows, key = { it.id }, contentType = { it.kind }) { block ->
                         CompositionLocalProvider(LocalChatInteractions provides interactions) {
-                            InspectionBlock(block, basePath, openFile, Modifier.testTag("inspection-tool-${block.id}"))
+                            InspectionBlock(block, basePath, openFile, Modifier.testTag("inspection-tool-${block.id}").onSizeChanged {
+                                if (list.isScrollInProgress && !revealing) revealFor = null
+                                if (heights.put(block.id, it.height) != it.height) geometryRevision++
+                            })
                         }
                     }
                 }
