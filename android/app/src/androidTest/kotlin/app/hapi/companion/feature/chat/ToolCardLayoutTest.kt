@@ -64,7 +64,7 @@ class ToolCardLayoutTest {
         compose.onNodeWithTag("tool-timing-summary-command", useUnmergedTree = true).assertTextEquals("Done · 1:04")
         compose.onNodeWithTag("tool-timing-details-command").assertDoesNotExist()
         val compact = compose.onNodeWithTag("compact-card").getUnclippedBoundsInRoot()
-        assertTrue("A collapsed command should occupy at most two compact lines", compact.height <= 80.dp)
+        assertTrue("A collapsed command should occupy at most two compact lines", compact.bottom - compact.top <= 80.dp)
         compose.runOnIdle { fontScale.value = 2f }
         val card = compose.onNodeWithTag("compact-card").getUnclippedBoundsInRoot()
         val status = compose.onNodeWithTag("tool-timing-summary-command", useUnmergedTree = true).getUnclippedBoundsInRoot()
@@ -103,7 +103,8 @@ class ToolCardLayoutTest {
             }
         }
         compose.onNodeWithTag("tool-timing-summary-agent", useUnmergedTree = true).assertTextEquals("Done · 1:04")
-        assertTrue(compose.onNodeWithTag("agent-card").getUnclippedBoundsInRoot().height <= 80.dp)
+        val compact = compose.onNodeWithTag("agent-card").getUnclippedBoundsInRoot()
+        assertTrue(compact.bottom - compact.top <= 80.dp)
         compose.onNodeWithText("Nested stdout before update").assertDoesNotExist()
         compose.onNodeWithTag("agent-card").performTouchInput { click(center) }
         // Notice, parent agent, nested agent, then the nested command. All
