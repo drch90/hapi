@@ -1106,6 +1106,13 @@ class ChatViewModel(
                 }
                 performSend(
                     onAccepted = { target ->
+                        // Sending is explicit intent to resume the live thread,
+                        // including after file/tool inspection or history
+                        // trimming. Use the coordinator so an absent tail is
+                        // refreshed before issuing the saved-state jump token.
+                        if (target == sessionId) uiScope.launch {
+                            if (transcriptVisible) jumpToLatest()
+                        }
                         if (pendingSchedule != null && scheduleState.value == pendingSchedule) {
                             setSchedule(null)
                             scheduleSaveJob?.join()

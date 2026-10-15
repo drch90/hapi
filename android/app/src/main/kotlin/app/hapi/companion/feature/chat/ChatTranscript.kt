@@ -1,6 +1,7 @@
 package app.hapi.companion.feature.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,10 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
@@ -43,7 +48,6 @@ import app.hapi.companion.R
 import app.hapi.data.store.ChatHistoryPagingState
 import app.hapi.protocol.chat.VisibleChatBlock
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
@@ -96,6 +100,28 @@ internal fun ChatTranscript(
     val reportViewport by rememberUpdatedState(onViewport)
     val reportLayout by rememberUpdatedState(onLayout)
     val reportLocationMissing by rememberUpdatedState(onLocationMissing)
+    val scrollIntent = remember(listState, readingState) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // Pause before an upward-history gesture can race a live
+                // window trim. Pulling toward the live edge keeps its intent,
+                // even if new output arrives before the finger is released.
+                if (source == NestedScrollSource.UserInput && available.y > 0 && listState.canScrollBackward) {
+                    readingState.followsTail = false
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                // Includes flings and focus-driven relocation in answer forms.
+                if (consumed.y > 0) readingState.followsTail = false
+                else if ((consumed.y < 0 || available.y < 0) && !listState.canScrollForward) {
+                    readingState.followsTail = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
 
     LaunchedEffect(location) {
         val id = location?.first ?: return@LaunchedEffect
@@ -125,6 +151,7 @@ internal fun ChatTranscript(
         var readerWasScrolling = false
         var previousIDs = emptySet<String>()
         var previousVisibleHeight = 0
+        var previousReport: LayoutReport? = null
         var lastReadingDemand: Pair<Boolean, Boolean>? = null
         snapshotFlow {
             val info = listState.layoutInfo
@@ -152,20 +179,38 @@ internal fun ChatTranscript(
                 nearTop = !listState.canScrollBackward || distance <= height,
                 atBottom = !listState.canScrollForward,
                 scrolling = listState.isScrollInProgress,
+                dragging = isDragged,
+                scrollingBackward = listState.lastScrolledBackward,
+                firstIndex = listState.firstVisibleItemIndex,
+                firstOffset = listState.firstVisibleItemScrollOffset,
                 ownScroll = correctingTail,
                 following = followsTail,
                 ids = currentIDs,
                 visibleHeight = info.visibleItemsInfo.sumOf { it.size },
             )
         }.collect { report ->
-            if (!report.matches) return@collect
-            if (report.scrolling && !report.ownScroll) {
+            val previous = previousReport
+            previousReport = report
+            if (report.ownScroll) {
+                readerWasScrolling = false
+            } else if (report.scrolling || report.dragging) {
                 readerWasScrolling = true
-                followsTail = false
-            } else if (!report.scrolling && readerWasScrolling) {
-                followsTail = report.atBottom
+                // Accessibility/programmatic reader scrolls can bypass nested
+                // scroll. Require actual backward movement, not a stale last-
+                // direction flag or a layout change while holding the finger.
+                if (report.scrollingBackward && report.matches && previous?.matches == true &&
+                    report.ids == previous.ids && report.version == previous.version &&
+                    (report.firstIndex < previous.firstIndex ||
+                        (report.firstIndex == previous.firstIndex && report.firstOffset < previous.firstOffset))) {
+                    followsTail = false
+                }
+            } else if (report.matches && readerWasScrolling) {
+                if (report.atBottom) followsTail = true
                 readerWasScrolling = false
             }
+            // Gesture bookkeeping cannot depend on a settled message layout:
+            // a streaming replacement may span the whole start/stop interval.
+            if (!report.matches) return@collect
             val demand = followsTail to (report.short || (!followsTail && report.nearTop))
             if (demand != lastReadingDemand) {
                 lastReadingDemand = demand
@@ -182,15 +227,6 @@ internal fun ChatTranscript(
         }
     }
 
-    LaunchedEffect(isDragged) {
-        if (isDragged) {
-            followsTail = false
-            // Publish history mode at gesture start, before a live update can
-            // use tail-mode trimming while the reader is moving away.
-            // snapshotFlow observes followsTail and reports actual demand;
-            // do not cancel a valid near-top load on every new finger-down.
-        }
-    }
     LaunchedEffect(state.sessionId, jumpToken) {
         if (jumpToken > 0 && jumpToken != consumedJumpToken) followsTail = true
         // Tokens are scoped to the ViewModel; it may restart at zero after
@@ -201,35 +237,59 @@ internal fun ChatTranscript(
     // layoutInfo changes on every scroll frame. Reading it in composition
     // invalidates the ENTIRE transcript, even while browsing old messages.
     // Observe tail geometry in an effect instead; drop geometry observation
-    // altogether while not following. collectLatest cancels our correction
-    // immediately when a reader takes over the scroll.
+    // altogether while not following. Geometry updates must not cancel an
+    // already queued correction during a stream; recheck reader ownership
+    // and the current keys immediately before applying it instead.
     LaunchedEffect(state.sessionId, listState) {
         snapshotFlow {
-            if (!followsTail || isDragged) null else {
+            if (!followsTail || isDragged || listState.isScrollInProgress) null else {
                 val info = listState.layoutInfo
                 val lastIndex = currentRows.size
+                val last = info.visibleItemsInfo.lastOrNull()?.takeIf {
+                    it.index == lastIndex && it.key == currentRows.lastOrNull()?.id
+                }
                 TailLayout(
                     lastIndex = lastIndex,
                     itemCount = info.totalItemsCount,
+                    matches = info.visibleItemsInfo.all { item ->
+                        if (item.index == 0) item.key == HISTORY_KEY
+                        else currentRows.getOrNull(item.index - 1)?.id == item.key
+                    },
                     viewportHeight = info.viewportSize.height,
-                    lastHeight = info.visibleItemsInfo.lastOrNull()?.takeIf { it.index == lastIndex }?.size,
+                    lastHeight = last?.size,
+                    lastOffset = last?.offset,
+                    viewportEnd = info.viewportEndOffset,
                     canScrollForward = listState.canScrollForward,
                     messagesVersion = currentState.messagesVersion,
                     jumpToken = currentJumpToken,
                 )
             }
-        }.collectLatest { tail ->
-            if (tail == null || tail.lastIndex == 0 || tail.viewportHeight == 0 ||
-                tail.itemCount != tail.lastIndex + 1 || (!tail.canScrollForward && tail.lastHeight != null)) return@collectLatest
+        }.collect { tail ->
+            if (tail == null || !tail.matches || tail.lastIndex == 0 || tail.viewportHeight == 0 ||
+                tail.itemCount != tail.lastIndex + 1 || (!tail.canScrollForward && tail.lastHeight != null)) return@collect
             // Geometry notifications can arrive during placement. Queue the
             // correction outside that pass; scrollToItem forces remeasurement.
             withContext(Dispatchers.Main) {
-                if (!followsTail || isDragged) return@withContext
+                if (!followsTail || isDragged || listState.isScrollInProgress) return@withContext
+                val current = currentRows
+                val info = listState.layoutInfo
+                if (current.isEmpty() || info.totalItemsCount != current.size + 1 ||
+                    info.visibleItemsInfo.any { item ->
+                        if (item.index == 0) item.key != HISTORY_KEY
+                        else current.getOrNull(item.index - 1)?.id != item.key
+                    }) return@withContext
+                val last = info.visibleItemsInfo.lastOrNull()?.takeIf { it.index == current.size }
+                if (!listState.canScrollForward && last != null) return@withContext
                 correctingTail = true
                 try {
-                    // Includes the fixed history header. The large offset
-                    // clamps to the end even for a multi-screen last message.
-                    listState.scrollToItem(tail.lastIndex, Int.MAX_VALUE)
+                    if (last == null) {
+                        // First materialize the last row; its actual measured
+                        // bottom will be aligned on the next geometry report.
+                        listState.scrollToItem(current.size)
+                    } else {
+                        val remaining = last.offset + last.size + info.afterContentPadding - info.viewportEndOffset
+                        if (remaining > 0) listState.scrollBy(remaining.toFloat())
+                    }
                 } finally {
                     correctingTail = false
                 }
@@ -250,7 +310,7 @@ internal fun ChatTranscript(
         Box(Modifier.fillMaxSize()) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().testTag("chat-transcript").layout { measurable, constraints ->
+                modifier = Modifier.fillMaxSize().nestedScroll(scrollIntent).testTag("chat-transcript").layout { measurable, constraints ->
                     // A same-key page can still resize rows. Reading the version
                     // here forces a measure/placement pass even for a hidden-only
                     // page; acknowledging composition alone is too early.
@@ -305,6 +365,10 @@ private data class LayoutReport(
     val nearTop: Boolean,
     val atBottom: Boolean,
     val scrolling: Boolean,
+    val dragging: Boolean,
+    val scrollingBackward: Boolean,
+    val firstIndex: Int,
+    val firstOffset: Int,
     val ownScroll: Boolean,
     val following: Boolean,
     val ids: Set<String>,
@@ -314,8 +378,11 @@ private data class LayoutReport(
 private data class TailLayout(
     val lastIndex: Int,
     val itemCount: Int,
+    val matches: Boolean,
     val viewportHeight: Int,
     val lastHeight: Int?,
+    val lastOffset: Int?,
+    val viewportEnd: Int,
     val canScrollForward: Boolean,
     val messagesVersion: Long,
     val jumpToken: Long,

@@ -126,6 +126,11 @@ observed through `snapshotFlow` only while following; corrections are queued
 outside measurement/placement to avoid reentrant layout. Row heights use
 size-change callbacks, not callbacks on every global-position change, and
 unchanged viewport demand is not repeatedly sent to the coordinator.
+Dragging toward the live edge retains following intent while updates arrive;
+moving toward history pauses it. Corrections wait for the gesture/fling to finish
+and align the measured last-row bottom, including tall approval footers. An
+accepted send in the visible conversation requests latest through the history
+coordinator, refreshing a trimmed tail before issuing the jump token.
 `ChatHost` hoists the list and reading state above a nested Navigation Compose
 host. Groups remain one summary row; tool/group/message/process inspectors use
 full-screen native destinations. Opening inspection disables tail following,
@@ -136,11 +141,13 @@ host/holder, including while an inspector covers the thread and across rotation.
 `ChatInspectionState` resolves live IDs and retains only selected snapshots for
 trimmed tools/messages/groups. A missing group keeps its previous membership;
 epoch invalidation clears selections and returns to the thread. Group browsing
-starts at the latest tool once, then uses explicit navigation to latest. No
-hidden history request originates in the browser. `TranscriptProjection` omits
-member payloads and ordinary tool results from the transcript, retaining summary
-identity through output-only updates without changing protocol groups or detail
-data. Inline plan proposals retain results so diagnostics and Source stay live.
+starts at the latest tool once, then uses explicit navigation to latest. Tool and
+agent-process pages render nested call bodies directly in one lazy timeline;
+no second expansion is needed. No hidden history request originates in the
+browser. `TranscriptProjection` omits member payloads and ordinary tool results
+from the transcript, retaining summary identity through output-only updates
+without changing protocol groups or detail data. Inline plan proposals retain
+results so diagnostics and Source stay live.
 
 The history coordinator uses a dedicated queued Main scope sharing the
 holder's lifetime, independent of its Default worker scope. Lifecycle,

@@ -86,6 +86,19 @@ internal class ChatInspectionState {
 internal fun opensToolProcess(block: ToolCallBlock): Boolean =
     block.children.isNotEmpty() || isSubagentToolName(block.tool.name) || block.tool.name == "CodexAgent"
 
+/** One lazy timeline: opening a process exposes its nested calls without more folds. */
+internal fun inspectionTimeline(blocks: List<ChatBlock>): List<ChatBlock> = buildList {
+    val remaining = ArrayDeque<ChatBlock>()
+    remaining.addAll(blocks)
+    while (remaining.isNotEmpty()) {
+        val block = remaining.removeFirst()
+        add(block)
+        if (block is ToolCallBlock) {
+            for (child in block.children.asReversed()) remaining.addFirst(child)
+        }
+    }
+}
+
 internal interface ChatInspectionActions {
     fun openTool(id: String)
     fun openGroup(id: String)

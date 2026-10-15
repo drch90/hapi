@@ -672,6 +672,53 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `a send completing inside an inspector does not move the hidden transcript`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val api = object : FakeMessagesApi() {
+            override suspend fun sendMessage(sessionId: String, message: SendMessageRequest) {
+                gate.await()
+            }
+        }
+        val h = Harness(this, ScriptedTransport(listOf("ok")), api)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        runCurrent()
+        val token = h.viewModel.jumpToken.value
+        h.viewModel.setComposerText("Continue")
+        h.viewModel.sendMessage()
+        runCurrent()
+        h.viewModel.beginInspection()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(token, h.viewModel.jumpToken.value)
+        assertEquals(MessageViewMode.History, h.messageWindows.open(SESSION_ID).state.value.viewMode)
+        h.viewModel.stop()
+    }
+
+    @Test
+    fun `a failed send preserves the history position and does not request latest`() = runTest {
+        val api = object : FakeMessagesApi() {
+            override suspend fun sendMessage(sessionId: String, message: SendMessageRequest) {
+                error("offline")
+            }
+        }
+        val h = Harness(this, ScriptedTransport(listOf("ok")), api)
+        h.viewModel.start()
+        h.viewModel.uiState.first { !it.isInitialLoading }
+        runCurrent()
+        h.viewModel.readingViewportChanged(false, false)
+        val token = h.viewModel.jumpToken.value
+        val queries = api.queries.value.size
+        h.viewModel.setComposerText("Continue")
+        h.viewModel.sendMessage()
+        runCurrent()
+        assertEquals(token, h.viewModel.jumpToken.value)
+        assertEquals(queries, api.queries.value.size)
+        assertEquals(MessageViewMode.History, h.messageWindows.open(SESSION_ID).state.value.viewMode)
+        h.viewModel.stop()
+    }
+
+    @Test
     fun `blocks flow from the window store through the pipeline`() = runTest {
         val harness = Harness(this, ScriptedTransport(listOf("ok")))
         harness.api.tailResponses += MessagesResponse(

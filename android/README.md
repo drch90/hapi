@@ -426,13 +426,14 @@ and are cleaned when another download starts. No changes to the Hub API are requ
 
 ## Tool previews
 
-Ordinary chat tools stay compact summaries. Tap a tool or tool group to open a native
-Navigation Compose page; Back returns one level, Close returns to the chat.
-Groups start at their latest tool, retain their position when returning from
-details, and never follow streaming updates automatically. The **Latest tool**
-toolbar action scrolls explicitly. Agent processes have their own page with
-lazy child rows. Approvals remain in the conversation or a live process page;
-ordinary tool detail pages are read-only.
+Ordinary chat tools show a compact status and elapsed time. Start/end timestamps
+and total time appear with the expanded content. Tap a tool or tool group to open
+a native Navigation Compose page; Back returns one level, Close returns to the chat.
+Tool groups and agent processes display their call bodies directly, including
+nested calls, in one lazy list. Groups start at their latest tool and never follow
+streaming updates automatically. The **Latest tool** toolbar action scrolls
+explicitly. Approval controls are available in the conversation and live detail
+pages; retained stale snapshots remain read-only.
 
 Plan proposals (`ExitPlanMode` / `exit_plan_mode`) start fully expanded in the
 conversation, rendering the complete `input.plan` Markdown before approval

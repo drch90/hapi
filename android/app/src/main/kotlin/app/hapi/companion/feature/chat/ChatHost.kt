@@ -169,7 +169,7 @@ internal fun ChatHost(
                                 "group" -> {
                                     val group = remember(id, revision) { viewModel.inspection.group(id) }
                                     if (group == null) MissingInspection(back, close)
-                                    else ToolGroupBrowser(group, state.basePath, actions::openTool, back, close)
+                                    else ToolGroupBrowser(group, state.basePath, openFile, back, close)
                                 }
                                 "message" -> {
                                     val message = remember(id, revision) { viewModel.inspection.message(id) }
@@ -235,19 +235,20 @@ private fun MissingInspection(back: () -> Unit, close: () -> Unit) {
 
 @Composable
 internal fun ToolGroupBrowser(
-    inspected: Inspected<ToolGroupBlock>, basePath: String?, select: (String) -> Unit,
+    inspected: Inspected<ToolGroupBlock>, basePath: String?, openFile: (String, Int?) -> Unit,
     back: () -> Unit, close: () -> Unit,
 ) {
     val group = inspected.value
-    val list = rememberLazyListState(initialFirstVisibleItemIndex = (group.tools.size - 1).coerceAtLeast(0))
+    val rows = inspectionTimeline(group.tools)
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = rows.lastIndex.coerceAtLeast(0))
     val scope = rememberCoroutineScope()
-    val resources = LocalContext.current.resources
+    val interactions = LocalChatInteractions.current.takeUnless { inspected.stale }
     LaunchedEffect(Unit) {
-        if (group.tools.isNotEmpty()) list.scrollToItem(group.tools.lastIndex)
+        if (rows.isNotEmpty()) list.scrollToItem(rows.lastIndex)
     }
     InspectionScaffold(stringResource(R.string.chat_group_tools_many, group.summary.totalTools), back, close,
         actions = {
-            IconButton(onClick = { scope.launch { if (group.tools.isNotEmpty()) list.scrollToItem(group.tools.lastIndex) } },
+            IconButton(onClick = { scope.launch { if (rows.isNotEmpty()) list.scrollToItem(rows.lastIndex) } },
                 modifier = Modifier.testTag("inspection-latest-tool")) {
                 Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.chat_latest_tool))
             }
@@ -259,17 +260,12 @@ internal fun ToolGroupBrowser(
                 LazyColumn(
                     state = list,
                     modifier = Modifier.weight(1f).fillMaxWidth().testTag("inspection-tools"),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(group.tools, key = { it.id }, contentType = { "tool-summary" }) { block ->
-                        val presentation = remember(block.tool.name, block.tool.input, block.tool.description, basePath, resources) {
-                            toolSummaryPresentation(block.tool, basePath, resources)
+                    items(rows, key = { it.id }, contentType = { it.kind }) { block ->
+                        CompositionLocalProvider(LocalChatInteractions provides interactions) {
+                            InspectionBlock(block, basePath, openFile, Modifier.testTag("inspection-tool-${block.id}"))
                         }
-                        ToolSummaryRow(
-                            presentation, block.tool.state,
-                            modifier = Modifier.testTag("inspection-tool-${block.id}"),
-                            details = { ToolTimingView(block.tool) },
-                            onClick = { select(block.id) },
-                        )
                     }
                 }
             }
@@ -308,41 +304,32 @@ internal fun MessageReader(text: String, stale: Boolean, back: () -> Unit, close
 }
 
 @Composable
-private fun ToolReader(
+internal fun ToolReader(
     inspected: Inspected<ToolCallBlock>, process: Boolean, basePath: String?,
     openFile: (String, Int?) -> Unit, back: () -> Unit, close: () -> Unit,
 ) {
     val block = inspected.value
-    val tool = block.tool
-    val path = getInputStringAny(tool.input, listOf("file_path", "path", "notebook_path"))
-    val name = toolPresentationName(tool.name)
-    val interactions = LocalChatInteractions.current
+    val rows = if (process) inspectionTimeline(listOf(block)) else listOf(block)
+    val interactions = LocalChatInteractions.current.takeUnless { inspected.stale }
     InspectionScaffold(stringResource(if (process) R.string.chat_agent_process else R.string.chat_tool_details), back, close) { padding ->
         ReadingColumn(Modifier.padding(padding)) {
             LazyColumn(Modifier.fillMaxSize().testTag("inspection-detail"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 item("notice") { InspectionNotice(inspected.stale) }
-                item("body") {
-                    Column {
-                        Text(tool.name, style = MaterialTheme.typography.titleMedium)
-                        ToolStatusIndicator(tool.state)
-                        ToolTimingView(tool)
-                        if (path != null && name in setOf("Edit", "MultiEdit", "Write", "NotebookEdit")) {
-                            TextButton(onClick = { openFile(path, null) }) { Text(stringResource(R.string.chat_view_current_file)) }
-                        }
-                        ToolCallBody(tool, basePath)
-                        val permission = tool.permission
-                        if (process && !inspected.stale && permission?.status == "pending" && interactions != null) {
-                            PendingPermissionFooter(tool, permission.id, interactions.flavor,
-                                interactions.permissionOverrides[permission.id], interactions.resolvePermission)
-                        }
-                    }
-                }
-                if (process) items(block.children, key = { it.id }, contentType = { it.kind }) { child ->
-                    CompositionLocalProvider(LocalChatInteractions provides interactions.takeUnless { inspected.stale }) {
-                        ChatBlockCard(child, basePath)
+                items(rows, key = { it.id }, contentType = { it.kind }) { row ->
+                    CompositionLocalProvider(LocalChatInteractions provides interactions) {
+                        InspectionBlock(row, basePath, openFile, Modifier.testTag("inspection-tool-${row.id}"))
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun InspectionBlock(block: ChatBlock, basePath: String?, openFile: (String, Int?) -> Unit, modifier: Modifier) {
+    if (block is ToolCallBlock) {
+        ToolCallBlockView(block, basePath, modifier, expandedDetails = true, onOpenFile = openFile)
+    } else {
+        ChatBlockCard(block, basePath, modifier)
     }
 }

@@ -42,10 +42,18 @@ import kotlinx.serialization.json.JsonPrimitive
 /**
  * Conversation summary; ordinary payloads and sidechains live in screen-owned
  * destinations. Plan proposals start expanded inline before approval controls
- * and retain explicit folding across input updates.
+ * and retain explicit folding across input updates. Inspectors set
+ * [expandedDetails] to expose each call without another expansion control.
  */
 @Composable
-fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifier = Modifier, processSteps: Int? = null) {
+fun ToolCallBlockView(
+    block: ToolCallBlock,
+    basePath: String?,
+    modifier: Modifier = Modifier,
+    processSteps: Int? = null,
+    expandedDetails: Boolean = false,
+    onOpenFile: ((String, Int?) -> Unit)? = null,
+) {
     val tool = block.tool
     val resources = LocalContext.current.resources
     val presentation = remember(tool.name, tool.input, tool.description, basePath, resources) {
@@ -53,6 +61,12 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
     }
     val inspection = app.hapi.companion.feature.chat.LocalChatInspection.current
     val steps = processSteps ?: block.children.size.takeIf { app.hapi.companion.feature.chat.opensToolProcess(block) }
+    val summary = if (steps != null && !expandedDetails) {
+        presentation.copy(subtitle = listOfNotNull(
+            presentation.subtitle,
+            stringResource(if (steps == 1) R.string.chat_process_steps_one else R.string.chat_process_steps_many, steps),
+        ).joinToString(" · "))
+    } else presentation
     val planProposal = isPlanProposalTool(tool.name)
     // An output-first placeholder can acquire its real tool name later. Open a
     // newly recognized plan, but retain explicit folding across input updates.
@@ -65,14 +79,22 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
     ) {
         Column {
             ToolSummaryRow(
-                presentation, tool.state, expanded = expanded.takeIf { planProposal },
-                details = { app.hapi.companion.feature.chat.ToolTimingView(tool) },
-                onClick = {
+                summary, tool.state, expanded = expanded.takeIf { planProposal && !expandedDetails },
+                status = { app.hapi.companion.feature.chat.ToolTimingView(tool, compact = true) },
+                onClick = if (expandedDetails) null else ({
                     if (planProposal) expanded = !expanded else inspection?.openTool(block.id)
-                },
+                }),
             )
 
-            if (planProposal && expanded) {
+            if (expandedDetails || (planProposal && expanded)) {
+                app.hapi.companion.feature.chat.ToolTimingView(tool)
+                val path = app.hapi.protocol.chat.getInputStringAny(tool.input, listOf("file_path", "path", "notebook_path"))
+                if (expandedDetails && onOpenFile != null && path != null &&
+                    toolPresentationName(tool.name) in setOf("Edit", "MultiEdit", "Write", "NotebookEdit")) {
+                    androidx.compose.material3.TextButton(onClick = { onOpenFile(path, null) }) {
+                        Text(stringResource(R.string.chat_view_current_file))
+                    }
+                }
                 ToolCallBody(
                     tool = tool,
                     basePath = basePath,
@@ -96,8 +118,10 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             )
-                            androidx.compose.material3.TextButton(onClick = { inspection?.openTool(block.id) }) {
-                                Text(stringResource(R.string.chat_view_full_input))
+                            if (!expandedDetails) {
+                                androidx.compose.material3.TextButton(onClick = { inspection?.openTool(block.id) }) {
+                                    Text(stringResource(R.string.chat_view_full_input))
+                                }
                             }
                             PendingPermissionFooter(
                                 tool = tool, requestId = permission.id, flavor = interactions.flavor,
@@ -107,11 +131,6 @@ fun ToolCallBlockView(block: ToolCallBlock, basePath: String?, modifier: Modifie
                         }
                     }
                 } else PermissionStateRow(permission)
-            }
-            if (steps != null) {
-                androidx.compose.material3.TextButton(onClick = { inspection?.openTool(block.id) }) {
-                    Text(stringResource(R.string.chat_view_process, steps))
-                }
             }
         }
     }
@@ -123,12 +142,12 @@ internal fun ToolSummaryRow(
     state: String,
     expanded: Boolean? = null,
     modifier: Modifier = Modifier,
-    details: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
+    status: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)?,
 ) {
     val stacked = androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f
     Column(
-        modifier.fillMaxWidth().clickable(onClick = onClick)
+        modifier.fillMaxWidth().then(if (onClick == null) Modifier else Modifier.clickable(onClick = onClick))
             .then(Modifier.heightIn(min = 48.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -137,21 +156,20 @@ internal fun ToolSummaryRow(
                 Text(presentation.title, style = MaterialTheme.typography.bodyMedium, maxLines = if (stacked) 2 else 1, overflow = TextOverflow.Ellipsis)
                 presentation.subtitle?.let {
                     Text(it, style = app.hapi.companion.ui.theme.HapiTypography.caption,
-                        color = MaterialTheme.hapi.hint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        color = MaterialTheme.hapi.hint, maxLines = if (stacked) 2 else 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            if (!stacked) SummaryStatus(state, expanded)
+            if (!stacked) SummaryStatus(state, expanded, onClick != null, status)
         }
-        if (stacked) SummaryStatus(state, expanded)
-        details?.invoke()
+        if (stacked) SummaryStatus(state, expanded, onClick != null, status)
     }
 }
 
 @Composable
-private fun SummaryStatus(state: String, expanded: Boolean?) {
+private fun SummaryStatus(state: String, expanded: Boolean?, navigable: Boolean, status: (@Composable () -> Unit)?) {
     Row(Modifier.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (state != ToolState.COMPLETED) ToolStatusIndicator(state)
-        Text(if (expanded == true) "⌄" else "›", modifier = Modifier.padding(start = 8.dp), color = MaterialTheme.hapi.hint)
+        if (status != null) status() else ToolStatusIndicator(state)
+        if (navigable) Text(if (expanded == true) "⌄" else "›", modifier = Modifier.padding(start = 8.dp), color = MaterialTheme.hapi.hint)
     }
 }
 

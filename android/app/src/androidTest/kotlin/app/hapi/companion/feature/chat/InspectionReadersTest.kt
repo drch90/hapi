@@ -94,25 +94,21 @@ class InspectionReadersTest {
         }
     }
 
-    @Test fun toolBrowserStartsAtLatestButDoesNotFollowUpdatesWhileReading() {
+    @Test fun toolBrowserOpensBodiesAtLatestAndPreservesReadingDuringUpdates() {
         val inspected = mutableStateOf(Inspected(group(200), false))
-        var selected: String? = null
         compose.setContent {
-            HapiTheme { ToolGroupBrowser(inspected.value, "/repo", { selected = it }, {}, {}) }
+            HapiTheme { ToolGroupBrowser(inspected.value, "/repo", { _, _ -> }, {}, {}) }
         }
         waitForDisplayed("inspection-tool-tool-200")
         compose.onNodeWithTag("inspection-tools").performScrollToIndex(30)
         waitForDisplayed("inspection-tool-tool-31")
         compose.runOnIdle { inspected.value = Inspected(group(201), false) }
         waitForDisplayed("inspection-tool-tool-31")
-        // The timing footer belongs to the same click target as the summary.
-        // Touch the footer explicitly: a summary-only click handler misses it.
-        compose.onNodeWithTag("inspection-tool-tool-31").assertHasClickAction()
-            .performTouchInput { click(bottomCenter - androidx.compose.ui.geometry.Offset(0f, 4f)) }
-        compose.runOnIdle { assertEquals("tool-31", selected) }
-        compose.runOnIdle { selected = null }
-        compose.onNodeWithTag("inspection-tool-tool-31").performClick()
-        compose.runOnIdle { assertEquals("tool-31", selected) }
+        // The first navigation already exposes timing and input. No second
+        // card expansion or detail navigation is needed for this command.
+        compose.onNodeWithTag("tool-timing-details-tool-31").assertIsDisplayed()
+        compose.onNodeWithText("/repo/file-31.kt", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("inspection-tool-tool-31").assert(hasClickAction().not())
         compose.onNodeWithTag("inspection-tool-tool-201").assertDoesNotExist()
         waitForDisplayed("inspection-latest-tool")
         compose.onNodeWithTag("inspection-latest-tool").performClick()
