@@ -603,6 +603,75 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun `sending after inspection returns to the live tail and cancels older paging`() = runTest {
+        val h = Harness(this, ScriptedTransport(listOf("ok")))
+        h.api.tailResponses += MessagesResponse(
+            listOf(agentMessage("latest", 10, 10_000, "latest")),
+            page("latest", true, nextBeforeAt = 10_000, nextBeforeSeq = 10),
+        )
+        h.viewModel.start()
+        h.viewModel.uiState.first { it.blocks.isNotEmpty() }
+        runCurrent()
+        h.viewModel.beginInspection()
+        h.viewModel.setTranscriptVisible(true)
+        val store = h.messageWindows.open(SESSION_ID)
+        runCurrent()
+        assertEquals(MessageViewMode.History, store.state.value.viewMode)
+        h.api.beforeGate = CompletableDeferred()
+        h.viewModel.readingViewportChanged(false, true)
+        runCurrent()
+        assertEquals(ChatHistoryPagingState.Phase.Loading, h.viewModel.historyPaging.value.phase)
+        val token = h.viewModel.jumpToken.value
+
+        h.viewModel.setComposerText("Continue with this file")
+        h.viewModel.sendMessage()
+        runCurrent()
+
+        assertEquals(token + 1, h.viewModel.jumpToken.value)
+        assertEquals(MessageViewMode.Tail, store.state.value.viewMode)
+        assertEquals(ChatHistoryPagingState.Phase.Idle, h.viewModel.historyPaging.value.phase)
+        h.viewModel.stop()
+    }
+
+    @Test
+    fun `sending from a trimmed history window refreshes latest before the jump`() = runTest {
+        val h = Harness(this, ScriptedTransport(listOf("ok")))
+        h.api.tailResponses += MessagesResponse(
+            listOf(agentMessage("old", 1, 1_000, "old")),
+            page("latest", false, nextBeforeAt = 1_000, nextBeforeSeq = 1),
+        )
+        h.viewModel.start()
+        h.viewModel.uiState.first { it.blocks.isNotEmpty() }
+        runCurrent()
+        h.viewModel.readingViewportChanged(false, false)
+        val store = h.messageWindows.open(SESSION_ID)
+        val seed = h.messageWindows.open("seed")
+        seed.seedFrom(store)
+        store.seedFrom(seed)
+        runCurrent()
+        assertTrue(store.state.value.requiresLatestReset)
+        h.api.tailResponses += MessagesResponse(
+            listOf(agentMessage("new", 20, 20_000, "new")),
+            page("latest", false, nextBeforeAt = 20_000, nextBeforeSeq = 20),
+        )
+        val gate = CompletableDeferred<Unit>()
+        h.api.tailGate = gate
+        val token = h.viewModel.jumpToken.value
+        h.viewModel.setComposerText("Continue")
+        h.viewModel.sendMessage()
+        runCurrent()
+        assertTrue(h.viewModel.jumpingLatest.value)
+        assertEquals(token, h.viewModel.jumpToken.value)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(token + 1, h.viewModel.jumpToken.value)
+        assertEquals(MessageViewMode.Tail, store.state.value.viewMode)
+        assertTrue(!store.state.value.requiresLatestReset)
+        assertTrue(store.state.value.messages.any { it.id == "new" })
+        h.viewModel.stop()
+    }
+
+    @Test
     fun `blocks flow from the window store through the pipeline`() = runTest {
         val harness = Harness(this, ScriptedTransport(listOf("ok")))
         harness.api.tailResponses += MessagesResponse(

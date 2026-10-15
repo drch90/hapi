@@ -15,6 +15,7 @@ import androidx.compose.runtime.InternalComposeTracingApi
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -22,6 +23,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.hapi.companion.ui.theme.HapiTheme
@@ -32,6 +34,8 @@ import app.hapi.companion.ui.markdown.MarkdownRenderCache
 import app.hapi.companion.ui.markdown.LocalMarkdownRenderCache
 import app.hapi.protocol.chat.VisibleChatBlock
 import app.hapi.protocol.chat.ToolGroupBlock
+import app.hapi.protocol.chat.ToolPermission
+import app.hapi.protocol.chat.ToolState
 import app.hapi.protocol.chat.ToolGroupingOptions
 import app.hapi.protocol.chat.buildVisibleChatBlocks
 import app.hapi.companion.feature.chat.blocks.previewToolCall
@@ -101,7 +105,11 @@ class ChatTranscriptTest {
         loadFailed = false, warning = null, tailRevision = 0,
     )
 
-    private fun mount(blocks: List<VisibleChatBlock>, restoration: StateRestorationTester? = null) {
+    private fun mount(
+        blocks: List<VisibleChatBlock>,
+        restoration: StateRestorationTester? = null,
+        interactions: ChatInteractions? = null,
+    ) {
         markdown.prepare(blocks.mapNotNull { (it as? AgentTextBlock)?.text ?: (it as? AgentReasoningBlock)?.text }.toSet())
         state.value = makeState(blocks)
         val content: @Composable () -> Unit = {
@@ -110,7 +118,10 @@ class ChatTranscriptTest {
                 list = rememberLazyListState()
                 scope = rememberCoroutineScope()
                 HapiTheme {
-                    CompositionLocalProvider(LocalMarkdownRenderCache provides markdown) {
+                    CompositionLocalProvider(
+                        LocalMarkdownRenderCache provides markdown,
+                        LocalChatInteractions provides interactions,
+                    ) {
                         ChatTranscript(
                             state = state.value, paging = ChatHistoryPagingState(), jumpToken = jumpToken.value,
                             jumpingLatest = false, onViewport = { follows, needs ->
@@ -140,6 +151,70 @@ class ChatTranscriptTest {
         list.layoutInfo.visibleItemsInfo.first { it.key != "chat-history-control" }.let { it.key to it.offset }
     }
 
+    private fun assertFollowing() {
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue("Live tail must remain visible", !list.canScrollForward) }
+        assertEquals(true, viewportReports.get().last())
+    }
+
+    @Test fun pullingTowardLatestWhileMessagesArriveKeepsFollowingAfterRelease() {
+        mount(rows(0..39))
+        assertFollowing()
+        // The reader is pulling toward the end, not away into history. Hold
+        // that gesture while a streaming update moves the end below the fold.
+        compose.onNodeWithTag("chat-transcript").performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -120f), delayMillis = 100)
+        }
+        compose.runOnIdle {
+            assertTrue(list.isScrollInProgress)
+            state.value = state.value.copy(blocks = state.value.blocks + rows(40..45), messagesVersion = 1)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("chat-transcript").performTouchInput {
+            advanceEventTime(200)
+            up()
+        }
+        assertFollowing()
+        compose.runOnIdle { state.value = state.value.copy(blocks = state.value.blocks + rows(46..47), messagesVersion = 2) }
+        assertFollowing()
+    }
+
+    @Test fun approvalFooterFollowsDetailOnlyUpdatesLongPlansAndKeyboardResize() {
+        val initial = "# Plan\n\nA short proposal."
+        markdown.prepare(setOf(initial))
+        val tool = previewToolCall("approval", "ExitPlanMode", state = ToolState.RUNNING, input = mapOf("plan" to initial))
+        mount(rows(0..19) + tool, interactions = ChatInteractions("claude", emptyMap(), { _, _ -> }, {}))
+        assertFollowing()
+        val pending = previewToolCall("approval", "ExitPlanMode", state = ToolState.RUNNING,
+            input = mapOf("plan" to initial),
+            permission = ToolPermission(id = "request", status = "pending", presence = setOf("id", "status")))
+        // Permissions come from agentState; no new message/version is needed.
+        compose.runOnIdle { state.value = state.value.copy(blocks = rows(0..19) + pending) }
+
+        fun assertApprovalVisible() {
+            assertFollowing()
+            val viewport = compose.onNodeWithTag("chat-transcript").getUnclippedBoundsInRoot()
+            for (label in listOf("Allow", "Deny")) {
+                val button = compose.onNodeWithText(label).assertIsDisplayed().getUnclippedBoundsInRoot()
+                assertTrue("$label must be fully inside the viewport", button.top >= viewport.top && button.bottom <= viewport.bottom)
+            }
+        }
+        assertApprovalVisible()
+        val longPlan = "# Plan\n\n" + "Review this implementation step before approving.\n\n".repeat(50)
+        markdown.prepare(setOf(longPlan))
+        compose.runOnIdle {
+            val grown = previewToolCall("approval", "ExitPlanMode", state = ToolState.RUNNING,
+                input = mapOf("plan" to longPlan), permission = pending.tool.permission)
+            state.value = state.value.copy(blocks = rows(0..19) + grown, messagesVersion = 1)
+        }
+        assertApprovalVisible()
+        compose.runOnIdle { viewportHeight.value = 280.dp }
+        assertApprovalVisible()
+        compose.runOnIdle { viewportHeight.value = null }
+        assertApprovalVisible()
+    }
+
     @Test fun planUpdatesAndRecyclingPreserveTheReadingAnchor() {
         fun plan(text: String) = previewToolCall("proposal", "ExitPlanMode", input = mapOf("plan" to text))
         val initial = "# Visible proposal\n\nRead the plan without tapping a tool."
@@ -164,11 +239,6 @@ class ChatTranscriptTest {
 
     @Test fun tailStillFollowsTallRowGrowthAppendsAndViewportResize() {
         mount(rows(0..39))
-        fun assertFollowing() {
-            compose.waitForIdle()
-            compose.runOnIdle { assertTrue("Live tail must remain visible", !list.canScrollForward) }
-            assertEquals(true, viewportReports.get().last())
-        }
         assertFollowing()
         compose.runOnIdle {
             val last = state.value.blocks.last() as AgentTextBlock
