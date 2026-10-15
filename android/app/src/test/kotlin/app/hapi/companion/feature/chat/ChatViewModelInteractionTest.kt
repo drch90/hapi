@@ -785,7 +785,7 @@ class ChatViewModelInteractionTest {
 
     @Test
     fun `send while thinking settles to queued and steer intent rides the wire`() = runTest {
-        val harness = InteractionHarness(this, detail(thinking = true))
+        val harness = InteractionHarness(this, detail(thinking = true, agentState = AgentState(steeringActive = true)))
         harness.viewModel.start()
 
         harness.viewModel.setComposerText("steer this")
@@ -1191,7 +1191,7 @@ class ChatViewModelInteractionTest {
 
     @Test
     fun `steer posts and an invoked answer reconciles a missed consume`() = runTest {
-        val harness = InteractionHarness(this, detail(thinking = true))
+        val harness = InteractionHarness(this, detail(thinking = true, agentState = AgentState(steeringActive = true)))
         harness.viewModel.start()
         val window = harness.window()
         window.ingestSseMessages(
@@ -1210,6 +1210,107 @@ class ChatViewModelInteractionTest {
         }.messages.single { it.localId == "l-2" }
         assertNotNull(row)
         assertEquals(listOf("srv-2"), harness.api.steerCalls.value)
+    }
+
+    @Test
+    fun `Claude composer and queued steer follow runtime readiness while Stop remains available`() = runTest {
+        val ready = detail(thinking = true, agentState = AgentState(steeringActive = true))
+        val harness = InteractionHarness(this, ready)
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "guidance").asWindowMessage()))
+        harness.viewModel.queuedRows.first { it.singleOrNull()?.canSteer == true }
+        testScheduler.runCurrent()
+        assertTrue(harness.viewModel.composer.value.canSteer)
+
+        for (state in listOf(null, AgentState(), AgentState(steeringActive = false))) {
+            harness.sessionStore.setDetail(ready.copy(agentState = state))
+            testScheduler.runCurrent()
+            assertFalse(harness.viewModel.composer.value.canSteer)
+            assertTrue(harness.viewModel.composer.value.canStop)
+            assertFalse(harness.viewModel.queuedRows.value.single().canSteer)
+            assertTrue(harness.viewModel.queuedRows.value.single().canAct)
+            harness.sessionStore.setDetail(ready)
+            testScheduler.runCurrent()
+            assertTrue(harness.viewModel.composer.value.canSteer)
+            assertTrue(harness.viewModel.queuedRows.value.single().canSteer)
+        }
+
+        for (session in listOf(ready.copy(active = false), ready.copy(thinking = false))) {
+            harness.sessionStore.setDetail(session)
+            testScheduler.runCurrent()
+            assertFalse(harness.viewModel.composer.value.canSteer)
+            assertFalse(harness.viewModel.composer.value.canStop)
+            assertFalse(harness.viewModel.queuedRows.value.single().canSteer)
+        }
+    }
+
+    @Test
+    fun `unavailable Claude steer keeps draft and attachments and still permits ordinary queueing`() = runTest {
+        val ready = detail(thinking = true, agentState = AgentState(steeringActive = true))
+        val harness = InteractionHarness(this, ready)
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.viewModel.attachments.add(preparedShot())
+        harness.awaitAttachmentsReady()
+        harness.viewModel.setComposerText("keep this guidance")
+        harness.viewModel.composer.first { it.text == "keep this guidance" && it.canSteer }
+
+        // Do not let the button state catch up before invoking its callback.
+        harness.sessionStore.setDetail(ready.copy(agentState = AgentState(steeringActive = false)))
+        assertTrue(harness.viewModel.composer.value.canSteer)
+        harness.viewModel.sendMessage(steer = true)
+        testScheduler.runCurrent()
+        assertTrue(harness.api.sendCalls.value.isEmpty())
+        assertEquals("keep this guidance", harness.viewModel.composer.value.text)
+        assertEquals(ComposerAttachmentStatus.Ready, harness.viewModel.attachments.items.value.single().status)
+        assertFalse(harness.viewModel.composer.value.isSending)
+        assertTrue(harness.window().state.value.messages.isEmpty())
+
+        harness.viewModel.sendMessage()
+        val request = harness.api.sendCalls.first { it.isNotEmpty() }.single().second
+        assertEquals("queue", request.deliveryMode)
+        assertEquals("keep this guidance", request.text)
+        assertEquals("shot.jpg", request.attachments?.single()?.filename)
+    }
+
+    @Test
+    fun `queued Claude steer rechecks readiness before dispatch and can retry when ready`() = runTest {
+        val ready = detail(thinking = true, agentState = AgentState(steeringActive = true))
+        val harness = InteractionHarness(this, ready)
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "guidance").asWindowMessage()))
+        harness.viewModel.queuedRows.first { it.singleOrNull()?.canSteer == true }
+
+        harness.viewModel.steerQueuedMessage("server")
+        harness.sessionStore.setDetail(ready.copy(agentState = AgentState(steeringActive = false)))
+        testScheduler.runCurrent()
+        assertTrue(harness.api.steerCalls.value.isEmpty())
+        assertFalse(harness.viewModel.queuedRows.value.single().canSteer)
+        assertTrue(harness.viewModel.queuedRows.value.single().canAct)
+
+        harness.sessionStore.setDetail(ready)
+        harness.viewModel.steerQueuedMessage("server")
+        assertEquals(listOf("server"), harness.api.steerCalls.first { it.isNotEmpty() })
+    }
+
+    @Test
+    fun `Codex Pi and Cursor steer do not require the Claude readiness signal`() = runTest {
+        for (flavor in listOf("codex", "pi", "cursor")) {
+            val session = detail(flavor = flavor, thinking = true)
+            val harness = InteractionHarness(this, session)
+            harness.viewModel.start()
+            harness.viewModel.uiState.first { !it.isInitialLoading }
+            harness.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "guidance").asWindowMessage()))
+            harness.viewModel.queuedRows.first { it.singleOrNull()?.canSteer == true }
+            testScheduler.runCurrent()
+            assertTrue(harness.viewModel.composer.value.canSteer, flavor)
+            harness.sessionStore.setDetail(session.copy(agentState = AgentState(steeringActive = false)))
+            testScheduler.runCurrent()
+            assertTrue(harness.viewModel.composer.value.canSteer, flavor)
+            assertTrue(harness.viewModel.queuedRows.value.single().canSteer, flavor)
+        }
     }
 
     @Test

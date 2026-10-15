@@ -618,7 +618,7 @@ class ChatViewModel(
         ComposerUiState(
             text = text,
             isSending = sending,
-            canSteer = session.thinking && session.active && session.steeringAllowed,
+            canSteer = session.canSteer,
             canStop = session.thinking && session.active,
             focusRequest = focusRequest,
         )
@@ -630,7 +630,7 @@ class ChatViewModel(
         .filterNotNull()
         .flatMapLatest { store ->
             combine(store.state, queuedOpPending, sessionStateFlow()) { window, opPending, session ->
-                buildQueuedRows(window, opPending, session.thinking && session.steeringAllowed)
+                buildQueuedRows(window, opPending, session.canSteer)
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -1069,6 +1069,9 @@ class ChatViewModel(
      */
     fun sendMessage(steer: Boolean = false) {
         if (sendInFlight.value) return
+        // The runtime can withdraw readiness before the button recomposes.
+        // Keep the draft and attachments intact when that happens.
+        if (steer && !currentSessionState().canSteer) return
         val pendingSchedule = scheduleState.value
         val scheduledAt = pendingSchedule?.resolve(now())
         if (scheduledAt != null && !app.hapi.companion.feature.chat.composer.SendSchedule.valid(scheduledAt, now())) {
@@ -1491,10 +1494,11 @@ class ChatViewModel(
      * an `invoked` answer reconciles a missed consume.
      */
     fun steerQueuedMessage(messageId: String) {
-        if (currentFlavor() == "hermes" && currentDetail()?.agentState?.steeringActive != true) return
+        if (!currentSessionState().canSteer) return
         scope.launch {
             val store = awaitWindowStore()
             val row = store.state.value.messages.firstOrNull { it.id == messageId } ?: return@launch
+            if (!currentSessionState().canSteer) return@launch
             if (!canActOnQueuedRow(row) || row.isIndeterminate || row.wire.scheduledAt != null) return@launch
             if (!queuedOpPending.compareAndSet(expect = false, update = true)) return@launch
             try {
@@ -1542,7 +1546,7 @@ class ChatViewModel(
     private fun buildQueuedRows(
         window: MessageWindowState,
         opPending: Boolean,
-        thinking: Boolean,
+        canSteer: Boolean,
     ): List<QueuedRowUi> {
         val queued = window.messages.filter { it.isQueuedForInvocation && !it.queueDismissed }
         // Web `sortQueuedMessages`: immediate first (submission order), then
@@ -1562,7 +1566,7 @@ class ChatViewModel(
                 attachmentNames = preview.attachmentNames,
                 scheduledAt = row.wire.scheduledAt,
                 canAct = canAct,
-                canSteer = canAct && thinking && row.wire.scheduledAt == null
+                canSteer = canAct && canSteer && row.wire.scheduledAt == null
                     && !row.isIndeterminate,
                 indeterminate = row.isIndeterminate,
             )
@@ -2032,24 +2036,29 @@ class ChatViewModel(
         currentDetail()?.metadata?.flavor
             ?: sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.metadata?.flavor
 
-    private class SessionLiveState(val active: Boolean, val thinking: Boolean, val steeringAllowed: Boolean = true)
-
-    private fun currentSessionState(): SessionLiveState {
-        val detail = currentDetail()
-        if (detail != null) return SessionLiveState(detail.active, detail.thinking)
-        val summary = sessionStore.sessions.value.firstOrNull { it.id == sessionId }
-        return SessionLiveState(summary?.active ?: false, summary?.thinking ?: false)
+    private class SessionLiveState(val active: Boolean, val thinking: Boolean, steeringAllowed: Boolean) {
+        val canSteer: Boolean = active && thinking && steeringAllowed
     }
+
+    private fun currentSessionState(): SessionLiveState = sessionLiveState(
+        currentDetail(),
+        sessionStore.sessions.value.firstOrNull { it.id == sessionId },
+    )
 
     private fun sessionStateFlow() = combine(
         sessionStore.sessionDetail(sessionId),
         summaryFlow(),
-    ) { detail, summary ->
-        SessionLiveState(
+    ) { detail, summary -> sessionLiveState(detail, summary) }
+
+    private fun sessionLiveState(detail: Session?, summary: SessionSummary?): SessionLiveState {
+        val flavor = detail?.metadata?.flavor ?: summary?.metadata?.flavor
+        return SessionLiveState(
             active = detail?.active ?: summary?.active ?: false,
             thinking = detail?.thinking ?: summary?.thinking ?: false,
-            steeringAllowed = (detail?.metadata?.flavor ?: summary?.metadata?.flavor) != "hermes"
-                || detail?.agentState?.steeringActive == true,
+            steeringAllowed = when (flavor) {
+                "claude", "hermes" -> detail?.agentState?.steeringActive == true
+                else -> true
+            },
         )
     }
 
