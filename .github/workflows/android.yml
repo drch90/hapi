@@ -63,13 +63,17 @@ jobs:
 
                   report = Path('app/build/reports/lint-results-debug.xml')
                   if report.exists():
+                      findings = []
                       for issue in ET.parse(report).getroot().findall('issue'):
                           if issue.get('severity') not in ('Error', 'Fatal'):
                               continue
                           location = issue.find('location')
                           source = '' if location is None else f"{location.get('file', '')}:{location.get('line', '1')}\n"
                           detail = f"{issue.get('id', 'Lint')}: {issue.get('message', '')}"
-                          print('::error::' + escape(source + detail))
+                          findings.append(source + detail)
+                      # Actions limits error annotations per step; retain every lint finding.
+                      if findings:
+                          print('::error::' + escape('\n\n'.join(findings)))
                   PYTHON
             - name: Upload unit and lint reports
               if: always()
