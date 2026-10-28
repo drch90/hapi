@@ -49,12 +49,27 @@ jobs:
               run: |
                   python3 - <<'PYTHON'
                   from pathlib import Path
+                  import xml.etree.ElementTree as ET
+
+                  def escape(value):
+                      return value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+
                   for log in (Path('unit-tests.log'), Path('assemble-lint.log')):
                       if not log.exists():
                           continue
                       for line in log.read_text(errors='replace').splitlines():
                           if line.startswith('e: ') or ' FAILED' in line:
-                              print('::error::' + line.replace('%', '%25'))
+                              print('::error::' + escape(line))
+
+                  report = Path('app/build/reports/lint-results-debug.xml')
+                  if report.exists():
+                      for issue in ET.parse(report).getroot().findall('issue'):
+                          if issue.get('severity') not in ('Error', 'Fatal'):
+                              continue
+                          location = issue.find('location')
+                          source = '' if location is None else f"{location.get('file', '')}:{location.get('line', '1')}\n"
+                          detail = f"{issue.get('id', 'Lint')}: {issue.get('message', '')}"
+                          print('::error::' + escape(source + detail))
                   PYTHON
             - name: Upload unit and lint reports
               if: always()
