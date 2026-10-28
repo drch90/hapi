@@ -14,6 +14,7 @@ export async function runHermes(opts: {
     startedBy?: 'runner' | 'terminal'
     startingMode?: 'remote'
     existingSessionId?: string
+    reservedSessionId?: string
     resumeSessionId?: string
     workingDirectory?: string
     model?: string
@@ -24,7 +25,7 @@ export async function runHermes(opts: {
     const common = { flavor: 'hermes', startedBy, workingDirectory, reportStarted: false }
     const bootstrap = opts.existingSessionId
         ? await bootstrapExistingSession({ ...common, sessionId: opts.existingSessionId })
-        : await bootstrapSession({ ...common, agentState: { controlledByUser: false, startingMode: 'remote' } })
+        : await bootstrapSession({ ...common, reservedSessionId: opts.reservedSessionId, agentState: { controlledByUser: false, startingMode: 'remote' } })
     const { session, sessionInfo } = bootstrap
     setControlledByUser(session, 'remote')
     session.updateAgentState(current => ({

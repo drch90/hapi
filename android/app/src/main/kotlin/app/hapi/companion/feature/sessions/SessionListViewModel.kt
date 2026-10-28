@@ -4,11 +4,11 @@ import app.hapi.data.api.ApiError
 import app.hapi.data.store.LastSeenStore
 import app.hapi.data.store.MachineListStore
 import app.hapi.data.store.SessionListStore
-import app.hapi.protocol.session.SessionDiscovery
 import java.time.LocalDate
-import java.time.ZoneId
 import app.hapi.protocol.wire.Machine
 import app.hapi.protocol.wire.SessionSummary
+import app.hapi.protocol.wire.sortSessionSummaries
+import java.time.ZoneId
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,8 +81,20 @@ data class SessionListUiState(
     val filters: SessionFilters = SessionFilters(),
     val unreadCount: Int = 0,
     val sections: List<SessionSectionUi> = emptyList(),
+    /** Transient date-range lens (web `customStart`/`customEnd` `useState`); null = off, never persisted. */
+    val dateRange: SessionDateRange? = null,
+    /**
+     * Local epoch-days that carry any session activity — the picker's
+     * activity hint, derived before any list filtering (web
+     * `sessionActivityDates`, which keeps marking all days while a filter is
+     * active). Duplicate views and hidden empty stubs are excluded first.
+     */
+    val dateActivityEpochDays: Set<Long> = emptySet(),
+    /** Live search-box text; blank = no filtering/ranking. */
+    val searchQuery: String = "",
 ) {
     val hasMachineFilters: Boolean get() = machineFilters.size >= 2
+    val isSearching: Boolean get() = searchQuery.isNotBlank()
 }
 
 /**
@@ -105,13 +117,18 @@ class SessionListViewModel(
     private val scope: CoroutineScope,
     /** Last-seen baseline scope, e.g. the hub origin. */
     private val hubKey: String = "default",
+    /** Current clock zone; resolved for every date derivation, including after resume. */
+    private val zoneProvider: () -> ZoneId = ZoneId::systemDefault,
 ) {
     private val machineFilter = MutableStateFlow(lastSeenStore.state.value.machineFilter)
     private val filters = MutableStateFlow(SessionFilters(activeOnly = lastSeenStore.state.value.activeOnly))
     private val collapseOverrides = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    private val selectedSessionId = MutableStateFlow<String?>(null)
     private val isRefreshing = MutableStateFlow(false)
     private val isOffline = MutableStateFlow(false)
     private val hasRefreshedOnce = MutableStateFlow(false)
+
+    private val timeZone = MutableStateFlow(zoneProvider())
 
     private val _errors = MutableSharedFlow<SessionListError>(extraBufferCapacity = 8)
 
@@ -154,24 +171,27 @@ class SessionListViewModel(
     }
 
     val uiState: StateFlow<SessionListUiState> = combine(
-        sessionStore.sessions,
-        machineStore.machines,
-        lastSeenStore.state,
-        combine(machineFilter, filters, collapseOverrides) { machine, filters, collapsed -> Triple(machine, filters, collapsed) },
-        combine(isRefreshing, isOffline, hasRefreshedOnce) { refreshing, offline, loaded ->
-            Triple(refreshing, offline, loaded)
+        combine(sessionStore.sessions, machineStore.machines, lastSeenStore.state) { sessions, machines, lastSeen ->
+            Triple(sessions, machines, lastSeen.lastSeen)
         },
-    ) { sessions, machines, lastSeen, filter, (refreshing, offline, refreshedOnce) ->
+        combine(machineFilter, filters, collapseOverrides, selectedSessionId) { machine, options, collapsed, selected ->
+            FilterState(machine, options, collapsed, selected)
+        },
+        combine(isRefreshing, isOffline, hasRefreshedOnce, timeZone) { refreshing, offline, loaded, _ ->
+            ChromeState(refreshing, offline, loaded)
+        },
+    ) { (sessions, machines, lastSeen), selection, chrome ->
         buildUiState(
             sessions = sessions,
             machines = machines,
-            lastSeen = lastSeen.lastSeen,
-            filter = filter.first,
-            options = filter.second,
-            collapsed = filter.third,
-            isRefreshing = refreshing,
-            isOffline = offline,
-            hasLoaded = refreshedOnce || sessions.isNotEmpty(),
+            lastSeen = lastSeen,
+            filter = selection.machine,
+            options = selection.options,
+            collapsed = selection.collapsed,
+            selectedSessionId = selection.selected,
+            isRefreshing = chrome.refreshing,
+            isOffline = chrome.offline,
+            hasLoaded = chrome.refreshedOnce || sessions.isNotEmpty(),
         )
     }.stateIn(
         scope = scope,
@@ -203,6 +223,7 @@ class SessionListViewModel(
 
     /** Pull-to-refresh / initial load. Coalesces concurrent calls. */
     fun refresh() {
+        refreshTimeZone()
         if (refreshJob?.isActive == true) return
         refreshJob = scope.launch {
             isRefreshing.value = true
@@ -254,11 +275,44 @@ class SessionListViewModel(
     fun markUnread(id: String) {
         sessionStore.sessions.value.firstOrNull { it.id == id }?.let { lastSeenStore.markUnread(id, it.updatedAt) }
     }
-    fun markAllRead() = lastSeenStore.markAllSeen(SessionDiscovery.prepare(sessionStore.sessions.value))
+    fun markAllRead() = lastSeenStore.markAllSeen(
+        SessionListFilters.prepareSidebarSessions(sessionStore.sessions.value, selectedSessionId.value),
+    )
 
+
+    /** Re-evaluate local dates on timezone broadcasts and foreground resume, even offline. */
+    fun refreshTimeZone() {
+        timeZone.value = zoneProvider()
+    }
+
+    /**
+     * Sets the transient date-range lens. The two picks are normalized into
+     * `[start, end]` — the web picker sorts its two clicks the same way. Not
+     * persisted: a fresh ViewModel (process death, hub switch) starts clear,
+     * matching the web's unpersisted `useState`.
+     */
+    fun setDateRange(startEpochDay: Long, endEpochDay: Long) {
+        filters.update {
+            it.copy(
+                start = LocalDate.ofEpochDay(minOf(startEpochDay, endEpochDay)),
+                end = LocalDate.ofEpochDay(maxOf(startEpochDay, endEpochDay)),
+            )
+        }
+    }
+
+    /** Clears the date-range lens (web: the picker footer `Clear` link). */
+    fun clearDateRange() {
+        filters.update { it.copy(start = null, end = null) }
+    }
+
+    /** Search-box input; blank disables filtering/ranking entirely. */
+    fun setSearchQuery(query: String) {
+        filters.update { it.copy(query = query) }
+    }
 
     /** Call when navigating into a session: stamps the last-seen watermark. */
     fun onSessionOpened(sessionId: String) {
+        selectedSessionId.value = sessionId
         val summary = sessionStore.sessions.value.firstOrNull { it.id == sessionId } ?: return
         lastSeenStore.markSeen(sessionId, summary.updatedAt)
     }
@@ -350,10 +404,18 @@ class SessionListViewModel(
         filter: String?,
         options: SessionFilters,
         collapsed: Map<String, Boolean>,
+        selectedSessionId: String?,
         isRefreshing: Boolean,
         isOffline: Boolean,
         hasLoaded: Boolean,
     ): SessionListUiState {
+        // Search and both date-picker entry points share the local filter state.
+        val searchQuery = options.query
+        val dateRange = options.start?.let { start ->
+            options.end?.let { end -> SessionDateRange(start.toEpochDay(), end.toEpochDay()) }
+        }
+        // Use one current zone for both filtering and the calendar activity marks.
+        val zone = zoneProvider()
         val names = machines.mapNotNull { machine ->
             val metadata = machine.metadata ?: return@mapNotNull null
             val name = metadata.displayName?.trim()?.takeIf { it.isNotEmpty() }
@@ -389,29 +451,56 @@ class SessionListViewModel(
         val activeFilter = filter
             ?.takeIf { filters.size >= 2 && filters.any { chip -> chip.id == it } }
 
+        // Choose the canonical agent-session views before applying filters,
+        // so excluding a winner cannot resurrect an older duplicate. Restore
+        // pinned/active order after dedup regroups the rows.
+        val prepared = sortSessionSummaries(
+            SessionListFilters.prepareSidebarSessions(sessions, selectedSessionId),
+        )
+
+        // Calendar hints derive from the full sidebar corpus, before date,
+        // machine, or search filtering (web `sessionActivityDates`). Machine
+        // choices above retain their full source-snapshot counts.
+        val activityDays = prepared
+            .map { SessionDateRangeFilter.activityEpochDay(it.updatedAt, zone) }
+            .toSet()
+        val start = options.start?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+        val end = options.end?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
+        val timeScoped = prepared.filter {
+            (start == null || it.updatedAt >= start) && (end == null || it.updatedAt < end)
+        }
+
         val machineScoped = if (activeFilter == null) {
-            sessions
+            timeScoped
         } else {
-            sessions.filter { (it.metadata?.machineId ?: UNKNOWN_MACHINE_ID) == activeFilter }
+            timeScoped.filter { (it.metadata?.machineId ?: UNKNOWN_MACHINE_ID) == activeFilter }
+        }
+
+        val visible = machineScoped.filter { summary ->
+            (!options.activeOnly || summary.active) &&
+                (!options.unreadOnly || LastSeenStore.isUnread(summary, lastSeen[summary.id] ?: 0))
+        }
+
+        // Text search: relevance ranking over the already-prepared corpus,
+        // pins kept contiguous ahead of ordinary rows.
+        val searched = if (searchQuery.isBlank()) {
+            visible
+        } else {
+            val machineLabels = filters.associate { it.id to it.label }
+            val index = SessionListSearch.buildSessionSearchScoreIndex(visible, searchQuery) { machineId ->
+                machineLabels[machineId ?: UNKNOWN_MACHINE_ID] ?: ""
+            }
+            SessionListSearch.sortSessionsBySearchRelevancePreservingPins(
+                visible.filter { it.id in index.matchedIds },
+                index,
+            )
         }
 
         // With one machine — or a machine filter active — every visible row
         // shares the machine, so repeating it per row is noise.
         val showMachine = filters.size >= 2 && activeFilter == null
 
-        val zone = ZoneId.systemDefault()
-        val start = options.start?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
-        val end = options.end?.plusDays(1)?.atStartOfDay(zone)?.toInstant()?.toEpochMilli()
-        val scored = SessionDiscovery.prepare(machineScoped).filter { summary ->
-            SessionDiscovery.visible(summary) && (!options.activeOnly || summary.active) &&
-                (!options.unreadOnly || LastSeenStore.isUnread(summary, lastSeen[summary.id] ?: 0)) &&
-                (start == null || summary.updatedAt >= start) && (end == null || summary.updatedAt < end)
-        }.mapNotNull { summary -> SessionDiscovery.score(summary, options.query,
-            names[summary.metadata?.machineId] ?: summary.metadata?.machineId.orEmpty()).let { score -> score?.let { summary to it } } }
-        val visible = (if (options.query.isBlank()) scored else scored.sortedWith(compareByDescending<Pair<SessionSummary, Double>> { it.first.globalPinned == true }
-                .thenByDescending { it.first.pinned == true }.thenByDescending { it.second }
-                .thenByDescending { it.first.updatedAt })).map { it.first }
-        val rows = visible.map { summary ->
+        val rows = searched.map { summary ->
             val title = sessionTitle(summary)
             val summaryText = summary.metadata?.summary?.text?.takeIf { it.isNotBlank() }
             SessionRowUi(
@@ -433,13 +522,30 @@ class SessionListViewModel(
             sections = buildSessionSections(rows, collapsed, searching = options.query.isNotBlank()),
             machineFilters = filters,
             activeMachineFilter = activeFilter,
+            searchQuery = searchQuery,
             isRefreshing = isRefreshing,
             hasLoaded = hasLoaded,
             isOffline = isOffline,
             filters = options,
-            unreadCount = SessionDiscovery.prepare(sessions).count { LastSeenStore.isUnread(it, lastSeen[it.id] ?: 0) },
+            unreadCount = prepared.count { LastSeenStore.isUnread(it, lastSeen[it.id] ?: 0) },
+            dateRange = dateRange,
+            dateActivityEpochDays = activityDays,
         )
     }
+
+    private data class FilterState(
+        val machine: String?,
+        val options: SessionFilters,
+        val collapsed: Map<String, Boolean>,
+        val selected: String?,
+    )
+
+    /** Aggregated non-session inputs so [combine] stays within its typed arity. */
+    private data class ChromeState(
+        val refreshing: Boolean,
+        val offline: Boolean,
+        val refreshedOnce: Boolean,
+    )
 
     companion object {
         /** `getSessionTitle` (`web/src/lib/sessionTitle.ts`). */

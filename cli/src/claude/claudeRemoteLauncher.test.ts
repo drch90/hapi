@@ -16,7 +16,8 @@ const harness = vi.hoisted(() => ({
     triggerSwitch: null as (() => void) | null,
     switchAfterCall: 2,
     exercise: null as null | ((opts: any) => Promise<void>),
-    convert: vi.fn((_message: unknown) => null)
+    convert: vi.fn((_message: unknown) => null),
+    compactContextTokens: null as number | null
 }))
 
 vi.mock('./claudeRemote', () => ({
@@ -49,6 +50,12 @@ vi.mock('./claudeRemote', () => ({
         opts.onSessionFound('captured-session-id')
         await harness.exercise?.(opts)
 
+        if (harness.compactContextTokens !== null) {
+            // Mirrors claudeRemote()'s compact-completion onReady: no
+            // completion event or summary, just the boundary's post-tokens.
+            await opts.onReady(undefined, undefined, harness.compactContextTokens)
+        }
+
         if (harness.callCount === harness.switchAfterCall && harness.triggerSwitch) {
             // Stop the runMainLoop() while-loop so the test doesn't hang
             // waiting on a further claudeRemote() call. Mirrors the real
@@ -72,6 +79,10 @@ vi.mock('./utils/permissionHandler', () => ({
 
 vi.mock('./utils/sdkToLogConverter', () => ({
     SDKToLogConverter: class {
+        static resolvedWindow: number | undefined = undefined
+        currentContextWindow(): number | undefined {
+            return (this.constructor as { resolvedWindow?: number }).resolvedWindow
+        }
         updateSessionId(): void {}
         resetParentChain(): void {}
         convert(message: unknown): null { return harness.convert(message) }
@@ -111,6 +122,7 @@ function createClientStub() {
         emitSteerIndeterminate: vi.fn(),
         sendClaudeSessionMessage: () => {},
         sendSessionEvent: () => {},
+        sendAgentMessage: vi.fn(),
         notePendingHubPromptEcho: () => {},
         discardPendingHubPromptEcho: () => {},
         discardPendingHubPromptEchoText: () => {}
@@ -156,6 +168,7 @@ describe('claudeRemoteLauncher resume anchor', () => {
         harness.triggerSwitch = null
         harness.switchAfterCall = 2
         harness.exercise = null
+        harness.compactContextTokens = null
         vi.clearAllMocks()
     })
 
@@ -377,6 +390,38 @@ describe('claudeRemoteLauncher resume anchor', () => {
             ])
         } finally {
             session.stopKeepAlive()
+        }
+    })
+
+    it('stamps the resolved context window on the post-compaction usage refresh', async () => {
+        // The status bar replaces latestUsage wholesale, so a context-only
+        // sample without a window would erase a known 1M denominator and
+        // fall back to the default heuristic until the next real usage.
+        const client = createClientStub()
+        const { session, queue } = createSession(client, undefined)
+        const { SDKToLogConverter } = await import('./utils/sdkToLogConverter')
+        ;(SDKToLogConverter as unknown as { resolvedWindow?: number }).resolvedWindow = 1_000_000
+        harness.compactContextTokens = 13_681
+
+        try {
+            queue.push('hi', { permissionMode: 'default' }, 'local-1')
+            harness.switchAfterCall = 1
+            harness.triggerSwitch = () => {
+                client.rpcHandlers.get(RPC_METHODS.Switch)?.()
+            }
+
+            await claudeRemoteLauncher(session as any)
+
+            expect(client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'token_count',
+                info: expect.objectContaining({
+                    contextTokens: 13_681,
+                    modelContextWindow: 1_000_000
+                })
+            }))
+        } finally {
+            session.stopKeepAlive()
+            ;(SDKToLogConverter as unknown as { resolvedWindow?: number }).resolvedWindow = undefined
         }
     })
 })

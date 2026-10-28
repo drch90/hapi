@@ -62,6 +62,31 @@ async function harness() {
 }
 
 describe('Claude active-turn stdin injection', () => {
+    it('disables steering during manual compaction and restores it for the next queued turn', async () => {
+        const h = await harness();
+        try {
+            h.nextMessage
+                .mockResolvedValueOnce({ message: '/compact', mode: { permissionMode: 'default' } })
+                .mockResolvedValueOnce({ message: 'continue after compact', mode: { permissionMode: 'default' } });
+            h.output.push({ type: 'result', subtype: 'success' });
+            await vi.waitFor(() => expect(h.prompts).toHaveLength(2));
+            expect(h.targets.at(-1)).toBeNull();
+            expect(h.target.send(h.steer)).toBe(false);
+            h.output.push({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } });
+            h.output.push({ type: 'result', subtype: 'success' });
+            await vi.waitFor(() => expect(h.prompts).toHaveLength(3));
+            expect(h.onReady).toHaveBeenCalledTimes(2);
+            expect(h.onThinkingChange.mock.calls.map(call => call[0])).toEqual([true, false, true, false, true]);
+            const nextTarget = h.targets.at(-1)!;
+            expect(nextTarget).not.toBe(h.target);
+            expect(nextTarget.send(h.steer)).toBe(true);
+            h.output.push({ ...h.steer, isReplay: true });
+            h.output.push({ type: 'result', subtype: 'success' });
+            await vi.waitFor(() => expect(h.onReady).toHaveBeenCalledTimes(3));
+            expect(h.onSteerEcho).toHaveBeenCalledExactlyOnceWith(h.steer.uuid);
+        } finally { await h.finish(); }
+    });
+
     it('injects before result, waits for the UUID echo and leaves normal messages behind the turn', async () => {
         const h = await harness();
         try {

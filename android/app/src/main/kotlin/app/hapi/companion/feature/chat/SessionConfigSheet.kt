@@ -125,7 +125,15 @@ internal fun SessionConfigSheetContent(
                     onClick = { onCopilotAgentMode(mode.wireId) }, enabled = config.active && !config.configurationDisabled)
             }
         }
-        if (config.permissionModes.isNotEmpty()) {
+        // Web parity: the permission section disappears only when the switch
+        // callback is withheld — copilot sessions under local terminal
+        // control (SessionChat.tsx:2159-2163 hides it via
+        // HappyComposer.tsx:1595). Inactive sessions keep switching: web
+        // passes `allowSendWhenInactive` unconditionally (SessionChat.tsx:
+        // 2140) and the send path auto-resumes, so the offline notice above
+        // stays informational only.
+        val permissionSwitchWithheld = config.flavor == "copilot" && config.controlledByUser
+        if (config.permissionModes.isNotEmpty() && !permissionSwitchWithheld) {
             SectionTitle(stringResource(R.string.chat_config_permission_mode))
             config.permissionModes.forEach { mode ->
                 OptionRow(

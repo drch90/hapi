@@ -44,30 +44,57 @@ import app.hapi.companion.R
 import app.hapi.protocol.wire.SUPPORTED_PROTOCOL_VERSION
 
 /**
- * Settings home (B-M4e scaffold): Appearance (theme mode + Material You),
- * Language (persist-only until M5), the owner-only Usage/Storage entries, and
- * About (app/protocol versions + hub health).
+ * General subpage of the settings hub (P2 IA): the catch-all category for
+ * everything without a dedicated category on this branch — Appearance (theme
+ * mode + Material You), Language, and About (app/protocol versions + hub
+ * health). The former owner-only Usage/Storage rows moved hub-level (see
+ * [SettingsHubCatalog]); their owner gate is unchanged.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(
+fun SettingsGeneralScreen(
     viewModel: SettingsViewModel,
-    onOpenUsage: () -> Unit,
-    onOpenStorage: () -> Unit,
     onBack: () -> Unit,
 ) {
     val theme by viewModel.themeSettings.collectAsState()
     val language by viewModel.language.collectAsState()
-    val isOwner by viewModel.isOwner.collectAsState()
     val hubInfo by viewModel.hubInfo.collectAsState()
 
+    SettingsGeneralContent(
+        theme = theme,
+        language = language,
+        hubUrl = viewModel.hubUrl,
+        hubInfo = hubInfo,
+        onSetThemeMode = viewModel::setThemeMode,
+        onSetDynamicColor = viewModel::setDynamicColor,
+        onSetLanguage = viewModel::setLanguage,
+        onRetryHubInfo = viewModel::retryHubInfo,
+        onBack = onBack,
+        notificationSettings = { app.hapi.companion.notifications.LocalNotificationSettingsView() },
+    )
+}
+
+/** State-injected body of [SettingsGeneralScreen] — previewable without a VM. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SettingsGeneralContent(
+    theme: ThemeSettings,
+    language: AppLanguage,
+    hubUrl: String,
+    hubInfo: HubInfoState,
+    onSetThemeMode: (ThemeMode) -> Unit,
+    onSetDynamicColor: (Boolean) -> Unit,
+    onSetLanguage: (AppLanguage) -> Unit,
+    onRetryHubInfo: () -> Unit,
+    onBack: () -> Unit,
+    notificationSettings: @Composable () -> Unit = {},
+) {
     var showThemeDialog by rememberSaveable { mutableStateOf(false) }
     var showLanguageDialog by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.settings_title)) },
+                title = { Text(stringResource(R.string.settings_category_general)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -103,7 +130,7 @@ fun SettingsScreen(
                         ),
                         checked = theme.dynamicColor && theme.mode != ThemeMode.OLED,
                         enabled = theme.mode != ThemeMode.OLED,
-                        onCheckedChange = viewModel::setDynamicColor,
+                        onCheckedChange = onSetDynamicColor,
                     )
                 }
             }
@@ -116,23 +143,7 @@ fun SettingsScreen(
                 )
             }
 
-            app.hapi.companion.notifications.LocalNotificationSettingsView()
-
-            if (isOwner) {
-                SettingsSection(title = stringResource(R.string.settings_section_insights)) {
-                    SettingsRow(
-                        label = stringResource(R.string.settings_usage),
-                        description = stringResource(R.string.settings_usage_summary),
-                        onClick = onOpenUsage,
-                    )
-                    SettingsDivider()
-                    SettingsRow(
-                        label = stringResource(R.string.settings_storage),
-                        description = stringResource(R.string.settings_storage_summary),
-                        onClick = onOpenStorage,
-                    )
-                }
-            }
+            notificationSettings()
 
             SettingsSection(title = stringResource(R.string.settings_section_about)) {
                 SettingsRow(
@@ -147,7 +158,7 @@ fun SettingsScreen(
                 SettingsDivider()
                 SettingsRow(
                     label = stringResource(R.string.settings_hub),
-                    value = viewModel.hubUrl,
+                    value = hubUrl,
                     description = when (val info = hubInfo) {
                         is HubInfoState.Loading -> stringResource(R.string.settings_hub_checking)
                         is HubInfoState.Loaded -> stringResource(
@@ -157,7 +168,7 @@ fun SettingsScreen(
                         )
                         is HubInfoState.Failed -> stringResource(R.string.settings_hub_unreachable)
                     },
-                    onClick = if (hubInfo is HubInfoState.Failed) viewModel::retryHubInfo else null,
+                    onClick = if (hubInfo is HubInfoState.Failed) onRetryHubInfo else null,
                 )
                 SettingsDivider()
                 app.hapi.companion.ui.components.PrivacyPolicyLink()
@@ -170,7 +181,7 @@ fun SettingsScreen(
             selected = theme.mode,
             onSelect = { mode ->
                 showThemeDialog = false
-                viewModel.setThemeMode(mode)
+                onSetThemeMode(mode)
             },
             onDismiss = { showThemeDialog = false },
         )
@@ -181,7 +192,7 @@ fun SettingsScreen(
             selected = language,
             onSelect = { choice ->
                 showLanguageDialog = false
-                viewModel.setLanguage(choice)
+                onSetLanguage(choice)
                 // Apply immediately (B-M5a): appcompat recreates the activity
                 // with the new locale and, thanks to autoStoreLocales in the
                 // manifest, re-applies it on every cold start. The DataStore
@@ -379,4 +390,5 @@ private fun languageLabel(language: AppLanguage): String = when (language) {
     AppLanguage.SYSTEM -> stringResource(R.string.settings_language_system)
     AppLanguage.ENGLISH -> "English"
     AppLanguage.SIMPLIFIED_CHINESE -> "简体中文"
+    AppLanguage.RUSSIAN -> "Русский"
 }

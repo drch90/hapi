@@ -11,4 +11,10 @@ describe('Hermes command', () => {
     it('accepts runner resume bound to an existing HAPI row', () => {
         expect(parseHermesCommandOptions(['--resume', 'native-id', '--existing-session-id', 'hapi-id', '--started-by', 'runner'])).toMatchObject({ existingSessionId: 'hapi-id', resumeSessionId: 'native-id' })
     })
+    it('keeps a fresh runner reservation distinct from reopening a session', () => {
+        const options = parseHermesCommandOptions(['--hapi-session-id', 'reserved-id', '--started-by', 'runner'])
+        expect(options.reservedSessionId).toBe('reserved-id')
+        expect(options.existingSessionId).toBeUndefined()
+        expect(() => parseHermesCommandOptions(['--hapi-session-id'])).toThrow('Missing --hapi-session-id value')
+    })
 })

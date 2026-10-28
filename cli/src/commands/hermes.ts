@@ -7,7 +7,7 @@ import { parseRemoteAgentCommandOptions } from './agentCommandOptions'
 import type { CommandDefinition } from './types'
 
 export function parseHermesCommandOptions(args: string[]) {
-    const flags = new Set(['--started-by', '--hapi-starting-mode', '--existing-session-id', '--resume', '--model', '--permission-mode'])
+    const flags = new Set(['--started-by', '--hapi-starting-mode', '--hapi-session-id', '--existing-session-id', '--resume', '--model', '--permission-mode'])
     for (let i = 0; i < args.length; i += 2) {
         if (!flags.has(args[i])) throw new Error(`Unsupported Hermes option: ${args[i]}`)
         if (!args[i + 1]?.trim() || args[i + 1].startsWith('-')) throw new Error(`Missing ${args[i]} value`)
