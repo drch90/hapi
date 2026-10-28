@@ -141,7 +141,7 @@ internal fun SessionConfigSheetContent(
                     selected = mode.wireId == (config.permissionMode ?: "default"),
                     tone = mode.tone,
                     onClick = { onSetPermissionMode(mode) },
-                    enabled = !config.configurationDisabled,
+                    enabled = !config.permissionDisabled,
                 )
             }
         }

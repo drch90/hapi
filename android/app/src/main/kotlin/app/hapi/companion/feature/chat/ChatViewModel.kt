@@ -191,7 +191,7 @@ data class QueuedRowUi(
 data class SessionConfigUi(
     val flavor: String?,
     val active: Boolean,
-    /** Terminal-controlled sessions reject config posts with 409. */
+    /** Terminal-controlled sessions restrict model and other configuration changes. */
     val controlledByUser: Boolean,
     /** Raw wire mode; may be outside [permissionModes] (render verbatim). */
     val permissionMode: String?,
@@ -214,6 +214,7 @@ data class SessionConfigUi(
     val copilotAgentMode: String? = null,
     val supportsFast: Boolean = false,
     val cursorAutoUnavailable: Boolean = false,
+    val permissionDisabled: Boolean = false,
     val modelDisabled: Boolean = false,
     val effortDisabled: Boolean = false,
 
@@ -1741,15 +1742,16 @@ class ChatViewModel(
 
     /**
      * `POST /permission-mode` with an optimistic detail flip; server truth on
-     * error. Inactive sessions stay switchable (web parity — the send path
-     * auto-resumes); only copilot sessions under local terminal control lose
-     * the switcher (web withholds the callback, SessionChat.tsx:2159-2163).
+     * error. Inactive sessions stay switchable (the send path auto-resumes),
+     * except Hermes, which requires an active, idle session. Terminal control
+     * withholds the permission switcher only for Copilot, matching web.
      */
     fun setPermissionMode(mode: PermissionMode) {
-        if (mode !in currentConfig().permissionModes) return
-        if (currentFlavor() == "copilot" && terminalControlled(currentDetail())) return
+        val config = currentConfig()
+        if (mode !in config.permissionModes || config.permissionDisabled) return
         runConfigChange(
             optimistic = { it.copy(permissionMode = mode.wireId) },
+            allowTerminalControl = true,
             call = { api.setPermissionMode(sessionId, mode.wireId) },
         )
     }
@@ -1874,11 +1876,16 @@ class ChatViewModel(
         }
     }
 
-    private fun runConfigChange(optimistic: ((Session) -> Session)? = null, activeRequired: Boolean = false, call: suspend () -> Unit) {
+    private fun runConfigChange(
+        optimistic: ((Session) -> Session)? = null,
+        activeRequired: Boolean = false,
+        allowTerminalControl: Boolean = false,
+        call: suspend () -> Unit,
+    ) {
         val isHermes = currentFlavor() == "hermes"
         val current = sessionStore.currentDetail(sessionId)
         if (isHermes && (current?.active != true || current.thinking)) return
-        if (current?.agentState?.controlledByUser == true && current.metadata?.capabilities?.concurrentClients != true) return
+        if (!allowTerminalControl && terminalControlled(current)) return
         if (activeRequired && current?.active != true) return
         if (!configOpPending.compareAndSet(expect = false, update = true)) return
         // Preserve established Claude/Codex optimistic controls; newly added
@@ -2008,6 +2015,8 @@ class ChatViewModel(
             modelsError = if (flavor == "hermes") hermes.error else dynamic.error,
             configurationDisabled = configOpPending.value || (flavor == "hermes" && (detail?.active != true || detail.thinking)) ||
                 (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true),
+            permissionDisabled = configOpPending.value || (flavor == "hermes" && (detail?.active != true || detail.thinking)) ||
+                (flavor == "copilot" && terminalControlled(detail)),
             modelDisabled = configOpPending.value || (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true) ||
                 (flavor !in listOf("claude", "opencode", "kimi", "gemini") && detail?.active != true) ||
                 (flavor == "hermes" && detail?.thinking == true) ||

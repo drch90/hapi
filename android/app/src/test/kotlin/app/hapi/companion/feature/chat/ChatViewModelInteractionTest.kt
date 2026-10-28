@@ -1493,6 +1493,7 @@ class ChatViewModelInteractionTest {
         )
         harness.viewModel.start()
         harness.sessionStore.calls.first { "loadDetail:$IX_SESSION" in it }
+        assertTrue(harness.viewModel.config.first { it.flavor == "copilot" }.permissionDisabled)
 
         harness.viewModel.setPermissionMode(PermissionMode.Yolo)
         testScheduler.advanceUntilIdle()
@@ -1518,6 +1519,7 @@ class ChatViewModelInteractionTest {
         val harness = InteractionHarness(this, sharedClients)
         harness.viewModel.start()
         harness.sessionStore.calls.first { "loadDetail:$IX_SESSION" in it }
+        assertFalse(harness.viewModel.config.first { it.flavor == "copilot" }.permissionDisabled)
 
         harness.viewModel.setPermissionMode(PermissionMode.Yolo)
         harness.api.configCalls.first { "mode:yolo" in it }
@@ -1528,6 +1530,10 @@ class ChatViewModelInteractionTest {
         harness.sessionStore.setDetail(
             detail(flavor = "claude", agentState = AgentState(controlledByUser = true)),
         )
+        val terminalConfig = harness.viewModel.config.first { it.flavor == "claude" }
+        assertFalse(terminalConfig.permissionDisabled)
+        assertTrue(terminalConfig.configurationDisabled)
+        assertTrue(terminalConfig.modelDisabled)
         harness.viewModel.setPermissionMode(PermissionMode.AcceptEdits)
         harness.api.configCalls.first { "mode:acceptEdits" in it }
     }
@@ -1604,9 +1610,12 @@ class ChatViewModelInteractionTest {
         val config = harness.viewModel.config.first { it.hermesModels.isNotEmpty() }
         assertEquals("Office", config.hermesModels.single().providerLabel)
         assertTrue(config.configurationDisabled)
+        assertTrue(config.permissionDisabled)
         val composer = harness.viewModel.composer.first { it.canStop }
         assertFalse(composer.canSteer)
         harness.viewModel.setModel("custom:other:qwen:32b")
+        harness.viewModel.setPermissionMode(PermissionMode.AcceptEdits)
+        testScheduler.runCurrent()
         assertTrue(harness.api.configCalls.value.isEmpty())
     }
 
