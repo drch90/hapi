@@ -17,13 +17,19 @@ type DecryptedMessage = {
   createdAt: number           // hub receive time (epoch ms)
   invokedAt?: number | null   // when the agent consumed it (null = still queued)
   scheduledAt?: number | null // future-scheduled sends
-  deliveryState?: 'indeterminate' // steer dispatched, outcome unproven; explicit retry/cancel required
+  deliveryState?: 'dispatching' | 'indeterminate' // waiting for receipt, or delivery outcome unknown
 }
 ```
 
 `status` and `queueDismissed` are client bookkeeping fields, not fields to send
 to the hub. Web and Android persist local unknown-delivery holds alongside the
 window; see [local dismissal](./pagination.md#local-dismissal-of-unknown-deliveries).
+
+`dispatching` means an insertion is still awaiting the native receipt. Keep it
+visible as pending and disable repeat insertion, edit, and cancel until it
+settles. `indeterminate` means that confirmation was lost; explicit resolution
+may be available. Neither state authorizes automatic replay. A receipt clears
+the marker and stamps `invokedAt`, including after a disconnect.
 
 `content` is deliberately `unknown` on the wire. **Decoding must be total**:
 never crash on unfamiliar content. Use stringified fallbacks for unknown

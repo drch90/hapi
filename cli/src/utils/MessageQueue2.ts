@@ -551,10 +551,10 @@ export class MessageQueue2<T> {
      * Wait for messages and return all messages with the same mode as a single string
      * Returns { message: string, mode: T } or null if aborted/closed
      */
-    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string, items: Array<{ message: string, localId?: string }> } | null> {
+    async waitForMessagesAndGetAsString(abortSignal?: AbortSignal, maxBatchSize = Infinity): Promise<{ message: string, mode: T, isolate: boolean, hash: string, items: Array<{ message: string, localId?: string }> } | null> {
         // If we have messages, return them immediately
         if (this.queue.length > 0) {
-            return this.collectBatch();
+            return this.collectBatch(maxBatchSize);
         }
 
         // If closed or already aborted, return null
@@ -569,13 +569,13 @@ export class MessageQueue2<T> {
             return null;
         }
 
-        return this.collectBatch();
+        return this.collectBatch(maxBatchSize);
     }
 
     /**
      * Collect a batch of messages with the same mode, respecting isolation requirements
      */
-    private collectBatch(): { message: string, mode: T, hash: string, isolate: boolean, items: Array<{ message: string, localId?: string }> } | null {
+    private collectBatch(maxBatchSize: number): { message: string, mode: T, hash: string, isolate: boolean, items: Array<{ message: string, localId?: string }> } | null {
         if (this.queue.length === 0) {
             return null;
         }
@@ -602,6 +602,7 @@ export class MessageQueue2<T> {
         } else {
             // Collect all messages with the same mode until we hit an isolated message
             while (this.queue.length > 0 &&
+                items.length < maxBatchSize &&
                 this.queue[0].modeHash === targetModeHash &&
                 !this.queue[0].isolate) {
                 const item = this.queue.shift()!;

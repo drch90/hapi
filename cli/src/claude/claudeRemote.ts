@@ -12,6 +12,7 @@ import { PermissionResult } from "./sdk/types";
 import { getHapiBlobsDir } from "@/constants/uploadPaths";
 import { getDefaultClaudeCodePath } from "./sdk/utils";
 import { filterCatalogAffectingClaudeArgs } from "./sdk/metadataExtractor";
+import type { ClaudeSteerTarget } from './steering';
 
 export async function claudeRemote(opts: {
 
@@ -39,7 +40,10 @@ export async function claudeRemote(opts: {
     onMessage: (message: SDKMessage) => void,
     onFirstResult?: (initialMessage: string) => void,
     onCompletionEvent?: (message: string) => void,
-    onSessionReset?: () => void
+    onSessionReset?: () => void,
+    onSteeringTarget?: (target: ClaudeSteerTarget | null) => void,
+    onSteerEcho?: (uuid: string) => void | Promise<void>,
+    onResult?: () => void,
 }) {
     const debugPrefix = '[claudeRemote][async-debug]';
 
@@ -183,6 +187,7 @@ export async function claudeRemote(opts: {
         pathToClaudeCodeExecutable: getDefaultClaudeCodePath(),
         settingsPath: opts.hookSettingsPath,
         additionalDirectories: [getHapiBlobsDir()],
+        replayUserMessages: true,
     }
 
     if (!awaitingForkInit) {
@@ -225,6 +230,32 @@ export async function claudeRemote(opts: {
         options: sdkOptions,
     });
 
+    let processInitialized = false;
+    let turnOpen = initial !== null;
+    let steeringTarget: ClaudeSteerTarget | null = null;
+    const pendingSteers = new Set<string>();
+    const publishSteeringTarget = () => {
+        if (!processInitialized || !turnOpen || isCompactCommand || opts.signal?.aborted) return;
+        const target: ClaudeSteerTarget = {
+            mode,
+            send: (message) => {
+                if (steeringTarget !== target || !turnOpen || opts.signal?.aborted || !message.uuid) return false;
+                pendingSteers.add(message.uuid);
+                const sent = response.sendUserMessage(message);
+                if (!sent) pendingSteers.delete(message.uuid);
+                return sent;
+            }
+        };
+        steeringTarget = target;
+        opts.onSteeringTarget?.(target);
+    };
+    const closeSteeringTarget = () => {
+        turnOpen = false;
+        steeringTarget = null;
+        opts.onSteeringTarget?.(null);
+    };
+    opts.signal?.addEventListener('abort', closeSteeringTarget, { once: true });
+
     let nextMessageFetchInFlight = false;
     let inputEnded = false;
     let nextMessageFetchSeq = 0;
@@ -257,6 +288,9 @@ export async function claudeRemote(opts: {
                 }
                 mode = next.mode;
                 messages.push({ type: 'user', message: { role: 'user', content: next.message } });
+                turnOpen = true;
+                updateThinking(true);
+                publishSteeringTarget();
                 logger.debug(
                     `${debugPrefix} nextMessage resolved fetchId=${fetchId} elapsedMs=${Date.now() - startedAt} ` +
                     `messageLength=${next.message.length} permissionMode=${next.mode.permissionMode}`
@@ -289,6 +323,19 @@ export async function claudeRemote(opts: {
             );
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
 
+            if (message.type === 'result') {
+                // Written guidance may start the next native turn after this
+                // result. Keep its input channel available until all pending
+                // input has been echoed and the following result completes.
+                if (pendingSteers.size === 0) closeSteeringTarget();
+                opts.onResult?.();
+            }
+            if (message.type === 'user' && message.isReplay === true && !message.isSynthetic && !message.isMeta
+                && !message.parent_tool_use_id && typeof message.uuid === 'string') {
+                await opts.onSteerEcho?.(message.uuid);
+                pendingSteers.delete(message.uuid);
+            }
+
             // Handle messages
             opts.onMessage(message);
 
@@ -310,6 +357,7 @@ export async function claudeRemote(opts: {
                     return;
                 }
                 initial = first;
+                turnOpen = true;
             }
 
             if (message.type === 'system' && message.subtype === 'init') {
@@ -339,7 +387,10 @@ export async function claudeRemote(opts: {
                         return;
                     }
                     initial = first;
+                    turnOpen = true;
                 }
+                processInitialized = true;
+                publishSteeringTarget();
             }
 
             // Capture the /compact outcome. Only a reported failure is recorded:
@@ -359,7 +410,6 @@ export async function claudeRemote(opts: {
             // Handle result messages
             if (message.type === 'result') {
                 resultSeq += 1;
-                updateThinking(false);
                 logger.debug(
                     `${debugPrefix} result #${resultSeq} received; scheduling next user message ` +
                     `(nextInFlight=${nextMessageFetchInFlight}, inputEnded=${inputEnded})`
@@ -378,6 +428,15 @@ export async function claudeRemote(opts: {
                     isCompactCommand = false;
                     compactFailure = null;
                 }
+
+                // A write can race the native result and become its next turn.
+                // Keep reading echoes/results without starting another queued
+                // prompt or announcing ready while that input is unresolved.
+                if (pendingSteers.size > 0) {
+                    logger.debug('[claudeRemote] Waiting for dispatched steer input after result');
+                    continue;
+                }
+                updateThinking(false);
 
                 // Flush the result carrier before completion, then announce ready.
                 await opts.onReady(completionEvent);
@@ -413,6 +472,10 @@ export async function claudeRemote(opts: {
             throw e;
         }
     } finally {
+        closeSteeringTarget();
+        opts.signal?.removeEventListener('abort', closeSteeringTarget);
+        inputEnded = true;
+        messages.end();
         logger.debug(
             `${debugPrefix} finally ` +
             `(streamMessages=${streamMessageSeq}, results=${resultSeq}, nextFetches=${nextMessageFetchSeq}, inputEnded=${inputEnded})`

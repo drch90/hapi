@@ -19,7 +19,7 @@ import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatAttachmentsForClaude, formatMessageWithAttachments } from '@/utils/attachmentFormatter';
-import { normalizeClaudeSessionModel } from './model';
+import { normalizeClaudeSessionModel, parseClaudeModelCommand } from './model';
 import { normalizeClaudeSessionEffort } from './effort';
 import { normalizeHookPermissionMode } from './utils/hookPermissionMode';
 import { getInvokedCwd } from '@/utils/invokedCwd';
@@ -59,7 +59,7 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         // throw new Error('Runner-spawned sessions cannot use local/interactive mode');
     }
 
-    const initialState: AgentState = {};
+    const initialState: AgentState = { steeringActive: false };
     const initialModel = normalizeClaudeSessionModel(options.model);
     const initialEffort = normalizeClaudeSessionEffort(options.effort);
     const bootstrap = options.existingSessionId
@@ -323,6 +323,25 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
         if (sessionEffort !== undefined) {
             currentEffort = sessionEffort;
         }
+
+        // A native /model command only changes the current Claude subprocess.
+        // Persist the selection in HAPI, just like SetSessionConfig, so aborts
+        // and permission-mode relaunches seed the next process with this model.
+        const requestedModel = parseClaudeModelCommand(message.content.text);
+        if (requestedModel !== undefined && !message.content.attachments?.length) {
+            currentModel = requestedModel;
+            syncSessionModes();
+            currentSessionRef.current?.pushKeepAlive();
+            session.sendSessionEvent({
+                type: 'message',
+                message: `Model changed to ${currentModel ?? 'default'}`
+            });
+            if (localId) {
+                session.emitMessagesConsumed([localId]);
+            }
+            return;
+        }
+
         const messagePermissionMode = currentPermissionMode;
         const messageModel = currentModel ?? undefined;
         const messageEffort = currentEffort ?? undefined;
@@ -475,11 +494,21 @@ export async function runClaude(options: StartOptions = {}): Promise<void> {
             disallowedTools: messageDisallowedTools
         };
         messageQueue.push(formattedText, enhancedMode, localId);
+        if (message.meta?.deliveryMode === 'steer' && localId) {
+            void currentSessionRef.current?.steerQueuedMessage?.(localId).then(result => {
+                if (!result.steered && result.error) {
+                    session.sendSessionEvent({ type: 'message', message: `Claude steer: ${result.error}` });
+                }
+            });
+        }
         logger.debugLargeJson('User message pushed to queue:', message)
     };
     session.onUserMessage((...args) => {
         if (!messagePipelineReady) {
-            deferredMessages.push(args);
+            const [message, localId] = args;
+            // Initialization cannot preserve the identity of the turn that
+            // was active at receipt; delayed input follows ordinary FIFO.
+            deferredMessages.push([{ ...message, meta: { ...message.meta, deliveryMode: 'queue' } }, localId]);
             return;
         }
         handleUserMessage(...args);

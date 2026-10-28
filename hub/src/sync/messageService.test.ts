@@ -524,6 +524,10 @@ describe('MessageService.getQueuedState', () => {
         const otherSession = makeSession(store, 'queued-state-other')
         store.messages.addMessage(session.id, 'queued', 'local-queued')
         store.messages.addMessage(session.id, 'invoked', 'local-invoked')
+        store.messages.addMessage(session.id, 'waiting for receipt', 'local-dispatching')
+        store.messages.addMessage(session.id, 'lost receipt', 'local-indeterminate')
+        store.messages.setMessagesDeliveryState(session.id, ['local-dispatching'], 'dispatching')
+        store.messages.markMessagesIndeterminate(session.id, ['local-indeterminate'])
         store.messages.addMessage(
             session.id,
             'future scheduled',
@@ -540,16 +544,26 @@ describe('MessageService.getQueuedState', () => {
             'local-invoked',
             'local-absent',
             'local-future',
-            'local-other'
+            'local-other',
+            'local-dispatching',
+            'local-indeterminate'
         ])).toEqual({
             queuedLocalIds: ['local-queued', 'local-future'],
-            indeterminateLocalIds: [],
+            dispatchingLocalIds: ['local-dispatching'],
+            indeterminateLocalIds: ['local-indeterminate'],
             invokedLocalMessages: [{ localId: 'local-invoked', invokedAt: 1_000 }]
         })
         expect(service.getQueuedState(session.id, [])).toEqual({
             queuedLocalIds: [],
+            dispatchingLocalIds: [],
             indeterminateLocalIds: [],
             invokedLocalMessages: []
+        })
+        expect(service.getMessages(session.id).find(message => message.localId === 'local-dispatching')?.deliveryState).toBe('dispatching')
+        store.messages.markMessagesInvoked(session.id, ['local-dispatching'], 2_000)
+        expect(service.getQueuedState(session.id, ['local-dispatching'])).toEqual({
+            queuedLocalIds: [], dispatchingLocalIds: [], indeterminateLocalIds: [],
+            invokedLocalMessages: [{ localId: 'local-dispatching', invokedAt: 2_000 }]
         })
     })
 })
@@ -1229,11 +1243,11 @@ describe('MessageService.sendMessage deliveryMode', () => {
         expect(gateChecks).toBe(0)
     })
 
-    it('persists Pi steer provenance but downgrades every deferred CLI delivery to queue', async () => {
+    it.each(['pi', 'claude'])('preserves live %s steer but downgrades every deferred delivery to queue', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-pi',
-            { path: '/tmp/delivery-mode-pi', host: 'localhost', flavor: 'pi' },
+            { path: '/tmp/delivery-mode-pi', host: 'localhost', flavor },
             null,
             'default'
         )
@@ -1286,11 +1300,11 @@ describe('MessageService.sendMessage deliveryMode', () => {
         })
     })
 
-    it('delivers a duplicate-localId retry as queue even when the stored row retains steer', async () => {
+    it.each(['pi', 'claude'])('delivers duplicate %s localIds as queue even when the stored row retains steer', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-duplicate-pi',
-            { path: '/tmp/delivery-mode-duplicate-pi', host: 'localhost', flavor: 'pi' },
+            { path: '/tmp/delivery-mode-duplicate-pi', host: 'localhost', flavor },
             null,
             'default'
         )
@@ -1322,6 +1336,20 @@ describe('MessageService.sendMessage deliveryMode', () => {
             content: { text: 'original steer whose response is lost' },
             meta: { sentFrom: 'webapp', deliveryMode: 'steer' }
         })
+    })
+
+    it.each(['dispatching', 'indeterminate', 'invoked'] as const)('never re-emits a duplicate Claude message already %s', async state => {
+        const store = makeStore()
+        const session = store.sessions.getOrCreateSession('claude-duplicate-state', { path: '/tmp', flavor: 'claude' }, null, 'default')
+        const { io, cliEmitted } = makeTrackingIo()
+        const service = new MessageService(store, io, makePublisher() as any)
+        const payload = { text: 'one action', localId: 'stable-id', deliveryMode: 'steer' as const }
+        await service.sendMessage(session.id, payload)
+        if (state === 'invoked') store.messages.markMessagesInvoked(session.id, ['stable-id'], Date.now())
+        else store.messages.setMessagesDeliveryState(session.id, ['stable-id'], state)
+        await service.sendMessage(session.id, payload)
+        expect(cliEmitted).toHaveLength(1)
+        expect(service.replayImmediateQueuedMessages(session.id)).toBe(0)
     })
 
     it('downgrades a legacy persisted steer through the mature scheduled scan', () => {
@@ -1396,7 +1424,7 @@ describe('MessageService.sendMessage deliveryMode', () => {
         ])
     })
 
-    it('downgrades forged steer intent for non-Pi sessions and defaults omitted intent to queue', async () => {
+    it('downgrades unsupported direct steer intent and defaults omitted intent to queue', async () => {
         const store = makeStore()
         const session = makeSession(store, 'delivery-mode-non-pi')
         const service = new MessageService(store, makeTrackingIo().io, makePublisher() as any)
@@ -1419,11 +1447,11 @@ describe('MessageService.sendMessage deliveryMode', () => {
         })).toEqual(['queue', 'queue'])
     })
 
-    it('normalizes direct scheduled steer requests to queue', async () => {
+    it.each(['pi', 'claude'])('normalizes direct scheduled %s steer requests to queue', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-pi-scheduled',
-            { path: '/tmp/delivery-mode-pi-scheduled', host: 'localhost', flavor: 'pi' },
+            { path: '/tmp/delivery-mode-pi-scheduled', host: 'localhost', flavor },
             null,
             'default'
         )

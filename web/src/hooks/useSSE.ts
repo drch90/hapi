@@ -22,7 +22,7 @@ import type {
 } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { applyAgyCatalogAnnouncement } from '@/lib/agyCatalogAnnouncement'
-import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesIndeterminate, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
+import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesDispatching, markMessagesIndeterminate, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 import { applySessionDetailPatch } from '@/lib/sessionPatch'
 
 // Pure patch-application rules live in @/lib/sessionPatch (React-free, shared
@@ -41,6 +41,7 @@ export type SSEScope = 'global' | 'full'
 const MESSAGE_STREAM_EVENT_TYPES = new Set<SyncEvent['type']>([
     'message-received',
     'messages-consumed',
+    'messages-dispatching',
     'messages-indeterminate',
     'messages-requeued',
     'message-cancelled',
@@ -683,6 +684,7 @@ export function useSSE(options: {
                 if (
                     event.type === 'message-cancelled'
                     || event.type === 'messages-consumed'
+                    || event.type === 'messages-dispatching'
                     || event.type === 'messages-indeterminate'
                     || event.type === 'messages-requeued'
                     || event.type === 'scheduled-matured'
@@ -698,6 +700,9 @@ export function useSSE(options: {
                 }
                 if (event.type === 'messages-indeterminate') {
                     markMessagesIndeterminate(event.sessionId, event.localIds)
+                }
+                if (event.type === 'messages-dispatching') {
+                    markMessagesDispatching(event.sessionId, event.localIds)
                 }
                 if (event.type === 'messages-requeued') {
                     markMessagesRequeued(event.sessionId, event.localIds)
@@ -715,6 +720,9 @@ export function useSSE(options: {
 
             if (event.type === 'messages-indeterminate') {
                 markMessagesIndeterminate(event.sessionId, event.localIds)
+            }
+            if (event.type === 'messages-dispatching') {
+                markMessagesDispatching(event.sessionId, event.localIds)
             }
 
             if (event.type === 'messages-requeued') {

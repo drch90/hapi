@@ -124,11 +124,11 @@ function getNormalizedDeliveryMode(
         return 'queue'
     }
 
-    return isObject(metadata) && metadata.flavor === 'pi' ? 'steer' : 'queue'
+    return isObject(metadata) && (metadata.flavor === 'pi' || metadata.flavor === 'claude') ? 'steer' : 'queue'
 }
 
 /**
- * Native steer is scoped to the Pi turn active at the initial live emit. Once
+ * Native steer is scoped to the turn active at the initial live emit. Once
  * a durable row is delivered through reconnect, backfill, a clear gate, or a
  * scheduled scan, that turn identity is no longer provable. Preserve stored
  * provenance for Web diagnostics, but make deferred CLI delivery an ordinary
@@ -198,8 +198,11 @@ export class MessageService {
             queuedLocalIds: states
                 .filter((state) => state.invokedAt === null && state.deliveryState !== 'indeterminate' && state.deliveryState !== 'dispatching')
                 .map((state) => state.localId),
+            dispatchingLocalIds: states
+                .filter((state) => state.invokedAt === null && state.deliveryState === 'dispatching')
+                .map((state) => state.localId),
             indeterminateLocalIds: states
-                .filter((state) => state.invokedAt === null && (state.deliveryState === 'indeterminate' || state.deliveryState === 'dispatching'))
+                .filter((state) => state.invokedAt === null && state.deliveryState === 'indeterminate')
                 .map((state) => state.localId),
             invokedLocalMessages: states.flatMap((state) => state.invokedAt === null
                 ? []
@@ -890,13 +893,14 @@ export class MessageService {
         const actualSessionId = inserted.sessionId
         const msg = inserted.message
         // A duplicate localId is an idempotent retry, not proof that the
-        // original Pi turn still exists. Its stored row may retain steer
+        // original turn still exists. Its stored row may retain steer
         // provenance from a POST whose response was lost, so deliver the
         // duplicate through the same turn-safe deferred view as reconnect.
         const cliContent = inserted.inserted
             ? msg.content
             : contentForDeferredDelivery(msg.content)
-        const shouldEmitToCli = msg.deliveryState !== 'indeterminate'
+        const shouldEmitToCli = (inserted.inserted || msg.invokedAt === null)
+            && !msg.deliveryState
         this.onSessionActivity?.(actualSessionId, msg.createdAt)
 
         // Only emit to CLI if the message is not scheduled for the future.
@@ -942,6 +946,19 @@ export class MessageService {
             }
         })
         return { actualSessionId, createdAt: msg.createdAt }
+    }
+
+    /** A lost runtime cannot confirm dispatch; hold those rows for reconciliation. */
+    markPendingSteersIndeterminate(sessionId: string): void {
+        const session = this.store.sessions.getSession(sessionId)
+        if (!session) return
+        const localIds = this.store.messages.getUninvokedLocalMessages(sessionId)
+            .filter((message) => message.deliveryState === 'dispatching')
+            .map((message) => message.localId)
+            .filter((id): id is string => typeof id === 'string')
+        if (localIds.length === 0) return
+        this.store.recordMessagesIndeterminate(sessionId, localIds, session.namespace)
+        this.publisher.emit({ type: 'messages-indeterminate', sessionId, localIds })
     }
 
     /**

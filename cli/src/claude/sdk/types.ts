@@ -16,6 +16,9 @@ export interface SDKMessage {
 
 export interface SDKUserMessage extends SDKMessage {
     type: 'user'
+    uuid?: string
+    /** Native acknowledgement of a stdin user message, not another human turn. */
+    isReplay?: boolean
     parent_tool_use_id?: string
     /**
      * Set by Claude Code on user-role messages it injects itself (skill bodies,
@@ -206,6 +209,7 @@ export interface QueryOptions {
     settingsPath?: string
     strictMcpConfig?: boolean
     canCallTool?: CanCallToolCallback
+    replayUserMessages?: boolean
     promptFailureCleanupTimeoutMs?: number
 }
 

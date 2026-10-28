@@ -2,6 +2,7 @@ import type { ApiClient } from '@/api/client'
 import {
     getQueuedReconcileCandidateLocalIds,
     markMessagesConsumed,
+    markMessagesDispatching,
     markMessagesIndeterminate,
     markMessagesRequeued,
     reconcileQueuedLocalIds,
@@ -20,12 +21,14 @@ export async function reconcileQueuedStateAfterConnect(
         return
     }
     const queuedLocalIds: string[] = []
+    const dispatchingLocalIds: string[] = []
     const indeterminateLocalIds: string[] = []
     const invokedLocalMessages: Array<{ localId: string; invokedAt: number }> = []
     for (let index = 0; index < candidateLocalIds.length; index += QUEUED_STATE_BATCH_SIZE) {
         const batch = candidateLocalIds.slice(index, index + QUEUED_STATE_BATCH_SIZE)
         const state = await api.getQueuedState(sessionId, batch)
         queuedLocalIds.push(...state.queuedLocalIds)
+        dispatchingLocalIds.push(...(state.dispatchingLocalIds ?? []))
         indeterminateLocalIds.push(...(state.indeterminateLocalIds ?? []))
         invokedLocalMessages.push(...state.invokedLocalMessages)
     }
@@ -41,6 +44,7 @@ export async function reconcileQueuedStateAfterConnect(
     // Clear force-dismiss holds for rows that returned to ordinary FIFO while
     // SSE was down (#1839 queueDismissed).
     markMessagesRequeued(sessionId, queuedLocalIds)
+    markMessagesDispatching(sessionId, dispatchingLocalIds)
     markMessagesIndeterminate(sessionId, indeterminateLocalIds)
-    reconcileQueuedLocalIds(sessionId, candidateLocalIds, [...queuedLocalIds, ...indeterminateLocalIds])
+    reconcileQueuedLocalIds(sessionId, candidateLocalIds, [...queuedLocalIds, ...dispatchingLocalIds, ...indeterminateLocalIds])
 }

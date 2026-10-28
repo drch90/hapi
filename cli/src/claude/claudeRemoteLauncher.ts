@@ -13,6 +13,8 @@ import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import type { ClaudePermissionMode } from "@hapi/protocol/types";
 import { applySessionTitleFallback } from './utils/sessionTitleFallback';
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
+import { ClaudeSteering } from './steering';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -51,6 +53,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
     private abortFuture: Future<void> | null = null;
     private permissionHandler: PermissionHandler | null = null;
     private handleSessionFound: ((sessionId: string) => void) | null = null;
+    private steering: ClaudeSteering | null = null;
 
     constructor(session: Session) {
         super(process.env.DEBUG ? session.logPath : undefined);
@@ -62,6 +65,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
     }
 
     private async abort(): Promise<void> {
+        this.steering?.setTarget(null);
         if (this.abortController && !this.abortController.signal.aborted) {
             this.abortController.abort();
         }
@@ -139,6 +143,12 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         const messageQueue = new OutgoingMessageQueue(
             (logMessage) => session.client.sendClaudeSessionMessage(logMessage)
         );
+        const steering = new ClaudeSteering(session, () => messageQueue.flush());
+        this.steering = steering;
+        steering.setTarget(null);
+        session.steerQueuedMessage = localId => steering.steer(localId);
+        session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage, (data: { localId?: string } | null) =>
+            steering.steer(data?.localId ?? ''));
 
         permissionHandler.setOnPermissionRequest((toolCallId: string) => {
             messageQueue.releaseToolCall(toolCallId);
@@ -161,6 +171,15 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         let ongoingToolCalls = new Map<string, { parentToolCallId: string | null }>();
 
         function onMessage(message: SDKMessage) {
+            // --replay-user-messages acknowledges input already stored by the
+            // hub. Do not create a second transcript/user row for its echo.
+            if (message.type === 'user' && message.isReplay === true && !message.parent_tool_use_id) {
+                const content = (message as SDKUserMessage).message.content;
+                const text = typeof content === 'string' ? content : content
+                    .filter(block => block.type === 'text').map(block => block.text ?? '').join('\n');
+                session.client.discardPendingHubPromptEchoText(text);
+                return;
+            }
             formatClaudeMessageForInk(message, messageBuffer);
             permissionHandler.onMessage(message);
 
@@ -435,7 +454,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 return { ...p, message: deliveredText };
                             }
 
-                            let msg = await session.queue.waitForMessagesAndGetAsString(controller.signal);
+                            let msg = await session.queue.waitForMessagesAndGetAsString(controller.signal, 1);
 
                             if (msg) {
                                 if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
@@ -486,6 +505,27 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             session.consumeOneTimeFlags();
                         },
                         onThinkingChange: session.onThinkingChange,
+                        onSteeringTarget: target => steering.setTarget(target && {
+                            mode: target.mode,
+                            send: message => {
+                                try {
+                                    const sent = target.send(message);
+                                    // The original task may already have side effects.
+                                    // After live input is written, a transport failure
+                                    // must not replay that task as a startup retry.
+                                    if (sent) inFlightMessage = null;
+                                    return sent;
+                                } catch (error) {
+                                    inFlightMessage = null;
+                                    throw error;
+                                }
+                            }
+                        }),
+                        onSteerEcho: uuid => steering.acknowledge(uuid),
+                        onResult: () => {
+                            reachedReadyThisAttempt = true;
+                            inFlightMessage = null;
+                        },
                         claudeEnvVars: session.claudeEnvVars,
                         claudeArgs: session.claudeArgs,
                         onMessage,
@@ -514,6 +554,8 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             // longer "in flight" either.
                             reachedReadyThisAttempt = true;
                             inFlightMessage = null;
+
+                            await steering.drain();
 
                             await messageQueue.flush();
 
@@ -642,6 +684,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                     }
                 } finally {
                     logger.debug('[remote]: launch finally');
+                    await steering.closeProcess();
 
                     for (let [toolCallId, { parentToolCallId }] of ongoingToolCalls) {
                         const converted = sdkToLogConverter.generateInterruptedToolResult(toolCallId, parentToolCallId);
@@ -674,6 +717,11 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
     }
 
     protected async cleanup(): Promise<void> {
+        this.session.steerQueuedMessage = null;
+        await this.steering?.closeProcess();
+        this.session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage, async () => ({
+            steered: false, error: 'No active remote Claude turn'
+        }));
         this.clearAbortHandlers(this.session.client.rpcHandlerManager);
 
         if (this.handleSessionFound) {

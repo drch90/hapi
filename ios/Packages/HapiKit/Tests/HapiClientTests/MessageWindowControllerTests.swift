@@ -11,6 +11,25 @@ import Testing
 @Suite("MessageWindowController")
 struct MessageWindowControllerTests {
 
+    @Test func reconnectRetainsSteerAwaitingNativeReceipt() async throws {
+        let provider = GatedMessagesProvider()
+        let response = try JSONDecoder().decode(QueuedStateResponse.self, from: Data(
+            #"{"queuedLocalIds":[],"dispatchingLocalIds":["local"],"invokedLocalMessages":[]}"#.utf8
+        ))
+        await provider.setQueuedState(response)
+        let pending = DecryptedMessage(
+            id: "server", seq: 1, localId: "local",
+            content: ["role": "user", "content": ["type": "text", "text": "guidance"]],
+            createdAt: 1000, deliveryState: "dispatching"
+        )
+        await provider.release(latestPage([pending], epoch: 1))
+        let controller = MessageWindowController(sessionId: "s", provider: provider)
+        try await controller.reconcileQueuedState()
+        let state = await controller.state
+        #expect(state.messages.map(\.id) == ["server"])
+        #expect(await controller.queuedReconcileCandidateLocalIds() == ["local"])
+    }
+
     // MARK: - Response builders
 
     private func agentRow(id: String, seq: Int, at: Int) -> DecryptedMessage {
@@ -531,7 +550,13 @@ actor GatedMessagesProvider: MessagesProviding {
     }
 
     func queuedState(sessionId: String, localIds: [String]) async throws -> QueuedStateResponse {
-        QueuedStateResponse(queuedLocalIds: [], invokedLocalMessages: [])
+        queuedResponse
+    }
+
+    private var queuedResponse = QueuedStateResponse(queuedLocalIds: [], invokedLocalMessages: [])
+
+    func setQueuedState(_ response: QueuedStateResponse) {
+        queuedResponse = response
     }
 
     /// Answer the oldest parked request, or buffer for the next one.

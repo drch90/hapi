@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods'
 import { MessageQueue2 } from '@/utils/MessageQueue2'
 import type { EnhancedMode } from './loop'
+import type { SDKUserMessage } from './sdk'
 
 // These tests cover the one-time --resume flag's lifetime across the relaunch
 // loop. The flag lives in session.claudeArgs and is the only resume anchor a
@@ -13,7 +14,9 @@ const harness = vi.hoisted(() => ({
     claudeArgsPerCall: [] as (string[] | undefined)[],
     initialMessages: [] as string[],
     triggerSwitch: null as (() => void) | null,
-    switchAfterCall: 2
+    switchAfterCall: 2,
+    exercise: null as null | ((opts: any) => Promise<void>),
+    convert: vi.fn((_message: unknown) => null)
 }))
 
 vi.mock('./claudeRemote', () => ({
@@ -44,6 +47,7 @@ vi.mock('./claudeRemote', () => ({
         // Mirrors a launch that actually spawns Claude and observes the
         // session id via the SDK's system/init message.
         opts.onSessionFound('captured-session-id')
+        await harness.exercise?.(opts)
 
         if (harness.callCount === harness.switchAfterCall && harness.triggerSwitch) {
             // Stop the runMainLoop() while-loop so the test doesn't hang
@@ -70,7 +74,7 @@ vi.mock('./utils/sdkToLogConverter', () => ({
     SDKToLogConverter: class {
         updateSessionId(): void {}
         resetParentChain(): void {}
-        convert(): null { return null }
+        convert(message: unknown): null { return harness.convert(message) }
         convertSidechainUserMessage(): null { return null }
         updateSelectedModel(): void {}
         generateInterruptedToolResult(): null { return null }
@@ -90,7 +94,7 @@ import { claudeRemoteLauncher } from './claudeRemoteLauncher'
 import { Session } from './session'
 
 function createClientStub() {
-    const rpcHandlers = new Map<string, () => void | Promise<void>>()
+    const rpcHandlers = new Map<string, (...args: any[]) => any>()
     return {
         rpcHandlerManager: {
             registerHandler: (method: string, handler: () => void | Promise<void>) => {
@@ -98,9 +102,13 @@ function createClientStub() {
             }
         },
         rpcHandlers,
+        sessionId: 'hub-session',
         keepAlive: () => {},
+        updateAgentState: vi.fn(),
         updateMetadata: (mutator: (metadata: any) => any) => { mutator({}) },
-        emitMessagesConsumed: () => {},
+        emitMessagesConsumed: vi.fn(),
+        setSteerDeliveryState: vi.fn(async () => true),
+        emitSteerIndeterminate: vi.fn(),
         sendClaudeSessionMessage: () => {},
         sendSessionEvent: () => {},
         notePendingHubPromptEcho: () => {},
@@ -147,7 +155,75 @@ describe('claudeRemoteLauncher resume anchor', () => {
         harness.initialMessages = []
         harness.triggerSwitch = null
         harness.switchAfterCall = 2
+        harness.exercise = null
         vi.clearAllMocks()
+    })
+
+    it('wires direct and queued steer to one live transport and suppresses replay transcript rows', async () => {
+        const client = createClientStub()
+        const { session, queue } = createSession(client, undefined)
+        const send = vi.fn((_message: SDKUserMessage) => true)
+        harness.switchAfterCall = 1
+        harness.triggerSwitch = () => { void client.rpcHandlers.get(RPC_METHODS.Switch)?.() }
+        harness.exercise = async opts => {
+            const mode = { permissionMode: 'default' as const }
+            opts.onSteeringTarget({ mode, send })
+            client.emitMessagesConsumed.mockClear()
+            queue.push('new direction', mode, 'guidance')
+            expect(await client.rpcHandlers.get(RPC_METHODS.SteerQueuedMessage)!({ localId: 'guidance' })).toEqual({ steered: true })
+            expect(await session.steerQueuedMessage!('guidance')).toEqual({ steered: true })
+            expect(send).toHaveBeenCalledOnce()
+            expect(opts.signal.aborted).toBe(false)
+            expect(client.emitMessagesConsumed).not.toHaveBeenCalled()
+            const message = send.mock.calls[0]![0]
+            const replay = { ...message, isReplay: true }
+            opts.onMessage(replay)
+            expect(harness.convert).not.toHaveBeenCalled()
+            await opts.onSteerEcho(message.uuid)
+            expect(client.emitMessagesConsumed).toHaveBeenCalledExactlyOnceWith(['guidance'], { steered: true })
+            opts.onSteeringTarget(null)
+            opts.onResult()
+            await opts.onReady()
+        }
+        try {
+            queue.push('start', { permissionMode: 'default' }, 'initial')
+            await claudeRemoteLauncher(session)
+            expect(session.steerQueuedMessage).toBeNull()
+            expect(await client.rpcHandlers.get(RPC_METHODS.SteerQueuedMessage)!({ localId: 'guidance' })).toMatchObject({ steered: false })
+            expect(client.emitSteerIndeterminate).not.toHaveBeenCalled()
+        } finally {
+            session.stopKeepAlive()
+        }
+    })
+
+    it('does not replay the original task after a transport failure following live input', async () => {
+        const client = createClientStub()
+        const { session, queue } = createSession(client, undefined)
+        const send = vi.fn((_message: SDKUserMessage) => true)
+        const previousBackoff = process.env.CLAUDE_REMOTE_RESPAWN_BACKOFF_MS
+        process.env.CLAUDE_REMOTE_RESPAWN_BACKOFF_MS = '0'
+        harness.triggerSwitch = () => { void client.rpcHandlers.get(RPC_METHODS.Switch)?.() }
+        harness.exercise = async opts => {
+            if (harness.callCount !== 1) return
+            const mode = { permissionMode: 'default' as const }
+            opts.onSteeringTarget({ mode, send })
+            queue.push('live guidance', mode, 'guidance')
+            await session.steerQueuedMessage!('guidance')
+            queue.push('later task', mode, 'later')
+            throw new Error('transport failed after the steer write')
+        }
+        try {
+            queue.push('original task with side effects', { permissionMode: 'default' }, 'original')
+            await claudeRemoteLauncher(session)
+            expect(harness.initialMessages).toEqual(['original task with side effects', 'later task'])
+            expect(send).toHaveBeenCalledOnce()
+            expect(client.emitSteerIndeterminate).toHaveBeenCalledWith(['guidance'])
+            expect(client.emitMessagesConsumed).not.toHaveBeenCalledWith(['guidance'], { steered: true })
+        } finally {
+            session.stopKeepAlive()
+            if (previousBackoff === undefined) delete process.env.CLAUDE_REMOTE_RESPAWN_BACKOFF_MS
+            else process.env.CLAUDE_REMOTE_RESPAWN_BACKOFF_MS = previousBackoff
+        }
     })
 
     it('keeps --resume available for the launch that actually captures the session id', async () => {

@@ -599,6 +599,7 @@ public actor MessageWindowController {
         let candidateLocalIds = queuedReconcileCandidateLocalIds()
         guard !candidateLocalIds.isEmpty else { return }
         var queuedLocalIds: [String] = []
+        var dispatchingLocalIds: [String] = []
         var indeterminateLocalIds: [String] = []
         var invokedLocalMessages: [(localId: String, invokedAt: Int)] = []
         var start = 0
@@ -607,6 +608,7 @@ public actor MessageWindowController {
             let batch = Array(candidateLocalIds[start..<end])
             let response = try await provider.queuedState(sessionId: sessionId, localIds: batch)
             queuedLocalIds += response.queuedLocalIds
+            dispatchingLocalIds += response.dispatchingLocalIds ?? []
             indeterminateLocalIds += response.indeterminateLocalIds ?? []
             invokedLocalMessages += response.invokedLocalMessages.map { ($0.localId, $0.invokedAt) }
             start = end
@@ -621,7 +623,7 @@ public actor MessageWindowController {
             markConsumed(localIds: localIdsByTimestamp[invokedAt]!, invokedAt: invokedAt)
         }
         markIndeterminate(localIds: indeterminateLocalIds)
-        reconcileQueuedLocalIds(candidateLocalIds: candidateLocalIds, queuedLocalIds: queuedLocalIds + indeterminateLocalIds)
+        reconcileQueuedLocalIds(candidateLocalIds: candidateLocalIds, queuedLocalIds: queuedLocalIds + dispatchingLocalIds + indeterminateLocalIds)
     }
 
     // MARK: - Lifecycle transitions

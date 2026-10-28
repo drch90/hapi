@@ -3,6 +3,19 @@ import { MessageQueue2 } from './MessageQueue2';
 import { hashObject } from './deterministicJson';
 
 describe('MessageQueue2', () => {
+    it.each([false, true])('consumes one message per turn without isolating commands (waiting=%s)', async waiting => {
+        const queue = new MessageQueue2<string>(mode => mode);
+        const consumed: string[][] = [];
+        queue.onBatchConsumed = ids => consumed.push(ids);
+        const first = waiting ? queue.waitForMessagesAndGetAsString(undefined, 1) : null;
+        queue.push('first', 'same', 'a');
+        queue.push('second', 'same', 'b');
+        expect(await (first ?? queue.waitForMessagesAndGetAsString(undefined, 1))).toMatchObject({ message: 'first', isolate: false });
+        expect(consumed).toEqual([['a']]);
+        expect(queue.peekByLocalId('b')?.message).toBe('second');
+        expect(await queue.waitForMessagesAndGetAsString(undefined, 1)).toMatchObject({ message: 'second', isolate: false });
+        expect(consumed).toEqual([['a'], ['b']]);
+    });
     it('should create a queue', () => {
         const queue = new MessageQueue2<string>(mode => mode);
         expect(queue.size()).toBe(0);

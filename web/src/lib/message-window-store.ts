@@ -1276,20 +1276,28 @@ export function removeOptimisticMessage(sessionId: string, localId: string): voi
     }, true)
 }
 
-export function markMessagesIndeterminate(sessionId: string, localIds: string[]): void {
+function markMessagesDeliveryState(sessionId: string, localIds: string[], deliveryState: 'dispatching' | 'indeterminate'): void {
     if (localIds.length === 0) return
     const idSet = new Set(localIds)
     updateState(sessionId, (previous) => {
         let changed = false
         const messages = previous.messages.map((message) => {
-            if (!message.localId || !idSet.has(message.localId) || message.deliveryState === 'indeterminate') {
+            if (!message.localId || !idSet.has(message.localId) || message.invokedAt !== null || message.deliveryState === deliveryState) {
                 return message
             }
             changed = true
-            return { ...message, deliveryState: 'indeterminate' as const }
+            return { ...message, deliveryState }
         })
         return changed ? buildState(previous, { messages }) : previous
     }, true)
+}
+
+export function markMessagesDispatching(sessionId: string, localIds: string[]): void {
+    markMessagesDeliveryState(sessionId, localIds, 'dispatching')
+}
+
+export function markMessagesIndeterminate(sessionId: string, localIds: string[]): void {
+    markMessagesDeliveryState(sessionId, localIds, 'indeterminate')
 }
 
 export function markMessagesRequeued(sessionId: string, localIds: string[]): void {

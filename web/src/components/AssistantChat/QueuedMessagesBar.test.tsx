@@ -496,7 +496,7 @@ describe('QueuedMessagesBar edit restore', () => {
     })
 
     it('does not prefill when editing an indeterminate row whose cancel returns busy', async () => {
-        // Hub may still be mid-dispatch (serialized as indeterminate). Prefilling
+        // The runtime may still confirm an ambiguous dispatch. Prefilling
         // would invite a duplicate send if the original later lands.
         mocks.messageWindowState = {
             messages: [makeQueuedMessage(null, 'server-message-id', { deliveryState: 'indeterminate' })],
@@ -777,6 +777,25 @@ describe('formatScheduledTime', () => {
 })
 
 describe('QueuedMessagesBar steer action', () => {
+    it('keeps pending insertion visible and disables edits until receipt is known', () => {
+        const api = { steerMessage: mocks.steerMessage } as unknown as ApiClient
+        const view = renderQueuedMessage(null, null, 0, false, api)
+        mocks.messageWindowState = {
+            messages: [makeQueuedMessage(null, 'server-message-id', { deliveryState: 'dispatching' })],
+        }
+        view.rerender(null)
+
+        expect(screen.getByText('queuedMessages.steerPending')).toBeVisible()
+        expect(screen.queryByText('queuedMessages.steerOutcomeUnknown')).toBeNull()
+        for (const name of ['Steer queued message', 'Edit queued message', 'Cancel queued message']) {
+            const button = screen.getByRole('button', { name })
+            expect(button).toBeDisabled()
+            fireEvent.click(button)
+        }
+        expect(mocks.steerMessage).not.toHaveBeenCalled()
+        expect(mocks.mutateAsync).not.toHaveBeenCalled()
+    })
+
     // The real useSteerQueuedMessage hook runs here (only the cancel hook is
     // module-mocked); pass a fake api whose steerMessage resolves on demand.
     function renderSteerable(canSteer = true) {

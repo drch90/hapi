@@ -352,7 +352,8 @@ export function QueuedMessagesBar({
                         const hasAttachments = attachmentNames.length > 0
                         const localId = msg.localId ?? msg.id
                         const isPending = cancelMutation.isPending || queuedOperationPending
-                        const canCancel = computeCanCancel({ id: msg.id, localId: msg.localId, isPending })
+                        const dispatching = msg.deliveryState === 'dispatching'
+                        const canCancel = !dispatching && computeCanCancel({ id: msg.id, localId: msg.localId, isPending })
 
                         const handleCancel = () => {
                             if (!canCancel) return
@@ -375,15 +376,15 @@ export function QueuedMessagesBar({
                         // Edit/Cancel, and never offered for future-scheduled rows
                         // (the hub rejects those).
                         const canSteerRow = Boolean(
-                            canSteer
+                            (canSteer || dispatching)
                             && msg.deliveryState !== 'indeterminate'
                             && msg.scheduledAt == null
-                            && canCancel
+                            && (canCancel || dispatching)
                         )
                         const steerPending = steerMutation.isPending
                             && steerMutation.variables?.messageId === msg.id
                         const handleSteer = () => {
-                            if (!canSteerRow) return
+                            if (!canSteerRow || dispatching) return
                             const token = beginQueuedOperation(sessionId)
                             if (!token) return
                             void steerMutation.mutateAsync({
@@ -523,6 +524,11 @@ export function QueuedMessagesBar({
                                             {t('queuedMessages.steerOutcomeUnknown')}
                                         </div>
                                     ) : null}
+                                    {dispatching ? (
+                                        <div className="mt-1 text-xs text-[var(--app-hint)]" role="status">
+                                            {t('queuedMessages.steerPending')}
+                                        </div>
+                                    ) : null}
                                     {hasAttachments ? (
                                         <div className={text ? 'mt-1 flex flex-wrap gap-1' : 'flex flex-wrap gap-1'}>
                                             {attachmentNames.map((name, index) => (
@@ -564,8 +570,8 @@ export function QueuedMessagesBar({
                                         <button
                                             type="button"
                                             aria-label="Steer queued message"
-                                            title={t('queuedMessages.steer')}
-                                            disabled={steerPending}
+                                            title={t(dispatching ? 'queuedMessages.steerPending' : 'queuedMessages.steer')}
+                                            disabled={steerPending || dispatching}
                                             onClick={handleSteer}
                                             onMouseDown={(e) => e.preventDefault()}
                                             className="flex h-6 w-6 items-center justify-center rounded text-[var(--app-hint)] transition-colors hover:bg-[var(--app-border)] hover:text-[var(--app-fg)] disabled:cursor-not-allowed disabled:opacity-40"

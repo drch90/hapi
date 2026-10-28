@@ -7,6 +7,7 @@ import type { SessionEffort, SessionModel } from '@/api/types';
 import type { EnhancedMode } from './loop';
 import type { PermissionMode } from './loop';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
+import type { ClaudeSteerResult } from './steering';
 
 type LocalLaunchFailure = {
     message: string;
@@ -26,6 +27,8 @@ export class Session extends AgentSessionBase<EnhancedMode> {
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
     private nativeSkillNames = new Set<string>();
+    /** Installed only by the active remote launcher. */
+    steerQueuedMessage: ((localId: string) => Promise<ClaudeSteerResult>) | null = null;
 
     constructor(opts: {
         api: ApiClient;

@@ -476,6 +476,20 @@ class MessageWindowStoreTest {
         assertTrue(store.state.value.messages.isEmpty())
     }
 
+    @Test fun `reconnect retains a steer that is still awaiting a native receipt`() = runTest {
+        val api = GatedMessagesApi().apply {
+            queuedState = QueuedStateResponse(emptyList(), emptyList(), dispatchingLocalIds = listOf("local"))
+        }
+        val store = MessageWindowStore("s", api, backgroundScope)
+        val pending = buildOptimisticMessage("local", "guidance", 1_000, status = MessageStatus.Queued)
+        val server = pending.wire.copy(id = "server", seq = 1, deliveryState = "dispatching")
+        api.release(latestPage(listOf(server), epoch = 1))
+        store.reconcileQueuedState()
+        assertEquals(listOf(listOf("local")), api.queuedRequests)
+        assertEquals(listOf("server"), store.state.value.messages.map { it.id })
+        assertEquals(listOf("local"), store.queuedReconcileCandidateLocalIds())
+    }
+
     @Test fun `reconnect exposes a dismissed row that the hub explicitly requeued`() = runTest {
         val api = GatedMessagesApi().apply { queuedState = QueuedStateResponse(listOf("local"), emptyList()) }
         val store = MessageWindowStore("s", api, backgroundScope)

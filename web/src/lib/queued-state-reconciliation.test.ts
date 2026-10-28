@@ -4,6 +4,7 @@ import type { ApiClient } from '@/api/client'
 vi.mock('./message-window-store', () => ({
     getQueuedReconcileCandidateLocalIds: vi.fn(),
     markMessagesConsumed: vi.fn(),
+    markMessagesDispatching: vi.fn(),
     markMessagesIndeterminate: vi.fn(),
     markMessagesRequeued: vi.fn(),
     reconcileQueuedLocalIds: vi.fn(),
@@ -13,6 +14,7 @@ vi.mock('./message-window-store', () => ({
 import {
     getQueuedReconcileCandidateLocalIds,
     markMessagesConsumed,
+    markMessagesDispatching,
     markMessagesIndeterminate,
     markMessagesRequeued,
     reconcileQueuedLocalIds,
@@ -37,6 +39,18 @@ function createMockApi(
 }
 
 describe('reconcileQueuedStateAfterConnect', () => {
+    it('retains a dispatch awaiting receipt separately from an uncertain outcome', async () => {
+        mockGetCandidates.mockReturnValueOnce(['sending', 'unknown'])
+        const getQueuedState = vi.fn(async () => ({
+            queuedLocalIds: [], dispatchingLocalIds: ['sending'],
+            indeterminateLocalIds: ['unknown'], invokedLocalMessages: []
+        }))
+        await reconcileQueuedStateAfterConnect(createMockApi(getQueuedState), 'session-pending')
+        expect(markMessagesDispatching).toHaveBeenCalledWith('session-pending', ['sending'])
+        expect(mockMarkMessagesIndeterminate).toHaveBeenCalledWith('session-pending', ['unknown'])
+        expect(mockReconcileQueuedLocalIds).toHaveBeenCalledWith('session-pending', ['sending', 'unknown'], ['sending', 'unknown'])
+        expect(getQueuedState).toHaveBeenCalledOnce()
+    })
     beforeEach(() => {
         vi.clearAllMocks()
         mockSyncTailMessages.mockResolvedValue(undefined)

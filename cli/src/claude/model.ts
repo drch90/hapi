@@ -8,3 +8,9 @@ export function normalizeClaudeSessionModel(model?: string | null): SessionModel
 
     return trimmedModel
 }
+
+/** A complete model-setting command; bare /model remains available to the CLI. */
+export function parseClaudeModelCommand(message: string): SessionModel | undefined {
+    const match = /^\/model[\t ]+(\S+)[\t ]*$/.exec(message.trim())
+    return match ? normalizeClaudeSessionModel(match[1]) : undefined
+}

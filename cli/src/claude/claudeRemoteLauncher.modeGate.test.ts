@@ -13,7 +13,8 @@ import type { EnhancedMode } from './loop'
 const harness = vi.hoisted(() => ({
     // One entry per claudeRemote() call that actually received an initial
     // message: the mode it would spawn with plus every message it consumed.
-    spawns: [] as Array<{ permissionMode: string; messages: string[] }>,
+    spawns: [] as Array<{ permissionMode: string; model?: string; messages: string[] }>,
+    onFirstTurn: null as (() => void) | null,
     bailouts: 0,
     triggerSwitch: null as (() => void) | null,
     // Message text that, once consumed, ends the test by firing the switch RPC.
@@ -29,10 +30,17 @@ vi.mock('./claudeRemote', () => ({
         }
         const spawn = {
             permissionMode: initial.mode.permissionMode as string,
+            ...(initial.mode.model ? { model: initial.mode.model as string } : {}),
             messages: [initial.message as string]
         }
         harness.spawns.push(spawn)
         opts.onSessionFound(`session-${harness.spawns.length}`)
+        if (harness.onFirstTurn) {
+            const onFirstTurn = harness.onFirstTurn
+            harness.onFirstTurn = null
+            await opts.onReady()
+            onFirstTurn()
+        }
         // Mirror the real claudeRemote: a single call keeps consuming turns
         // until nextMessage() resolves null (mode change parked / abort).
         while (true) {
@@ -93,6 +101,7 @@ function createClientStub() {
         },
         rpcHandlers,
         keepAlive: () => {},
+        updateAgentState: () => {},
         updateMetadata: (mutator: (metadata: any) => any) => { mutator({}) },
         emitMessagesConsumed: () => {},
         sendClaudeSessionMessage: () => {},
@@ -131,7 +140,20 @@ describe('claudeRemoteLauncher mode gate after pending delivery', () => {
         harness.spawns = []
         harness.bailouts = 0
         harness.triggerSwitch = null
+        harness.onFirstTurn = null
+        harness.finalMessage = 'three'
         vi.clearAllMocks()
+    })
+
+    it('delivers queued messages separately while retaining the same Claude process', async () => {
+        const client = createClientStub()
+        const { session, queue } = createSession(client)
+        try {
+            for (const text of ['one', 'two', 'three']) queue.push(text, { permissionMode: 'default' }, text)
+            harness.triggerSwitch = () => { client.rpcHandlers.get(RPC_METHODS.Switch)?.() }
+            await claudeRemoteLauncher(session as any)
+            expect(harness.spawns).toEqual([{ permissionMode: 'default', messages: ['one', 'two', 'three'] }])
+        } finally { session.stopKeepAlive() }
     })
 
     it('a mode switch after a pending-delivered batch still forces a relaunch', async () => {
@@ -156,6 +178,35 @@ describe('claudeRemoteLauncher mode gate after pending delivery', () => {
                 { permissionMode: 'auto', messages: ['two'] },
                 { permissionMode: 'default', messages: ['three'] }
             ])
+        } finally {
+            session.stopKeepAlive()
+        }
+    })
+    it('seeds the same custom model after an abort and a permission-mode change', async () => {
+        const client = createClientStub()
+        const { session, queue } = createSession(client)
+        let aborted: Promise<void> | undefined
+
+        try {
+            session.setModel('provider/custom-model')
+            queue.push('one', { permissionMode: 'default', model: session.getModel() ?? undefined }, 'local-1')
+            harness.onFirstTurn = () => {
+                aborted = Promise.resolve(client.rpcHandlers.get(RPC_METHODS.Abort)!()).then(() => {
+                    session.setPermissionMode('plan')
+                    queue.push('two', { permissionMode: 'plan', model: session.getModel() ?? undefined }, 'local-2')
+                })
+            }
+            harness.finalMessage = 'two'
+            harness.triggerSwitch = () => { client.rpcHandlers.get(RPC_METHODS.Switch)?.() }
+
+            await claudeRemoteLauncher(session as any)
+            await aborted
+
+            expect(harness.spawns).toEqual([
+                { permissionMode: 'default', model: 'provider/custom-model', messages: ['one'] },
+                { permissionMode: 'plan', model: 'provider/custom-model', messages: ['two'] }
+            ])
+            expect(session.getModel()).toBe('provider/custom-model')
         } finally {
             session.stopKeepAlive()
         }

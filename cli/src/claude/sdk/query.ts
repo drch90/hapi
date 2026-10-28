@@ -11,6 +11,7 @@ import {
     type QueryOptions,
     type QueryPrompt,
     type SDKMessage,
+    type SDKUserMessage,
     type ControlResponseHandler,
     type SDKControlRequest,
     type ControlRequest,
@@ -128,7 +129,10 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
                             }
                             continue
                         } else if (message.type === 'control_request') {
-                            await this.handleControlRequest(message as unknown as CanUseToolControlRequest)
+                            // Keep reading replay echoes and cancellation while a
+                            // permission dialog waits for the user.
+                            void this.handleControlRequest(message as unknown as CanUseToolControlRequest)
+                                .catch(error => this.setError(error instanceof Error ? error : new Error(String(error))))
                             continue
                         } else if (message.type === 'control_cancel_request') {
                             this.handleControlCancelRequest(message as unknown as ControlCancelRequest)
@@ -176,6 +180,15 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
         await this.request({
             subtype: 'interrupt'
         }, this.childStdin)
+    }
+
+    /** Soft input: preserves the current tool/process and never sends interrupt. */
+    sendUserMessage(message: SDKUserMessage): boolean {
+        if (!this.childStdin?.writable || this.childStdin.destroyed || this.childStdin.writableEnded || this.promptFailure) {
+            return false
+        }
+        this.childStdin.write(JSON.stringify(message) + '\n')
+        return true
     }
 
     /**
@@ -317,6 +330,7 @@ export function query(config: {
             settingsPath,
             strictMcpConfig,
             canCallTool,
+            replayUserMessages,
             promptFailureCleanupTimeoutMs = DEFAULT_PROMPT_FAILURE_CLEANUP_TIMEOUT_MS
         } = {}
     } = config
@@ -364,6 +378,7 @@ export function query(config: {
         args.push('--print', stripNewlinesForWindowsShellArg(prompt.trim()))
     } else {
         args.push('--input-format', 'stream-json')
+        if (replayUserMessages) args.push('--replay-user-messages')
     }
 
     // Determine how to spawn Claude Code
@@ -447,6 +462,12 @@ export function query(config: {
     // Create query instance BEFORE registering close handler
     // to avoid temporal dependency on `query` variable
     const query = new Query(childStdin, child.stdout, processExitPromise, canCallTool)
+
+    child.stdin.on('error', (error) => {
+        query.setError(error)
+        rejectExit(error)
+        void cleanup()
+    })
 
     if (typeof prompt !== 'string') {
         void streamToStdin(prompt, child.stdin, config.options?.abort).catch(async (error) => {

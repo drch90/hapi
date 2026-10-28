@@ -1907,6 +1907,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             loopWakeWaiter = null;
             waiter();
         };
+        session.queue.setOnMessage(wakeLoop);
 
         appServerClient.setTransportAbandonedHandler(() => {
             // The old process is gone; its foreground turn cannot deliver more
@@ -4062,7 +4063,10 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 continue;
             }
 
-            if (!pending && turnInFlight && session.queue.size() === 0) {
+            const queuedText = session.queue.queue[0]?.message;
+            const queuedControl = queuedText !== undefined
+                && (parseGoalCommand(queuedText) !== null || parseCodexSpecialCommand(queuedText).type !== null);
+            if (!pending && turnInFlight && !queuedControl) {
                 await waitForTurnOrRecovery(this.abortController.signal);
                 if (this.abortController.signal.aborted && !this.shouldExit) {
                     logger.debug('[codex]: Internal wait aborted while turn was active; continuing');
@@ -4079,7 +4083,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 sameThreadCompactAttempt = 0;
                 activeMessage = null;
                 const waitSignal = this.abortController.signal;
-                const batch = await session.queue.waitForMessagesAndGetAsString(waitSignal);
+                const batch = await session.queue.waitForMessagesAndGetAsString(waitSignal, 1);
                 if (!batch) {
                     if (waitSignal.aborted && !this.shouldExit) {
                         logger.debug('[codex]: Wait aborted while idle; ignoring and continuing');
@@ -4342,6 +4346,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
     protected async cleanup(): Promise<void> {
         logger.debug('[codex-remote]: cleanup start');
+        this.session.queue.setOnMessage(null);
         this.appServerClient.setTransportAbandonedHandler(null);
         this.appServerClient.setStderrHandler(null);
         try {

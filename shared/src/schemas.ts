@@ -314,9 +314,8 @@ export const DecryptedMessageSchema = z.object({
     createdAt: z.number(),
     invokedAt: z.number().nullable().optional(),
     scheduledAt: z.number().nullable().optional(),
-    // The agent was sent the steer but its final outcome could not be proven.
-    // The row stays uninvoked and requires an explicit user resolution.
-    deliveryState: z.literal('indeterminate').optional(),
+    // Dispatching waits for native receipt; indeterminate requires user resolution.
+    deliveryState: z.enum(['dispatching', 'indeterminate']).optional(),
     // Live signal via messages-consumed (steered:true); not persisted by the hub.
     steered: z.boolean().optional()
 })
@@ -612,6 +611,10 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         invokedAt: z.number(),
         // True when messages were steered into an active turn (not a normal queue drain).
         steered: z.boolean().optional()
+    }),
+    SessionChangedSchema.extend({
+        type: z.literal('messages-dispatching'),
+        localIds: z.array(z.string())
     }),
     SessionChangedSchema.extend({
         type: z.literal('messages-indeterminate'),

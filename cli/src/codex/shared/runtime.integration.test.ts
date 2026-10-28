@@ -9,6 +9,7 @@ import { CodexAppServerClient } from '../codexAppServerClient';
 import { initializeSharedClient } from './launch';
 import { record } from './gateway';
 import { isProcessAlive } from '@/utils/process';
+import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 
 const state = vi.hoisted(() => ({ home: '', sessions: new Map<string, MockSession>(), beforeBootstrap: undefined as (() => Promise<void>) | undefined }));
 class MockSession {
@@ -101,6 +102,8 @@ describe.skipIf(process.env.HAPI_RUN_SHARED_CODEX_TESTS !== '1')('installed Code
         const home = await mkdtemp('/tmp/hapi-shared-test-'); state.home = home;
         const ch = join(home, 'codex'); const cwd = join(home, 'work'); await mkdir(ch); await mkdir(cwd);
         const modelRequests: unknown[] = [];
+        let releaseResponse: (() => void) | undefined;
+        let holdResponse = false;
         const http = createServer((request, response) => {
             const chunks: Buffer[] = [];
             request.on('data', chunk => chunks.push(Buffer.from(chunk)));
@@ -112,7 +115,9 @@ describe.skipIf(process.env.HAPI_RUN_SHARED_CODEX_TESTS !== '1')('installed Code
                     { type: 'response.output_item.done', item: { type: 'message', role: 'assistant', id: `msg_${id}`, content: [{ type: 'output_text', text: 'MOCK ANSWER' }] } },
                     { type: 'response.completed', response: { id, usage: { input_tokens: 12, output_tokens: 3, total_tokens: 15 } } }];
                 response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-                response.end(events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(''));
+                const finish = () => response.end(events.map(e => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(''));
+                if (holdResponse) releaseResponse = finish;
+                else finish();
             });
         });
         await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
@@ -139,9 +144,57 @@ describe.skipIf(process.env.HAPI_RUN_SHARED_CODEX_TESTS !== '1')('installed Code
             const web = state.sessions.get(sessionId)!;
             expect(web.state.requests).toEqual({});
             expect(web.state.completedRequests?.['old-worker']?.status).toBe('canceled');
+            const setConfig = web.rpc.get(RPC_METHODS.SetSessionConfig)!;
+            const sendWithModel = async (text: string, localId: string, model: string) => {
+                const before = modelRequests.length;
+                web.user?.({ content: { text } }, localId);
+                await vi.waitFor(() => {
+                    const requests = modelRequests.slice(before).map(record);
+                    expect(requests).toHaveLength(1);
+                    expect(requests[0].model).toBe(model);
+                    const users = (requests[0].input as unknown[]).map(record).filter(item => item.role === 'user');
+                    expect(JSON.stringify(users.at(-1)?.content)).toContain(text);
+                }, { timeout: 15_000 });
+                await vi.waitFor(() => expect(web.consumed).toContain(localId), { timeout: 15_000 });
+                await vi.waitFor(() => expect(web.state.steeringActive).toBe(false), { timeout: 15_000 });
+            };
+            expect(await setConfig({ model: 'switched-mock' })).toMatchObject({ applied: { model: 'switched-mock' } });
+            await sendWithModel('IDLE MODEL SWITCH', 'idle-model', 'switched-mock');
+            await setConfig({ collaborationMode: 'plan' });
+            expect(await setConfig({ model: 'plan-switched-mock' })).toMatchObject({ applied: { model: 'plan-switched-mock', collaborationMode: 'plan' } });
+            await sendWithModel('PLAN MODEL SWITCH', 'plan-model', 'plan-switched-mock');
+            await setConfig({ collaborationMode: 'default' });
+            web.user?.({ content: { text: '/model command-switched-mock' } }, 'model-command');
+            await vi.waitFor(() => expect(web.consumed).toContain('model-command'), { timeout: 15_000 });
+            await sendWithModel('COMMAND MODEL SWITCH', 'command-model', 'command-switched-mock');
+            expect(await setConfig({ model: 'mock-model' })).toMatchObject({ applied: { model: 'mock-model' } });
+            holdResponse = true;
             web.user?.({ content: { text: 'HELLO FROM WEB' } }, 'web-1');
             await vi.waitFor(() => expect(web.consumed).toContain('web-1'), { timeout: 15_000 });
+            await vi.waitFor(() => expect(releaseResponse).toBeTypeOf('function'), { timeout: 15_000 });
+            expect(await setConfig({ model: 'busy-switched-mock' })).toMatchObject({ applied: { model: 'busy-switched-mock' } });
+            web.user?.({ content: { text: 'FIRST QUEUED FOLLOWUP' } }, 'fifo-1');
+            web.user?.({ content: { text: 'SECOND QUEUED FOLLOWUP' } }, 'fifo-2');
+            await vi.waitFor(async () => {
+                const queued = record(await first.request('thread/queue/list', { threadId: initial }));
+                expect(queued.data).toHaveLength(2);
+            });
+            holdResponse = false;
+            releaseResponse!();
             await vi.waitFor(() => expect(web.messages).toContainEqual(expect.objectContaining({ type: 'message', message: 'MOCK ANSWER' })), { timeout: 15_000 });
+            await vi.waitFor(() => expect(web.consumed).toContain('fifo-2'), { timeout: 15_000 });
+            await vi.waitFor(() => {
+                const followups = modelRequests.map(record).flatMap(request => {
+                    const users = (Array.isArray(request.input) ? request.input.map(record) : []).filter(item => item.role === 'user');
+                    const text = JSON.stringify(users.at(-1)?.content);
+                    return text?.includes('QUEUED FOLLOWUP') ? [{ model: request.model, text }] : [];
+                });
+                expect(followups).toEqual([
+                    { model: 'busy-switched-mock', text: expect.stringContaining('FIRST QUEUED FOLLOWUP') },
+                    { model: 'busy-switched-mock', text: expect.stringContaining('SECOND QUEUED FOLLOWUP') },
+                ]);
+                expect(followups[0].text).not.toContain('SECOND QUEUED FOLLOWUP');
+            }, { timeout: 15_000 });
             const newResponse = record(await first.request('thread/start', { cwd }));
             const next = String(record(newResponse.thread).id); roots.push(next);
             expect(next).not.toBe(initial); expect(state.sessions.size).toBe(2);
@@ -161,6 +214,8 @@ describe.skipIf(process.env.HAPI_RUN_SHARED_CODEX_TESTS !== '1')('installed Code
             await second.request('thread/archive', { threadId: initial }); roots = [];
             await running;
         } finally {
+            holdResponse = false;
+            releaseResponse?.();
             for (const threadId of roots) {
                 await clients.at(-1)?.request('thread/archive', { threadId }).catch(() => {});
             }

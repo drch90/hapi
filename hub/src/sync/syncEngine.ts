@@ -236,6 +236,9 @@ export class SyncEngine {
         this.titleSuggestionService = createTitleSuggestionService(store)
         this.rpcGateway = new RpcGateway(io, rpcRegistry)
         this.reloadAll()
+        for (const session of this.sessionCache.getSessions()) {
+            this.messageService.markPendingSteersIndeterminate(session.id)
+        }
         this.inactivityTimer = setInterval(() => this.expireInactive(), 5_000)
     }
 
@@ -580,6 +583,7 @@ export class SyncEngine {
         const shouldRetryDedup = !ownsPiAttempt && !isPiAttemptChild && (!isCursorAcp || this.sessionReadyIds.has(payload.sid))
 
         this.sessionCache.handleSessionEnd(payload)
+        this.messageService.markPendingSteersIndeterminate(payload.sid)
         this.eventPublisher.emit({
             type: 'session-ended',
             sessionId: payload.sid,
@@ -956,6 +960,7 @@ export class SyncEngine {
             .filter((s): s is NonNullable<typeof s> => s != null)
             .sort((a, b) => (b.activeAt - a.activeAt) || (b.updatedAt - a.updatedAt))
         for (const session of sorted) {
+            this.messageService.markPendingSteersIndeterminate(session.id)
             this.triggerDedupIfNeeded(session.id)
         }
         this.machineCache.expireInactive?.()
@@ -1066,7 +1071,7 @@ export class SyncEngine {
 
     /**
      * Ask the CLI to deliver one waiting-queue message into the active turn
-     * (native steer). Supported for Pi, Codex, and Cursor ACP sessions; the
+     * (native steer). Supported for Claude, Pi, Codex, Cursor ACP and Hermes; the
      * CLI's `steer-queued-message` handler is registered per flavor. Legacy
      * stream-json Cursor sessions and other flavors are rejected by the
      * capability gate.
@@ -1080,7 +1085,7 @@ export class SyncEngine {
             return { status: 'failed', error: 'Session not found', localId: null }
         }
         if (!isSteeringSupportedForSession(session.metadata)) {
-            return { status: 'failed', error: 'Steering is only supported for Pi, Codex, Cursor ACP, and Hermes sessions', localId: null }
+            return { status: 'failed', error: 'Steering is only supported for Claude, Pi, Codex, Cursor ACP, and Hermes sessions', localId: null }
         }
         if (session.agentState?.controlledByUser === true && !session.metadata?.capabilities?.concurrentClients) {
             return { status: 'failed', error: 'Steering is only available for remote sessions', localId: null }

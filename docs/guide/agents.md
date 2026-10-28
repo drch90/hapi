@@ -336,7 +336,7 @@ overall permission policy.
 
 ## Other agents
 
-- **Claude Code** (`hapi claude`) — local sessions wrap the native TUI, remote sessions drive the Claude Agent SDK. [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)
+- **Claude Code** (`hapi claude`) — local sessions wrap the native TUI, remote sessions drive the Claude Agent SDK. With an updated CLI, Hub and client, use a queued message's **Steer** action (or explicit send-and-steer in supported clients) to supply guidance during a remote turn. The current tool finishes normally before the guidance takes effect; ordinary messages stay queued. Unconfirmed guidance is never automatically resent after process failure: check the conversation before explicitly retrying it. [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)
 - **Codex** (`hapi codex`) — OpenAI's Codex CLI, with terminal/Web control and a dedicated `plan` mode. See [Codex usage and limits](./codex-shared-sessions.md) for resume, terminal-exit behavior, and launch options. [openai/codex](https://github.com/openai/codex)
 - **GitHub Copilot** (`hapi copilot`) — Copilot CLI over ACP (`copilot --acp --stdio`). [GitHub Copilot](https://github.com/features/copilot)
 - **Kimi** (`hapi kimi`) — Moonshot AI's Kimi CLI over ACP (`kimi acp`). [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)

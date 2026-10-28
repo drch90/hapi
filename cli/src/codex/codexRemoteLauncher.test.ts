@@ -1257,10 +1257,46 @@ function createSessionStub(
 }
 
 describe('codexRemoteLauncher', () => {
+    it('waits for each turn and applies the selected model to queued follow-ups separately', async () => {
+        harness.suppressTurnCompletion = true;
+        const { session } = createSessionStub(['first'], createMode(), false, false);
+        const running = codexRemoteLauncher(session as never);
+        await vi.waitFor(() => expect(harness.startTurnParams).toHaveLength(1));
+        session.queue.push('second', createMode());
+        session.queue.push('third', createMode());
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+        expect(harness.startTurnMessages).toEqual(['first']);
+        expect(session.queue.size()).toBe(2);
+        session.setModel('selected-after-enqueue');
+        session.queue.close();
+        harness.suppressTurnCompletion = false;
+        harness.dispatchNotification?.('turn/completed', { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } });
+        await running;
+        expect(harness.startTurnMessages).toEqual(['first', 'second', 'third']);
+        for (const params of harness.startTurnParams.slice(1)) {
+            expect(params).toMatchObject({ collaborationMode: { settings: { model: 'selected-after-enqueue' } } });
+        }
+    });
+
     it('invalidates queued steer handlers after abort or cleanup', () => {
         expect(isCurrentSteerHandler(3, 3, false)).toBe(true);
         expect(isCurrentSteerHandler(4, 3, false)).toBe(false);
         expect(isCurrentSteerHandler(3, 3, true)).toBe(false);
+    });
+
+    it('wakes the active-turn wait when a clear command replaces queued follow-ups', async () => {
+        harness.suppressTurnCompletion = true;
+        const { session, resetThreadCalls } = createSessionStub(['first'], createMode(), false, false);
+        const running = codexRemoteLauncher(session as never);
+        await vi.waitFor(() => expect(harness.startTurnMessages).toEqual(['first']));
+        session.queue.push('queued follow-up', createMode());
+        await new Promise<void>(resolve => setTimeout(resolve, 20));
+        session.queue.pushIsolateAndClear('/clear', createMode());
+        session.queue.close();
+        await running;
+        expect(harness.startTurnMessages).toEqual(['first']);
+        expect(harness.interruptedTurns).toEqual([{ threadId: 'thread-1', turnId: 'turn-1' }]);
+        expect(resetThreadCalls).toEqual(['thread-1']);
     });
 
     it('steers a queued message into the active turn and acks on dispatch', async () => {
