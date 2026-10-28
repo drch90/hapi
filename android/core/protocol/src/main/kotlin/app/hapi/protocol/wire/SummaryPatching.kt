@@ -168,7 +168,7 @@ object SummaryPatching {
         thinking = session.thinking,
         activeAt = session.activeAt,
         updatedAt = session.updatedAt,
-        hasConversationContent = session.hasConversationContent,
+        hasConversationContent = session.hasConversationContent ?: false,
         pinned = session.pinned ?: false,
         globalPinned = session.globalPinned ?: false,
         metadata = toSessionSummaryMetadata(session.metadata),
@@ -185,7 +185,6 @@ object SummaryPatching {
         model = session.model,
         modelReasoningEffort = session.modelReasoningEffort,
         effort = session.effort,
-        hasConversationContent = session.hasConversationContent ?: false,
     )
 
     // ------------------------------------------------------- patch rules --

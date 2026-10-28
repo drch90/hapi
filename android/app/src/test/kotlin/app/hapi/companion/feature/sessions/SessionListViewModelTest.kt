@@ -111,7 +111,6 @@ private fun summary(
     hasConversationContent: Boolean = true,
 ): SessionSummary = SessionSummary(
     id = id,
-    hasConversationContent = true,
     active = active,
     thinking = false,
     activeAt = 0,

@@ -6,6 +6,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -79,6 +80,23 @@ class SessionStoreTest {
         // Hub-computed fields the projection cannot derive are preserved.
         assertEquals(2, row.futureScheduledMessageCount)
         assertEquals(999L, row.nextScheduledAt)
+    }
+
+    @Test
+    fun `full-session content flags preserve omission and apply explicit false`() = runStoreTest { store, server ->
+        server.enqueueJson(sessionsResponseJson(summary("s1").copy(hasConversationContent = true)))
+        store.refresh()
+
+        val omitted = fullSessionJson(session("s1", updatedAt = 100))
+        assertFalse(omitted.contains("\"hasConversationContent\""))
+        store.applySessionEvent(globalScope, sessionUpdatedEvent("s1", omitted))
+        assertNull(store.currentDetail("s1")?.hasConversationContent)
+        assertTrue(store.sessions.value.single().hasConversationContent)
+
+        val explicitFalse = session("s1", updatedAt = 200).copy(hasConversationContent = false)
+        store.applySessionEvent(globalScope, sessionUpdatedEvent("s1", fullSessionJson(explicitFalse)))
+        assertEquals(false, store.currentDetail("s1")?.hasConversationContent)
+        assertFalse(store.sessions.value.single().hasConversationContent)
     }
 
     @Test

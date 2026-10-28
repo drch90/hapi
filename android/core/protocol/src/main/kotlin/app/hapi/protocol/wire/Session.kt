@@ -28,8 +28,8 @@ import kotlinx.serialization.json.JsonElement
  */
 @Serializable
 data class Session(
-    /** Hub: the session has conversation content (first-field parity with `SessionSchema`). */
-    val hasConversationContent: Boolean = false,
+    /** Optional hub flag; omission must not clear cached conversation-content state. */
+    val hasConversationContent: Boolean? = null,
     val id: String,
     val namespace: String,
     val seq: Long,
@@ -58,7 +58,6 @@ data class Session(
     val permissionMode: String? = null,
     val collaborationMode: String? = null,
     val copilotAgentMode: String? = null,
-    val hasConversationContent: Boolean? = null,
 )
 
 /**
