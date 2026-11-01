@@ -1,8 +1,10 @@
 # HAPI
 
-Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi / Copilot / Antigravity / Pi / DeepSeek Harness sessions and control them remotely through native iOS / Android apps, Web / PWA, or Telegram Mini App.
+Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi / Copilot / Antigravity / Pi / DeepSeek Harness / Hermes sessions and control them remotely through native iOS / Android apps, Web / PWA, or Telegram Mini App.
 
 > **Why HAPI?** HAPI is a local-first alternative to Happy. See [Why Not Happy?](docs/guide/why-hapi.md) for the key differences.
+
+This fork includes upstream **v0.33.5** with local Hermes, steering, Web and Android extensions preserved. [Build from source](#build-from-source) to use these extensions; the published npm package follows upstream releases. See [Fork updates](docs/guide/fork-updates.md) for the merge, deployment and verification record.
 
 ## Features
 
@@ -10,7 +12,7 @@ Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi /
 - **Shared Codex Sessions** - Use Codex from your terminal and phone at the same time. Requires Codex 0.154.0+. [Usage and limits](docs/guide/codex-shared-sessions.md).
 - **Native First** - HAPI wraps your AI agent instead of replacing it. Same terminal, same experience, same muscle memory.
 - **AFK Without Stopping** - Step away from your desk? Approve AI requests from your phone with one tap.
-- **Your AI, Your Choice** - Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, Kimi, Copilot, Antigravity, Pi, DeepSeek Harness—different agents, one unified workflow.
+- **Your AI, Your Choice** - Claude Code, Codex, Cursor Agent, Grok Build, OpenCode, Kimi, Copilot, Antigravity, Pi, DeepSeek Harness, Hermes—different agents, one unified workflow.
 - **Terminal Anywhere** - Run commands from your phone's browser or desktop web app, directly connected to the working machine.
 - **Voice Control** - Use dictation in native apps, or talk to your AI agent hands-free with the web voice assistant.
 - **Workspace Browser** - Opt-in via one or more `hapi runner start --workspace-root <path>` flags: browse scoped file trees from the web and start sessions in allowed subdirectories.
@@ -50,6 +52,7 @@ For self-hosted options (Cloudflare Tunnel, Tailscale), see [Installation](docs/
 - [Voice Assistant](docs/guide/voice-assistant.md)
 - [Why HAPI](docs/guide/why-hapi.md)
 - [FAQ](docs/guide/faq.md)
+- [Fork updates](docs/guide/fork-updates.md)
 
 ## Clients
 
@@ -66,9 +69,13 @@ Developers can build the apps from source: [iOS](ios/README.md), [Android](andro
 Requires Bun 1.4.4.
 
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run build:single-exe
 ```
+
+The executable includes the hub, CLI and Web app. On Linux x64 it is written to
+`cli/dist-exe/bun-linux-x64-baseline/hapi`. See
+[Deployment](docs/guide/deployment.md#upgrading-a-source-build-with-pm2) for replacing a running service.
 
 ## Credits
 

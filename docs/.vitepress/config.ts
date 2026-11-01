@@ -49,6 +49,7 @@ export default defineConfig({
         items: [
           { text: 'Namespace', link: '/guide/namespace' },
           { text: 'Deployment', link: '/guide/deployment' },
+          { text: 'Fork Updates', link: '/guide/fork-updates' },
           { text: 'Notifications', link: '/guide/notifications' }
         ]
       },

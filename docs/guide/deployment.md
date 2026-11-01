@@ -7,6 +7,52 @@ same hub as the web app. Provide an HTTPS hub origin for pairing; Android
 rejects cleartext URLs. The push relay used for native notifications is a
 separate service from the network tunnels described here.
 
+## Upgrading a source build with PM2
+
+Build this fork from source to retain its local extensions. Use the Bun version
+pinned in the root `package.json` (`bun@1.4.4` for v0.33.5):
+
+```bash
+bun install --frozen-lockfile
+bun run build:single-exe
+```
+
+The all-in-one executable embeds the Web app. On Linux x64 the output is
+`cli/dist-exe/bun-linux-x64-baseline/hapi`; check its `--version` before replacing
+the installed binary. The [fork update record](./fork-updates.md) describes the
+v0.33.5 build and verification results.
+
+For an existing PM2 installation:
+
+1. Record the hub and runner's actual executable paths, arguments and environment.
+   Preserve custom launchers, workspace roots and `HAPI_RUNNER_SUPERVISED=1`.
+2. Back up the installed executable, launcher/package metadata, settings and
+   credentials outside the repository. Use SQLite's backup API for a consistent
+   database copy; copying a live `hapi.db` alone can miss committed WAL contents.
+3. Start the new executable on a separate loopback port with a separate `HAPI_HOME`
+   and `DB_PATH` pointing to the database copy. Use fresh test settings, a separate
+   test token and disabled push/tunnel integrations. Check migrations, existing
+   records, authentication and embedded Web assets.
+4. Stop the hub and take a final consistent database backup before switching
+   binaries. Replace the executable by renaming a staged file on the same
+   filesystem, then start the hub and check `/health`. For an npm launcher,
+   install the matching launcher and keep its package version and the platform
+   package version aligned; mismatched versions are rejected.
+5. Once the hub is healthy, request the supervised runner's graceful shutdown
+   with `hapi runner stop`; PM2's `autorestart` starts the updated executable.
+   PM2 restarts configured to kill a process tree can also terminate detached
+   agent sessions, so use HAPI's runner shutdown for this step. Confirm the new
+   runner remains a child of its PM2 supervisor.
+6. Check the runner's version, workspace roots, session registrations and live
+   connections, along with message history and Web assets. Existing agent
+   wrappers keep running their original code; newly launched sessions use the
+   updated CLI. Preserve the rollback copy until verification is complete.
+
+Database migrations can prevent an older executable from opening the upgraded
+database. A rollback therefore needs a matching database backup as well as the
+old executable. Keep the post-upgrade database too, so newer messages can be
+reconciled before restoring an older snapshot.
+
 ## Relay tunnel details
 
 The default public relay (`hapi hub --relay`) works out of the box. This section covers how relay authentication works and how to tune it.
