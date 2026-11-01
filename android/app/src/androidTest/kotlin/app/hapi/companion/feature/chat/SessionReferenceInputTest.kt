@@ -20,7 +20,7 @@ class SessionReferenceInputTest {
             editor.syncValue(wire)
             editor.setSelection(editor.text.length)
             editor.isEnabled = false
-            editor.insert(SessionSummary("other-session", true, metadata = SessionSummaryMetadata(name = "Other")))
+            editor.insert(SessionSummary("other-session", true, metadata = SessionSummaryMetadata(name = "Other", path = "/project")))
             editor.setSelection(0, editor.text.length)
             editor.onTextContextMenuItem(android.R.id.cut)
             assertEquals(wire, editor.serialize())
