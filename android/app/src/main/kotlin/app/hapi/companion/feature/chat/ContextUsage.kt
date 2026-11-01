@@ -53,11 +53,9 @@ internal fun contextBudgetTokens(model: String?, flavor: String?): Double? {
         "pi" -> 200_000.0
         "cursor" -> cursorContextWindow(trimmed) ?: return null
         "claude" -> when {
-            trimmed.isEmpty() -> 200_000.0
-            trimmed in ClaudeModels.PRESETS || trimmed.startsWith("claude-") -> {
-                if (trimmed.endsWith("[1m]") || trimmed == "fable" || trimmed.startsWith("claude-fable")) 1_000_000.0
-                else 200_000.0
-            }
+            // Current aliases use 1M; stored [1m] aliases still carry that limit.
+            trimmed in ClaudeModels.PRESETS || trimmed.endsWith("[1m]") || trimmed.startsWith("claude-fable") -> 1_000_000.0
+            trimmed.isEmpty() || trimmed.startsWith("claude-") -> 200_000.0
             else -> return null
         }
         else -> return null

@@ -25,7 +25,10 @@ class ContextUsageTest {
     @Test fun `fallback budgets match Web including local Claude message models`() {
         assertEquals(190_000.0, contextBudgetTokens(null, "claude"))
         assertEquals(190_000.0, contextBudgetTokens("claude-sonnet-4-6", "claude"))
-        for (model in listOf("sonnet[1m]", "claude-opus-4-8[1m]", "fable", "fable[1m]", "claude-fable-5")) {
+        for (model in listOf(
+            "opus", "sonnet", "haiku", "fable",
+            "opus[1m]", "sonnet[1m]", "fable[1m]", "claude-opus-4-8[1m]", "claude-fable-5",
+        )) {
             assertEquals(990_000.0, contextBudgetTokens(model, "claude"), model)
         }
         assertEquals(248_400.0, contextBudgetTokens("gpt-5.4", "codex"))

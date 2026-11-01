@@ -557,8 +557,9 @@ class SessionListViewModelTest {
             summary("today", name = "Home today", active = true, updatedAt = dayMillis + 100),
             summary("older", name = "Home older", active = true, updatedAt = dayMillis - 100),
             summary("history", name = "Home history", updatedAt = dayMillis + 200),
+            summary("other", name = "Other project", active = true, updatedAt = dayMillis + 300),
         )
-        viewModel.uiState.first { it.rows.size == 3 }
+        viewModel.uiState.first { it.rows.size == 4 }
         viewModel.setFilters(SessionFilters(activeOnly = true))
         viewModel.setSearchQuery("home")
         viewModel.setDateRange(day, day)
@@ -582,10 +583,17 @@ class SessionListViewModelTest {
         ))
         assertEquals(listOf("today"), viewModel.uiState.first { it.dateRange != null }.rows.map { it.id })
         viewModel.clearFilters()
+        val withoutFilters = viewModel.uiState.first { !it.hasActiveFilters }
+        assertNull(withoutFilters.dateRange)
+        assertEquals(SessionFilters(query = "home"), withoutFilters.filters)
+        assertTrue(withoutFilters.isSearching)
+        assertEquals(setOf("today", "older", "history"), withoutFilters.rows.map { it.id }.toSet())
+
+        viewModel.setSearchQuery("")
         val cleared = viewModel.uiState.first { !it.filters.applied }
         assertNull(cleared.dateRange)
         assertFalse(cleared.isSearching)
-        assertEquals(3, cleared.rows.size)
+        assertEquals(4, cleared.rows.size)
     }
 
     /** Epoch days: 2026-10-05 = 20731 (see SessionDateRangeFilterTest's ladder). */
