@@ -507,14 +507,15 @@ export class MessageQueue2<T> {
     /**
      * Reset the queue - clears all messages and resets to empty state
      */
-    reset(options?: { preserveDispatchingReservations?: boolean }): void {
+    reset(options?: { preserveDispatchingReservations?: boolean; preserveWaiter?: boolean }): void {
         logger.debug(`[MessageQueue2] reset() called. Clearing ${this.queue.length} messages`);
         this.queue = [];
         this.cancelReservations(options?.preserveDispatchingReservations === true);
         this.closed = false;
 
-        // Clear waiter without calling it since we're not closing
-        this.waiter = null;
+        // In-place turn cancellation keeps its consumer alive for the next prompt.
+        // Full queue resets still detach the previous consumer.
+        if (!options?.preserveWaiter) this.waiter = null;
     }
 
     /**

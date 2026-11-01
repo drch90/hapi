@@ -133,17 +133,23 @@ only the needed projects:
 ```
 
 CI ([`android.yml`](../.github/workflows/android.yml)) uses Ubuntu 24.04 and JDK 21.
-One build job first compiles app, unit-test and instrumentation-test sources,
-then runs protocol/data/app tests and lint. Only successful preflight proceeds
-to assemble the debug app and instrumentation APKs and upload the app APK.
+Automatic builds require changes to Android source/build files or shared
+conformance fixtures. Documentation-only and non-native pushes do not start
+Android builds. Workflow configuration edits run a lightweight scope check,
+which skips Gradle, APK assembly and emulators when those inputs are unchanged.
+Manual dispatch explicitly requests a rebuild.
 
-API 29/33/36 emulator jobs wait for the build job, run one at a time and stop
-the remaining matrix when one fails. Each runs the general instrumentation
-suite followed by `BackgroundNotificationDeliveryTest` in a separate process;
+When inputs change, the build job first compiles the app, unit tests and
+instrumentation tests, then runs protocol/data/app tests and lint. Successful
+preflight proceeds to assemble the debug app and instrumentation APKs and
+upload the app APK.
+
+The Android 16 (API 36) emulator job waits for the build job. It runs the general
+instrumentation suite followed by `BackgroundNotificationDeliveryTest` in a separate process;
 reports retain both phases. Superseded branch runs are cancelled. The workflow
 supports manual dispatch, pushes to `main` and `android-session-parity`, and PRs
-touching Android, fixtures or the workflow. Android-only pushes do not also run
-the unrelated JS/TS workflow; shared changes still trigger it.
+touching Android inputs, fixtures or the workflow. Android-only pushes do not
+also run the unrelated JS/TS workflow; shared changes still trigger it.
 
 On machines without enough disk or a native toolchain, perform the available
 local static checks and use one remote preflight for the reviewed change set.
@@ -157,7 +163,7 @@ adding it only on a feature branch does not enable the button.
 
 In a matching commit's Actions run, download `hapi-android-debug-<full-commit-sha>`
 and extract the APK. Unit/lint results are in `android-unit-lint-reports`;
-emulator results are in `android-test-reports-api-29`, `-33` and `-36`. APK
+emulator results are in `android-test-reports-api-36`. APK
 upload and emulator verification have separate jobs, so check all of them when
 assessing a build. See the [verification snapshot](#verification) below.
 
@@ -258,8 +264,8 @@ replay can supply them; the app does not scan old conversation history.
 Deduplication is per hub, bounded to 2,048 identifiers and seven days, and stores
 no message bodies. Settings and dedup records are excluded from backup/transfer.
 
-Verification runs in GitHub Actions (API 29/33/36). Physical-device acceptance
-should include LAN connection, background/lock screen, network loss/recovery,
+Routine verification runs in GitHub Actions on Android 16 (API 36).
+Physical-device acceptance should include LAN connection, background/lock screen, network loss/recovery,
 hub switching, permission denial and reopening the app after stopping it.
 
 ## Firebase / push

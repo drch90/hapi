@@ -297,9 +297,10 @@ turns **Allow for session** into a permanent grant. Requests expire in HAPI afte
 one minute or when Hermes withdraws them. For one-shot requests, session approval
 applies only to that operation. Hermes' own command policies still apply.
 
-Stop or end sessions using the normal HAPI controls. Resume loads the original
-conversation on its original machine and preserves the HAPI session URL. Missing
-native history is reported as an error. This integration manages only sessions
+**Stop** cancels the current turn and keeps the conversation available for your
+next message, including after resuming an archived session. Resume loads the
+original conversation on its original machine and preserves the HAPI session
+URL. Missing native history is reported as an error. This integration manages only sessions
 created through HAPI; external history import, local TUI handoff, YOLO, fork,
 and effort controls are unavailable. Android supports Hermes creation, models,
 commands and steering. iOS retains generic conversation/approval support; its

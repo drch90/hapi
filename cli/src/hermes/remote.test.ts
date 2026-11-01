@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import { ApiClient } from '@/api/api'
+import type { Machine, Session } from '@/api/types'
+import { configuration } from '@/configuration'
 import { MessageQueue2 } from '@/utils/MessageQueue2'
-import type { HermesSession, HermesMode } from './session'
+import { HermesSession, type HermesMode } from './session'
 
 const h = vi.hoisted(() => ({ backend: {} as Record<string, ReturnType<typeof vi.fn>>, close: null as null | ((e: Error) => void), stop: vi.fn() }))
 vi.mock('./backend', () => ({ createHermesBackend: (close: (e: Error) => void) => { h.close = close; return h.backend } }))
@@ -15,7 +19,7 @@ function session(nativeId: string | null = null) {
     const result = {
         path: '/tmp/hermes-test', logPath: '', queue, sessionId: nativeId, thinking: false,
         client: { rpcHandlerManager: { registerHandler: (key: string, fn: (p: unknown) => Promise<unknown>) => handlers.set(key, fn) },
-            updateMetadata: vi.fn(), emitMessagesConsumed: vi.fn(), updateAgentState: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(), sendSessionEvent: vi.fn(), flush: vi.fn(async () => true) },
+            updateMetadata: vi.fn(), emitMessagesConsumed: vi.fn(), emitSessionReady: vi.fn(), updateAgentState: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(), sendSessionEvent: vi.fn(), flush: vi.fn(async () => true) },
         onSessionFound: vi.fn((id: string) => { result.sessionId = id }),
         onThinkingChange: vi.fn((value: boolean) => { result.thinking = value }),
         getModel: () => model, setModel: (value: string) => { model = value },
@@ -47,6 +51,7 @@ describe('Hermes remote lifecycle', () => {
         expect(h.backend.newSession).toHaveBeenCalledWith({ cwd: result.path, mcpServers: [{ name: 'hapi', command: 'hapi', args: ['mcp'], env: [] }] })
         expect(result.client.sendAgentMessage).toHaveBeenCalledWith({ type: 'message', message: 'answer' })
         expect(ready).toHaveBeenCalledOnce()
+        expect(result.client.emitSessionReady).toHaveBeenCalledOnce()
         expect(h.backend.disconnect).toHaveBeenCalledOnce()
         expect(h.stop).toHaveBeenCalledOnce()
     })
@@ -58,6 +63,7 @@ describe('Hermes remote lifecycle', () => {
         expect(h.backend.loadSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'native-existing' }))
         expect(h.backend.suppressUpdatesDuring).toHaveBeenCalledOnce()
         expect(h.backend.newSession).not.toHaveBeenCalled()
+        expect(result.client.emitSessionReady).toHaveBeenCalledOnce()
     })
 
     it('fails a missing native conversation without reporting ready or creating a replacement', async () => {
@@ -66,6 +72,7 @@ describe('Hermes remote lifecycle', () => {
         const ready = vi.fn(async () => {})
         await expect(new HermesRemoteLauncher(result as unknown as HermesSession, ready).launch()).rejects.toThrow('not found')
         expect(ready).not.toHaveBeenCalled()
+        expect(result.client.emitSessionReady).not.toHaveBeenCalled()
         expect(h.backend.newSession).not.toHaveBeenCalled()
         expect(h.stop).toHaveBeenCalledOnce()
     })
@@ -88,6 +95,31 @@ describe('Hermes remote lifecycle', () => {
         await new HermesRemoteLauncher(result as unknown as HermesSession, async () => {}).launch()
         expect(h.backend.cancelPrompt).toHaveBeenCalledWith('native-new')
         expect(result.thinking).toBe(false)
+    })
+
+    it.each(['idle', 'before dequeue'] as const)('accepts the next message after stopping a resumed session %s', async (when) => {
+        const { result, handlers } = session('native-existing')
+        result.queue.onBatchConsumed = localIds => result.client.emitMessagesConsumed(localIds)
+        h.backend.prompt.mockImplementation(async (_id, _content, update) => {
+            update({ type: 'text', text: 'continued' })
+            result.queue.close()
+        })
+        const launcher = new HermesRemoteLauncher(result as unknown as HermesSession, async () => {})
+        const running = launcher.launch()
+        try {
+            await vi.waitFor(() => expect(result.client.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }))
+            if (when === 'before dequeue') launcher.receive('cancel this prompt', 'cancelled')
+            await handlers.get('abort')?.({})
+            launcher.receive('continue the original conversation', 'next-message')
+
+            await vi.waitFor(() => expect(result.client.sendAgentMessage).toHaveBeenCalledWith({ type: 'message', message: 'continued' }))
+            expect(h.backend.prompt.mock.calls.map(call => call[1][0].text)).toEqual(['continue the original conversation'])
+            expect(result.client.emitMessagesConsumed).toHaveBeenCalledExactlyOnceWith(['next-message'])
+            expect(h.backend.newSession).not.toHaveBeenCalled()
+        } finally {
+            await launcher.kill()
+            await running
+        }
     })
 
     it('does not change the advertised model when native model switching fails', async () => {
@@ -197,4 +229,110 @@ describe('Hermes remote lifecycle', () => {
             expect(h.backend.setModel).not.toHaveBeenCalled()
         }).launch()
     })
+
+    it('archives, resumes and sends again after idle Stop through the real Hub', async () => {
+        // globalSetup provides an isolated Hub. Only the native Hermes backend
+        // and MCP bridge are mocked; readiness, RPC and delivery use real sockets.
+        const api = await ApiClient.create()
+        const machineInfo = await api.getOrCreateMachine({
+            machineId: randomUUID(),
+            metadata: { host: 'hermes-test', platform: process.platform, happyCliVersion: configuration.currentCliVersion }
+        })
+        const machine = api.machineSyncClient(machineInfo)
+        const original = await api.getOrCreateSession({
+            tag: randomUUID(),
+            metadata: { path: configuration.happyHomeDir, host: 'hermes-test', machineId: machineInfo.id, flavor: 'hermes', startedBy: 'runner' },
+            state: { controlledByUser: false, startingMode: 'remote' }
+        })
+        const auth = await fetch(`${configuration.apiUrl}/api/auth`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ accessToken: configuration.cliApiToken })
+        })
+        expect(auth.status).toBe(200)
+        const { token } = await auth.json() as { token: string }
+        async function request<T>(path: string, body?: unknown): Promise<T> {
+            const response = await fetch(`${configuration.apiUrl}/api${path}`, {
+                method: body === undefined ? 'GET' : 'POST',
+                headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5_000)
+            })
+            expect(response.status).toBe(200)
+            return await response.json() as T
+        }
+        let runtime: { session: HermesSession; launcher: HermesRemoteLauncher; running: ReturnType<HermesRemoteLauncher['launch']> } | null = null
+        async function start(row: Session): Promise<void> {
+            const client = api.sessionSyncClient(row)
+            const current = new HermesSession({
+                api, client, path: configuration.happyHomeDir, logPath: '',
+                sessionId: row.metadata?.hermesSessionId ?? null,
+                messageQueue: new MessageQueue2<HermesMode>(() => 'hermes'),
+                permissionMode: 'default'
+            })
+            let ready!: () => void
+            let failed!: (error: unknown) => void
+            const started = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
+            const launcher = new HermesRemoteLauncher(current, async () => { ready() })
+            client.onUserMessage((message, localId) => launcher.receive(message.content.text, localId))
+            client.onCancelQueuedMessage(localId => current.queue.cancelByLocalId(localId))
+            client.onRetryQueuedMessage(localId => current.queue.releaseIndeterminateReservation(localId))
+            const running = launcher.launch()
+            void running.catch(failed)
+            runtime = { session: current, launcher, running }
+            await started
+        }
+        async function stop(): Promise<void> {
+            const current = runtime
+            runtime = null
+            if (!current) return
+            current.session.stopKeepAlive()
+            try {
+                await current.launcher.kill()
+                await current.running
+            } finally {
+                try {
+                    current.session.client.sendSessionDeath('completed')
+                    await current.session.client.flush()
+                } finally {
+                    current.session.client.close()
+                }
+            }
+        }
+        const spawn = vi.fn(async (options: { existingSessionId?: string; resumeSessionId?: string }) => {
+            expect(options.existingSessionId).toBe(original.id)
+            expect(options.resumeSessionId).toBe('native-new')
+            await start(await api.getSession(original.id))
+            return { type: 'success' as const, sessionId: original.id }
+        })
+        machine.setRPCHandlers({ spawnSession: spawn, stopSession: async () => { await stop(); return 'stopped' }, requestShutdown() {} })
+        machine.connect()
+        try {
+            await vi.waitFor(async () => {
+                const { machines } = await request<{ machines: Machine[] }>('/machines')
+                expect(machines.find(row => row.id === machineInfo.id)?.active).toBe(true)
+            }, { timeout: 5_000 })
+            await start(original)
+            await request(`/sessions/${original.id}/archive`, {})
+            expect((await api.getSession(original.id)).metadata?.lifecycleState).toBe('archived')
+            expect(await request(`/sessions/${original.id}/resume`, {})).toEqual({ type: 'success', sessionId: original.id })
+
+            for (const localId of ['after-resume', 'after-idle-stop']) {
+                await request(`/sessions/${original.id}/messages`, { localId, text: localId })
+                await vi.waitFor(async () => {
+                    const state = await request<{ queuedLocalIds: string[]; invokedLocalMessages: Array<{ localId: string }> }>(
+                        `/sessions/${original.id}/messages/queued-state`, { localIds: [localId] }
+                    )
+                    expect(state.queuedLocalIds).toEqual([])
+                    expect(state.invokedLocalMessages).toEqual([expect.objectContaining({ localId })])
+                }, { timeout: 3_000 })
+                await vi.waitFor(() => expect(runtime?.session.thinking).toBe(false))
+                await request(`/sessions/${original.id}/abort`, {})
+            }
+            expect(spawn).toHaveBeenCalledOnce()
+            expect(h.backend.newSession).toHaveBeenCalledOnce()
+            expect(h.backend.prompt.mock.calls.map(call => call[1][0].text)).toEqual(['after-resume', 'after-idle-stop'])
+        } finally {
+            try { await stop() } finally { machine.shutdown() }
+        }
+    }, 15_000)
 })

@@ -205,11 +205,18 @@ export class HermesRemoteLauncher extends RemoteLauncherBase {
         await session.client.flush()
         if (this.shouldExit || this.failure) throw this.failure ?? new Error('Hermes startup canceled')
         await this.onReady()
+        if (this.shouldExit || this.failure) throw this.failure ?? new Error('Hermes startup canceled')
+        // The chat-ready event does not release the Hub's native resume barrier.
+        session.client.emitSessionReady()
         session.client.sendSessionEvent({ type: 'ready' })
 
         while (!this.shouldExit && !this.failure) {
             const batch = await session.queue.waitForMessagesAndGetAsString(this.waitController.signal)
-            if (!batch) break
+            if (!batch) {
+                if (session.queue.isClosed() || this.waitController.signal.aborted) break
+                // Stop can clear a batch after it wakes this loop but before dequeue.
+                continue
+            }
             this.turnPending = true
             this.messageBuffer.addMessage(batch.message, 'user')
             await this.exclusive(async () => {
@@ -258,7 +265,7 @@ export class HermesRemoteLauncher extends RemoteLauncherBase {
 
     async abort(): Promise<void> {
         this.promptInFlight = false
-        this.session.queue.reset({ preserveDispatchingReservations: true })
+        this.session.queue.reset({ preserveDispatchingReservations: true, preserveWaiter: true })
         await this.permissions?.cancelAll('Turn canceled')
         if (this.session.sessionId) await this.backend?.cancelPrompt(this.session.sessionId)
     }
