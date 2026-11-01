@@ -827,7 +827,7 @@ class ChatViewModelTest {
     @Test
     fun `manual unread survives an unchanged rendered tail until a new foreground viewing action`() = runTest {
         val harness = Harness(this, ScriptedTransport(listOf("ok")))
-        harness.sessionStore.summaries.value = listOf(summary().copy(contentRevision = 3))
+        harness.sessionStore.summaries.value = listOf(summary(updatedAt = 100).copy(contentRevision = 3))
         harness.api.tailResponses.add(MessagesResponse(
             messages = listOf(agentMessage("a", 1, 100, "answer")),
             page = page("latest", hasMore = false).copy(readThroughRevision = 3),

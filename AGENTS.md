@@ -55,6 +55,16 @@ Choose checks by the change's impact, not by the number of workflow steps:
 - Reuse passing checks when code, dependencies, and environment are unchanged; commit/push/PR transitions alone do not require reruns. Run repository-wide checks when explicitly requested as well.
 - Review this task's changes for correctness, security, and regressions. For local work, inspect unstaged/staged diffs (`git diff`, `git diff --cached`) and new files; for a branch/PR review, use the actual target branch's merge-base diff. Local self-review does not require a GitHub event, remote review, or posting comments.
 
+## Actions preflight before pushing
+
+- Before pushing, inspect the proposed changes against the destination branch and the branch/path filters in `.github/workflows/` to identify every workflow and build job the push will trigger. Aim for the first Actions run to pass; do not use pushes as build experiments.
+- Complete the locally available preflight checks and resolve known source errors before pushing. Inspect the full change, including tests and fixtures; a clean diff or an import-only fix is not proof that compilation will pass.
+- When local disk or toolchain limits prevent native verification, one remote preflight is allowed per reviewed change set. For Android, it must compile the app, unit tests and instrumentation tests, then run protocol/data/app tests and lint using the repository's toolchain and lockfiles. State which checks remain remote; do not install a full native toolchain on a resource-constrained service host just to duplicate CI.
+- Gate APK assembly/upload and emulator jobs on successful preflight. Run expensive emulator variants serially with fail-fast, cancel superseded runs and avoid unrelated package suites for native-only pushes. Keep required coverage for successful runs; reducing waste must not hide failing tests.
+- A failed preflight blocks downstream work. Inspect the available logs, group the necessary fixes and repeat available local checks before another run. Never push empty/touch commits or dispatch the same HEAD repeatedly to try to make deterministic errors disappear. Do not duplicate a build already triggered by a push; retry only failed jobs for a confirmed transient infrastructure fault when possible.
+- Reuse passing evidence only when the checked code, dependencies, workflow and relevant environment are unchanged. Do not use CI-skip markers or weaker checks to claim success. The same gate applies to automated fix-and-push loops below.
+- Report the evidence actually obtained. Passing preflight reduces avoidable failures; it does not guarantee GitHub runner availability or network reliability.
+
 ## PR follow-through: review wait + auto-fix loop (agents)
 
 Opening or updating a PR does **not** end the task. Enter a bounded review-wait phase and watch, for the current HEAD: GitHub Checks, PR reviews, plain comments, and inline review comments.

@@ -2,7 +2,20 @@ name: Test
 
 on:
     push:
+        # These changes have their own checks and do not change the JS/TS packages.
+        # Keep PR checks unconditional so existing required checks still report.
+        paths-ignore:
+            - 'android/**'
+            - 'ios/**'
+            - 'docs/**'
+            - 'website/**'
+            - 'README.md'
+            - 'AGENTS.md'
     pull_request:
+
+concurrency:
+    group: test-${{ github.ref }}
+    cancel-in-progress: true
 
 jobs:
     test:

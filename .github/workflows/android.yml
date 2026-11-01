@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
     build:
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         timeout-minutes: 40
         defaults:
             run:
@@ -40,10 +40,14 @@ jobs:
             # Android SDK is preinstalled on GitHub ubuntu runners (licenses
             # accepted); AGP auto-installs any missing platform/build-tools.
             - uses: gradle/actions/setup-gradle@v5
-            - name: Protocol, data and app unit tests
-              run: ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest --console=plain 2>&1 | tee unit-tests.log
-            - name: Assemble debug APK and lint
-              run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug --console=plain 2>&1 | tee assemble-lint.log
+            # Check every Kotlin source set before spending time on tests or emulators.
+            # --continue reports independent compilation failures in this one run.
+            - name: Compile app, unit tests and instrumentation tests
+              run: ./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --continue --console=plain 2>&1 | tee compile.log
+            - name: Protocol, data and app unit tests and lint
+              run: ./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug --continue --console=plain 2>&1 | tee unit-lint.log
+            - name: Assemble verified debug APKs
+              run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain 2>&1 | tee assemble.log
             - name: Annotate build failures
               if: failure()
               run: |
@@ -54,7 +58,7 @@ jobs:
                   def escape(value):
                       return value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
 
-                  for log in (Path('unit-tests.log'), Path('assemble-lint.log')):
+                  for log in (Path('compile.log'), Path('unit-lint.log'), Path('assemble.log')):
                       if not log.exists():
                           continue
                       for line in log.read_text(errors='replace').splitlines():
@@ -96,10 +100,13 @@ jobs:
                   retention-days: 7
 
     transcript-layout:
-        runs-on: ubuntu-latest
+        # A compile/test/lint failure must not boot any emulator.
+        needs: build
+        runs-on: ubuntu-24.04
         timeout-minutes: 45
         strategy:
-            fail-fast: false
+            fail-fast: true
+            max-parallel: 1
             matrix:
                 api-level: [29, 33, 36]
         steps:

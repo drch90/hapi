@@ -132,12 +132,23 @@ only the needed projects:
 ./gradlew --no-configuration-cache --configure-on-demand :core:protocol:test
 ```
 
-CI ([`android.yml`](../.github/workflows/android.yml)) runs protocol/data/app unit
-tests, assembles both the debug app and instrumentation APK, and runs lint.
-API 29/33/36 emulator jobs run the general instrumentation suite followed by
-`BackgroundNotificationDeliveryTest` in a separate process; reports retain both
-phases. It supports manual dispatch, pushes to `main` and
-`android-session-parity`, and PRs touching Android, fixtures or the workflow.
+CI ([`android.yml`](../.github/workflows/android.yml)) uses Ubuntu 24.04 and JDK 21.
+One build job first compiles app, unit-test and instrumentation-test sources,
+then runs protocol/data/app tests and lint. Only successful preflight proceeds
+to assemble the debug app and instrumentation APKs and upload the app APK.
+
+API 29/33/36 emulator jobs wait for the build job, run one at a time and stop
+the remaining matrix when one fails. Each runs the general instrumentation
+suite followed by `BackgroundNotificationDeliveryTest` in a separate process;
+reports retain both phases. Superseded branch runs are cancelled. The workflow
+supports manual dispatch, pushes to `main` and `android-session-parity`, and PRs
+touching Android, fixtures or the workflow. Android-only pushes do not also run
+the unrelated JS/TS workflow; shared changes still trigger it.
+
+On machines without enough disk or a native toolchain, perform the available
+local static checks and use one remote preflight for the reviewed change set.
+Collect failures and fix them together before the next run. Avoid dispatching
+another build when a push has already triggered one.
 
 To start a build manually, open **Actions → android → Run workflow** in GitHub
 and select the branch containing your changes. The workflow on the repository's
