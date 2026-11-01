@@ -1,21 +1,25 @@
 package app.hapi.companion.feature.sessions
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import java.time.Instant
-import java.time.ZoneOffset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
+import kotlinx.coroutines.launch
 
 @Composable
 internal fun machineFilterLabel(filter: MachineFilterUi): String = when {
@@ -26,47 +30,111 @@ internal fun machineFilterLabel(filter: MachineFilterUi): String = when {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SessionFilterSheet(state: SessionListUiState, select: (String?) -> Unit, dismiss: () -> Unit, update: (SessionFilters) -> Unit = {}, clear: () -> Unit = {}) {
-    var dates by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = dismiss) {
-        Text(stringResource(R.string.sessions_filters), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(16.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.sessions_active_only), Modifier.weight(1f))
-            Switch(state.filters.activeOnly, { update(state.filters.copy(activeOnly = it)) })
-        }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(stringResource(R.string.sessions_unread_only), Modifier.weight(1f))
-            Switch(state.filters.unreadOnly, { update(state.filters.copy(unreadOnly = it)) })
-        }
-        TextButton(onClick = { dates = true }) { Text(stringResource(R.string.sessions_date_range) +
-            (state.filters.start?.let { " · $it – ${state.filters.end ?: it}" } ?: "")) }
-        TextButton(onClick = clear) { Text(stringResource(R.string.sessions_clear_filters)) }
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp).selectableGroup().testTag("session-filters")) {
-            item("all") {
-                FilterOption(stringResource(R.string.sessions_filter_all), state.activeMachineFilter == null) { select(null) }
+internal fun SessionFilterSheet(
+    state: SessionListUiState,
+    onSelectMachine: (String?) -> Unit,
+    onOpenDates: () -> Unit,
+    onClearDates: () -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+    onUpdateFilters: (SessionFilters) -> Unit = {},
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.sessions_filters),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onReset, enabled = state.hasActiveFilters) {
+                Text(stringResource(R.string.sessions_filters_reset))
             }
-            items(state.machineFilters, key = { it.id }) { filter ->
-                FilterOption("${machineFilterLabel(filter)} · ${filter.sessionCount}", state.activeMachineFilter == filter.id) { select(filter.id) }
+        }
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 480.dp)
+                .selectableGroup().testTag("session-filters"),
+        ) {
+            item("active-only") {
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.sessions_active_only)) },
+                    trailingContent = {
+                        Switch(state.filters.activeOnly, { onUpdateFilters(state.filters.copy(activeOnly = it)) })
+                    },
+                )
+            }
+            item("unread-only") {
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.sessions_unread_only)) },
+                    trailingContent = {
+                        Switch(state.filters.unreadOnly, { onUpdateFilters(state.filters.copy(unreadOnly = it)) })
+                    },
+                )
+            }
+            if (state.hasMachineFilters) {
+                item("machines-title") {
+                    Text(
+                        stringResource(R.string.sessions_filter_machines),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+                item("all") {
+                    FilterOption(stringResource(R.string.sessions_filter_all), state.activeMachineFilter == null) { onSelectMachine(null) }
+                }
+                items(state.machineFilters, key = { "machine:${it.id}" }) { filter ->
+                    FilterOption("${machineFilterLabel(filter)} · ${filter.sessionCount}", state.activeMachineFilter == filter.id) {
+                        onSelectMachine(filter.id)
+                    }
+                }
+                item("divider") { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            }
+            item("dates") {
+                val range = state.dateRange
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.sessions_filter_dates)) },
+                    supportingContent = {
+                        Text(
+                            if (range == null) stringResource(R.string.sessions_filter_any_date)
+                            else stringResource(
+                                R.string.sessions_time_filter_summary,
+                                formatEpochDayLocalized(range.startEpochDay),
+                                formatEpochDayLocalized(range.endEpochDay),
+                            ),
+                        )
+                    },
+                    leadingContent = { Icon(painterResource(R.drawable.ic_calendar), contentDescription = null) },
+                    trailingContent = {
+                        if (range != null) {
+                            IconButton(onClick = onClearDates, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Default.Close, stringResource(R.string.sessions_filter_clear_dates))
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable {
+                        // Finish the sheet transition before opening another window.
+                        scope.launch {
+                            sheetState.hide()
+                            onOpenDates()
+                        }
+                    }.testTag("session-date-filter"),
+                )
             }
         }
-        Spacer(Modifier.height(16.dp))
-    }
-    if (dates) {
-        val picker = rememberDateRangePickerState(
-            initialSelectedStartDateMillis = state.filters.start?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli(),
-            initialSelectedEndDateMillis = state.filters.end?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli())
-        DatePickerDialog(onDismissRequest = { dates = false },
-            confirmButton = { TextButton(onClick = {
-                update(state.filters.copy(
-                    start = picker.selectedStartDateMillis?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() },
-                    end = (picker.selectedEndDateMillis ?: picker.selectedStartDateMillis)?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }))
-                dates = false
-            }) { Text(stringResource(R.string.chat_link_open)) } },
-            dismissButton = { TextButton(onClick = { dates = false }) { Text(stringResource(R.string.chat_cancel)) } }) {
-            DateRangePicker(picker, modifier = Modifier.heightIn(max = 480.dp), showModeToggle = true)
+        Button(
+            onClick = { scope.launch { sheetState.hide(); onDismiss() } },
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+        ) {
+            Text(stringResource(R.string.sessions_filters_done))
         }
     }
-
 }
 
 @Composable

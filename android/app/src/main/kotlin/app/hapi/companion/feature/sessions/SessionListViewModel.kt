@@ -1,6 +1,7 @@
 package app.hapi.companion.feature.sessions
 
 import app.hapi.data.api.ApiError
+import app.hapi.data.store.LastSeenState
 import app.hapi.data.store.LastSeenStore
 import app.hapi.data.store.MachineListStore
 import app.hapi.data.store.SessionListStore
@@ -94,6 +95,7 @@ data class SessionListUiState(
     val searchQuery: String = "",
 ) {
     val hasMachineFilters: Boolean get() = machineFilters.size >= 2
+    val hasActiveFilters: Boolean get() = activeMachineFilter != null || dateRange != null || filters.activeOnly || filters.unreadOnly
     val isSearching: Boolean get() = searchQuery.isNotBlank()
 }
 
@@ -141,6 +143,7 @@ class SessionListViewModel(
     val reopened: SharedFlow<String> = _reopened.asSharedFlow()
 
     private var refreshJob: Job? = null
+    private var preferencesJob: Job? = null
 
     init {
         scope.launch {
@@ -149,7 +152,7 @@ class SessionListViewModel(
                 // emission that may have queued before the user selected a row.
                 val ids = sessionStore.sessions.value.map { it.metadata?.machineId ?: UNKNOWN_MACHINE_ID }.toSet()
                 if (selected != null && (ids.isNotEmpty() || hasRefreshedOnce.value) && (ids.size < 2 || selected !in ids)) {
-                    if (machineFilter.compareAndSet(selected, null)) lastSeenStore.setListPreferences(null, filters.value.activeOnly)
+                    if (machineFilter.compareAndSet(selected, null)) persistListPreferences()
                 }
             }
         }
@@ -157,22 +160,15 @@ class SessionListViewModel(
         // failed refresh clears the stale offline banner (a device-observed
         // contradiction — active sessions updating under an "offline" banner).
         scope.launch {
-            sessionStore.sessions.drop(1).collect { sessions ->
+            sessionStore.sessions.drop(1).collect {
                 if (isOffline.value) isOffline.value = false
-                // Seed the unread baseline from SSE data too — when REST
-                // refresh fails but the stream works, unseeded watermarks
-                // would light every row's unread dot (once-per-scope inside
-                // the store, so repeated calls are no-ops).
-                if (sessions.isNotEmpty()) {
-                    runCatching { lastSeenStore.initializeBaseline(hubKey, sessions) }
-                }
             }
         }
     }
 
     val uiState: StateFlow<SessionListUiState> = combine(
         combine(sessionStore.sessions, machineStore.machines, lastSeenStore.state) { sessions, machines, lastSeen ->
-            Triple(sessions, machines, lastSeen.lastSeen)
+            Triple(sessions, machines, lastSeen)
         },
         combine(machineFilter, filters, collapseOverrides, selectedSessionId) { machine, options, collapsed, selected ->
             FilterState(machine, options, collapsed, selected)
@@ -229,16 +225,13 @@ class SessionListViewModel(
             isRefreshing.value = true
             try {
                 // Only a failed *sessions* fetch means "offline". Machines and
-                // the unread baseline are secondary: their failures must not
+                // other stores are secondary: their failures must not
                 // pin the offline banner over a perfectly live list (this
                 // exact cascade shipped once — a machines decode error kept
                 // the banner up while SSE streamed active sessions).
                 sessionStore.refresh()
                 isOffline.value = false
                 hasRefreshedOnce.value = true
-                // First successful list for this hub seeds the unread baseline
-                // so historical sessions do not all light up as unread.
-                runCatching { lastSeenStore.initializeBaseline(hubKey, sessionStore.sessions.value) }
                 try {
                     machineStore.refresh()
                 } catch (cancellation: CancellationException) {
@@ -258,14 +251,25 @@ class SessionListViewModel(
 
     fun setMachineFilter(machineId: String?) {
         machineFilter.value = machineId
-        lastSeenStore.setListPreferences(machineId, filters.value.activeOnly)
+        persistListPreferences()
     }
 
     fun setFilters(value: SessionFilters) {
         filters.value = value
-        lastSeenStore.setListPreferences(machineFilter.value, value.activeOnly)
+        persistListPreferences()
     }
-    fun clearFilters() { setMachineFilter(null); setFilters(SessionFilters()) }
+
+    private fun persistListPreferences() {
+        val machine = machineFilter.value
+        val activeOnly = filters.value.activeOnly
+        preferencesJob?.cancel()
+        preferencesJob = scope.launch {
+            try { lastSeenStore.setListPreferences(machine, activeOnly) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _errors.tryEmit(SessionListError.PreferencesFailed(error.message)) }
+        }
+    }
+
     fun toggleSection(id: String) {
         if (filters.value.query.isNotBlank()) return
         val section = uiState.value.sections.firstOrNull { it.id == id } ?: return
@@ -273,11 +277,22 @@ class SessionListViewModel(
         collapseOverrides.update { it + (id to !section.collapsed) }
     }
     fun markUnread(id: String) {
-        sessionStore.sessions.value.firstOrNull { it.id == id }?.let { lastSeenStore.markUnread(id, it.updatedAt) }
+        val session = sessionStore.sessions.value.firstOrNull { it.id == id } ?: return
+        readAction(id) { lastSeenStore.markUnread(id, session.readState) }
     }
-    fun markAllRead() = lastSeenStore.markAllSeen(
-        SessionListFilters.prepareSidebarSessions(sessionStore.sessions.value, selectedSessionId.value),
-    )
+
+    fun markAllRead() {
+        val sessions = SessionListFilters.prepareSidebarSessions(sessionStore.sessions.value, selectedSessionId.value)
+        readAction("") { lastSeenStore.markAllSeen(sessions) }
+    }
+
+    private fun readAction(sessionId: String, action: suspend () -> Unit) {
+        scope.launch {
+            try { action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _errors.tryEmit(SessionListError.ReadStateFailed(sessionId, error.message)) }
+        }
+    }
 
 
     /** Re-evaluate local dates on timezone broadcasts and foreground resume, even offline. */
@@ -305,16 +320,20 @@ class SessionListViewModel(
         filters.update { it.copy(start = null, end = null) }
     }
 
+    /** Reset the consolidated sheet's conditions without changing the search. */
+    fun clearFilters() {
+        machineFilter.value = null
+        setFilters(SessionFilters(query = filters.value.query))
+    }
+
     /** Search-box input; blank disables filtering/ranking entirely. */
     fun setSearchQuery(query: String) {
         filters.update { it.copy(query = query) }
     }
 
-    /** Call when navigating into a session: stamps the last-seen watermark. */
+    /** Keep the selected row visible under list filters; reading is acknowledged by the transcript. */
     fun onSessionOpened(sessionId: String) {
         selectedSessionId.value = sessionId
-        val summary = sessionStore.sessions.value.firstOrNull { it.id == sessionId } ?: return
-        lastSeenStore.markSeen(sessionId, summary.updatedAt)
     }
 
     /** `PUT /sessions/:id/pin` with optimistic re-sort; failures surface on [errors]. */
@@ -400,7 +419,7 @@ class SessionListViewModel(
     private fun buildUiState(
         sessions: List<SessionSummary>,
         machines: List<Machine>,
-        lastSeen: Map<String, Long>,
+        lastSeen: LastSeenState,
         filter: String?,
         options: SessionFilters,
         collapsed: Map<String, Boolean>,
@@ -478,7 +497,7 @@ class SessionListViewModel(
 
         val visible = machineScoped.filter { summary ->
             (!options.activeOnly || summary.active) &&
-                (!options.unreadOnly || LastSeenStore.isUnread(summary, lastSeen[summary.id] ?: 0))
+                (!options.unreadOnly || LastSeenStore.isUnread(summary, lastSeen))
         }
 
         // Text search: relevance ranking over the already-prepared corpus,
@@ -512,7 +531,7 @@ class SessionListViewModel(
                     summary.metadata?.worktree?.let { add(it.name.ifBlank { it.branch }) }
                 }.takeIf { it.isNotEmpty() }?.joinToString(" · "),
                 flavor = summary.metadata?.flavor,
-                unread = LastSeenStore.isUnread(summary, lastSeen[summary.id] ?: 0),
+                unread = LastSeenStore.isUnread(summary, lastSeen),
                 machine = if (showMachine) filters.find { it.id == (summary.metadata?.machineId ?: UNKNOWN_MACHINE_ID) } else null,
             )
         }
@@ -527,7 +546,7 @@ class SessionListViewModel(
             hasLoaded = hasLoaded,
             isOffline = isOffline,
             filters = options,
-            unreadCount = prepared.count { LastSeenStore.isUnread(it, lastSeen[it.id] ?: 0) },
+            unreadCount = prepared.count { LastSeenStore.isUnread(it, lastSeen) },
             dateRange = dateRange,
             dateActivityEpochDays = activityDays,
         )
@@ -599,6 +618,11 @@ sealed interface SessionListError {
         val stillActive: Boolean = false,
     ) : SessionListError
     data class ReopenFailed(override val sessionId: String, override val message: String?) : SessionListError
+    data class ReadStateFailed(override val sessionId: String, override val message: String?) : SessionListError
+
+    data class PreferencesFailed(override val message: String?) : SessionListError {
+        override val sessionId: String get() = ""
+    }
 
     /** Machines list refresh failed — advisory only, never the offline banner. */
     data class MachinesRefreshFailed(override val message: String?) : SessionListError {

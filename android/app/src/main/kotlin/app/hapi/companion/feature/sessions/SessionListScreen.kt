@@ -32,8 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -42,12 +40,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -88,10 +84,8 @@ import app.hapi.protocol.wire.TodoProgress
  * outside; taps surface through [onOpenSession].
  *
  * Inventory (mirrors the web sidebar semantics):
- * - offline banner over snapshot data, search box (relevance-ranked, port of
- *   the web sidebar search), machine filter chips (≥ 2 machines),
- *   activity date-range summary row + clear, pull-to-refresh, empty state
- *   and no-search-results state;
+ * - offline banner over snapshot data, pull-to-refresh, empty state and
+ *   no-search-results state; search and filters live in the home toolbar;
  * - duplicate agent-session views are collapsed and fresh "new session"
  *   stubs hidden (ViewModel pipeline, web sidebar parity);
  * - global pins, in-progress, active, then collapsible workspace groups;
@@ -161,6 +155,8 @@ fun SessionListScreen(
                     is SessionListError.RenameFailed -> R.string.sessions_error_rename
                     is SessionListError.DeleteFailed -> R.string.sessions_error_delete
                     is SessionListError.ReopenFailed -> R.string.sessions_error_reopen
+                    is SessionListError.ReadStateFailed -> R.string.chat_notice_read_state_failed
+                    is SessionListError.PreferencesFailed -> R.string.sessions_error_preferences
                     is SessionListError.MachinesRefreshFailed -> R.string.sessions_error_machines
                 },
             )
@@ -190,32 +186,6 @@ fun SessionListScreen(
             }
             if (state.isOffline) {
                 OfflineBanner()
-            }
-            SearchField(
-                query = state.searchQuery,
-                onQueryChange = viewModel::setSearchQuery,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-            state.machineFilters.find { it.id == state.activeMachineFilter }?.let { filter ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.sessions_filter_summary, machineFilterLabel(filter)),
-                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { viewModel.setMachineFilter(null) }) { Text(stringResource(R.string.sessions_clear_filter)) }
-                }
-            }
-            state.dateRange?.let { range ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        stringResource(
-                            R.string.sessions_time_filter_summary,
-                            formatEpochDayLocalized(range.startEpochDay),
-                            formatEpochDayLocalized(range.endEpochDay),
-                        ),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = viewModel::clearDateRange) { Text(stringResource(R.string.sessions_clear_filter)) }
-                }
             }
             PullToRefreshBox(
                 isRefreshing = state.isRefreshing,
@@ -599,32 +569,6 @@ private fun OfflineBanner() {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
         )
     }
-}
-
-/** Live search box — filters + relevance-ranks the list (web sidebar parity). */
-@Composable
-private fun SearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    OutlinedTextField(
-        value = query,
-        onValueChange = onQueryChange,
-        modifier = modifier,
-        singleLine = true,
-        placeholder = { Text(stringResource(R.string.sessions_search_hint)) },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-        trailingIcon = {
-            if (query.isNotEmpty()) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = stringResource(R.string.sessions_search_clear),
-                    modifier = Modifier.clickable { onQueryChange("") },
-                )
-            }
-        },
-    )
 }
 
 /** Search active but nothing matched — distinct from the plain empty list. */

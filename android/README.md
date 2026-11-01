@@ -24,12 +24,15 @@ differences, pairing and features currently available through the web.
   Mark unread, project/global pin, archive, rename, reopen/delete and New in same
   directory. Metadata search supports multiple terms and wildcards; filters cover
   machine, active/unread state and local calendar dates. Machine/active preferences
-  and read watermarks persist per hub/device. Mark all read includes visible
-  session records outside the current filters.
+  persist on the device per hub/namespace; read state syncs across clients in that
+  hub/namespace. Mark all read includes visible session records outside the current
+  filters. Resume/reopen can return another session ID; navigation and drafts
+  follow the returned ID.
 - **Session groups:** global pins precede In progress (thinking, background
   work or pending requests), Active, then workspace history. Workspace identity
   includes the machine and the worktree's base path. Project pins stay first
-  in their workspace; other history groups start collapsed. Tap a header to
+  in their workspace; recency follows the latest user input, with creation time
+  as fallback. Other history groups start collapsed. Tap a header to
   expand/collapse it; choices survive chat navigation and refresh. Search
   temporarily expands matching groups without changing those choices. The
   **+** beside a workspace header opens New session with that workspace's
@@ -89,6 +92,13 @@ differences, pairing and features currently available through the web.
   creation also accepts a manual model ID or the configured default. Settings
   changes are idle-only and wait for server confirmation. Native command
   suggestions and live steering use the same chat and durable queue controls.
+- **Incoming shares:** Android Share → HAPI accepts single/multiple files,
+  captions, text and links. Choose a session on the current or another paired
+  hub; stopped sessions require explicit restore before upload. Content is
+  added to the existing composer for manual sending. Private, no-backup
+  staging survives pairing and process recreation until handoff, with a
+  24-hour pending-content lifetime. Once imported, attachments follow the
+  ordinary composer lifecycle (they are not persisted as attachment drafts).
 - **Dictation:** provider discovery on chat entry picks the first
   `standard`-capable provider. The microphone stays hidden until one is
   available. First use requests `RECORD_AUDIO`; `MediaRecorder` records
@@ -509,16 +519,21 @@ events. Default-network/interface/route changes wake reconnect immediately,
 preserving replay cursors; background retries defer until foreground. A local
 hub route does not need Android's internet-validation capability.
 
-Home centers the Sessions title between a **Hubs and settings** icon and a
-**Filters** icon, keeping the new-session FAB. The hub menu is the only entry
-for switching/adding hubs, app settings and sign-out; the active hub is checked.
-The filter icon marks an applied filter and opens a Material 3 single-selection
-sheet. Choices come from all sessions, including historical
-machines; names/IDs determine ordering, never counts. Duplicate names include
-IDs; unnamed and unknown machines are labeled. The applied filter has a Clear
-action, is transient per home/hub, and is cleared when no longer valid.
-The home holder follows the active connection instance, releasing the previous
-store and filter even when switching back to a previously used hub URL.
+Home centers the Sessions title between **Hubs and settings** and the **Search**
+and **Filters** actions, keeping the new-session FAB. Search expands into the
+toolbar; Back first hides the keyboard, then closes search. The hub menu opens
+paired hubs, pairing, the workspace browser, settings and sign-out; the active
+hub is checked.
+
+The filter icon marks applied conditions and opens a sheet with machine,
+active-only, unread-only and local date-range controls. Reset clears these
+conditions while retaining the search text. Machine choices include historical
+sessions; names/IDs determine ordering, never counts. Duplicate names include
+IDs; unnamed and unknown machines are labeled. Invalid machine selections clear
+automatically. Machine and active-only choices persist per hub/namespace on this
+device; search, unread-only and dates stay within the current home state. The
+home holder follows the active connection instance and releases the previous
+store when switching hubs.
 
 Pairing and Settings both link to the [privacy policy](https://hapi.run/docs/privacy).
 These controls and notices ship in English and Simplified Chinese.
@@ -606,3 +621,7 @@ dependency calling the removed `InputManager.getInstance()` method.
 
 Earlier API 29 checks passed 19 chat/reader regressions. No 60/120 Hz device
 frame-time, memory, or predictive-back measurements are claimed by these checks.
+
+Unread state uses the hub’s [revision read-state contract](../docs/api/client-contract/read-state.md).
+List selection and metadata updates never acknowledge reading. The resumed chat
+acknowledges only its rendered tail, with a durable outbox scoped by hub and namespace.

@@ -46,6 +46,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -120,6 +122,8 @@ internal fun ChatScreen(
     readingState: TranscriptReadingState = rememberTranscriptReadingState(viewModel.sessionId),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val foreground = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val reconnecting by viewModel.reconnecting.collectAsState()
     val historyPaging by viewModel.historyPaging.collectAsState()
     val jumpToken by viewModel.jumpToken.collectAsState()
@@ -158,6 +162,12 @@ internal fun ChatScreen(
     DisposableEffect(viewModel) {
         viewModel.setTranscriptVisible(true)
         onDispose { viewModel.setTranscriptVisible(false) }
+    }
+
+    LaunchedEffect(foreground, state.readThroughRevision, state.isSyncingTail, state.warning) {
+        if (foreground && state.blocks.isEmpty() && !state.hasMore) {
+            viewModel.markDisplayed(state.readThroughRevision, state.renderedReadState)
+        }
     }
 
     val context = LocalContext.current
@@ -426,6 +436,7 @@ internal fun ChatScreen(
                             jumpingLatest = jumpingLatest,
                             onViewport = viewModel::readingViewportChanged,
                             onLayout = viewModel::historyLaidOut,
+                            foreground = foreground, onTailDisplayed = viewModel::markDisplayed,
                             onRetryHistory = viewModel::loadOlder,
                             onJumpToLatest = viewModel::jumpToLatest,
                             listState = transcriptList, readingState = readingState,
@@ -675,5 +686,6 @@ internal fun chatNoticeText(context: Context, notice: ChatNotice): String = when
     is ChatNotice.SteerFailed -> notice.detail ?: context.getString(R.string.chat_notice_steer_failed)
     is ChatNotice.PermissionRequestFailed -> notice.detail ?: context.getString(R.string.chat_notice_request_failed)
     is ChatNotice.ModelsLoadFailed -> notice.detail ?: context.getString(R.string.chat_notice_models_failed)
+    is ChatNotice.ReadStateFailed -> notice.detail ?: context.getString(R.string.chat_notice_read_state_failed)
     is ChatNotice.ConfigUpdateFailed -> notice.detail ?: context.getString(R.string.chat_notice_config_failed)
 }

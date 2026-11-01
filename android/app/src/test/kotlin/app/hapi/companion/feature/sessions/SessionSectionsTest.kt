@@ -18,7 +18,7 @@ class SessionSectionsTest {
         updatedAt: Long = 0,
         edit: (SessionSummary) -> SessionSummary = { it },
     ): SessionRowUi {
-        val summary = edit(SessionSummary(id = id, active = active, updatedAt = updatedAt,
+        val summary = edit(SessionSummary(id = id, active = active, updatedAt = updatedAt, lastUserMessageAt = updatedAt,
             metadata = SessionSummaryMetadata(path = path, machineId = machineId)))
         return SessionRowUi(summary, id, null, null, null, unread = false)
     }
@@ -112,7 +112,7 @@ class SessionSectionsTest {
         assertEquals(sections.size, sections.map { it.id }.toSet().size)
     }
 
-    @Test fun liveWorkspaceHeadersFollowSearchRelevanceOrLatestActivity() {
+    @Test fun liveWorkspaceHeadersFollowSearchRelevanceOrLatestUserInput() {
         val rows = listOf(
             row("best-match", active = true, path = "/repo/first", updatedAt = 1),
             row("recent", active = true, path = "/repo/second", updatedAt = 20) { it.copy(thinking = true) },
@@ -121,5 +121,19 @@ class SessionSectionsTest {
             .filter { it.kind == SessionSectionKind.WORKSPACE }.map { it.directory }
         assertEquals(listOf("/repo/second", "/repo/first"), directories(false))
         assertEquals(listOf("/repo/first", "/repo/second"), directories(true))
+    }
+
+    @Test fun `workspace order ignores agent output and follows the latest user input`() {
+        for (active in listOf(false, true)) {
+            val rows = listOf(
+                row("old-prompt", active = active, path = "/repo/first", updatedAt = 99_999) { it.copy(lastUserMessageAt = 1) },
+                row("new-prompt", active = active, path = "/repo/second", updatedAt = 2),
+            )
+            fun directories(items: List<SessionRowUi>) = buildSessionSections(items)
+                .filter { it.kind == SessionSectionKind.WORKSPACE }.map { it.directory }
+            assertEquals(listOf("/repo/second", "/repo/first"), directories(rows))
+            val nextPrompt = rows.first().let { it.copy(summary = it.summary.copy(lastUserMessageAt = 3)) }
+            assertEquals(listOf("/repo/first", "/repo/second"), directories(listOf(nextPrompt, rows.last())))
+        }
     }
 }

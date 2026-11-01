@@ -22,6 +22,7 @@ import { notifyCommand } from './notify'
 import { hubCommand } from './hub'
 import { pingPeerCommand } from './pingPeer'
 import { inspectPeerCommand } from './inspectPeer'
+import { usageCommand } from './usage'
 import { setModeCommand } from './setMode'
 import type { CommandContext, CommandDefinition } from './types'
 
@@ -66,7 +67,8 @@ const COMMANDS: CommandDefinition[] = [
     notifyCommand,
     pingPeerCommand,
     inspectPeerCommand,
-    setModeCommand
+    setModeCommand,
+    usageCommand
 ]
 
 const commandMap = new Map<string, CommandDefinition>()

@@ -9,6 +9,11 @@ import app.hapi.protocol.wire.HermesModelSummary
 
 import androidx.annotation.MainThread
 import app.hapi.companion.feature.chat.attachments.ComposerAttachments
+import app.hapi.companion.feature.chat.attachments.PrepareResult
+import app.hapi.companion.feature.chat.composer.appendSharedText
+import app.hapi.companion.feature.share.PendingShare
+import app.hapi.companion.feature.share.SharedFile
+import app.hapi.companion.feature.share.SharedFileStatus
 import app.hapi.companion.feature.chat.blocks.planProposalMarkdown
 import app.hapi.companion.feature.chat.composer.ChatDrafts
 import app.hapi.companion.feature.chat.composer.formatFileReference
@@ -61,6 +66,7 @@ import app.hapi.protocol.wire.HapiJson
 import app.hapi.protocol.wire.Machine
 import app.hapi.protocol.wire.SendMessageRequest
 import app.hapi.protocol.wire.Session
+import app.hapi.protocol.wire.SessionReadState
 import app.hapi.protocol.wire.SessionSummary
 import app.hapi.protocol.wire.SlashCommand
 import app.hapi.protocol.wire.arrayOrNull
@@ -70,6 +76,8 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -96,6 +104,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.asStateFlow
@@ -155,6 +165,8 @@ data class ChatUiState(
     val requiresLatestReset: Boolean = false,
     val processSteps: Map<String, Int> = emptyMap(),
     val latestUsage: app.hapi.protocol.chat.LatestUsage? = null,
+    val readThroughRevision: Long? = null,
+    val renderedReadState: SessionReadState? = null,
 )
 
 /** Composer bar state (M3a). */
@@ -167,7 +179,10 @@ data class ComposerUiState(
     /** Local focus intent; does not replace or send the draft. */
     val focusRequest: Long = 0,
     val canStop: Boolean = canSteer,
+    val isImportingShare: Boolean = false,
 )
+
+data class ShareImportFailure(val fileId: String, val status: SharedFileStatus)
 
 /** One row of the queued-messages bar (uninvoked sends). */
 data class QueuedRowUi(
@@ -265,6 +280,7 @@ sealed interface ChatNotice {
     data class SteerFailed(val detail: String?) : ChatNotice
     data class PermissionRequestFailed(val detail: String?) : ChatNotice
     data class ModelsLoadFailed(val detail: String?) : ChatNotice
+    data class ReadStateFailed(val detail: String?) : ChatNotice
     data class ConfigUpdateFailed(val detail: String?) : ChatNotice
 }
 
@@ -380,7 +396,6 @@ class ChatViewModel(
 
     private var sseJob: Job? = null
     private var initJob: Job? = null
-    private var seenJob: Job? = null
     private var olderJob: Job? = null
     private var jumpJob: Job? = null
     private val mutableHistoryPaging = MutableStateFlow(ChatHistoryPagingState())
@@ -397,26 +412,28 @@ class ChatViewModel(
     private var historyDemand = false
     private var readerFollowsTail = true
     private var readerForeground = true
-    private var manuallyUnreadAt: Long? = null
+    private var manuallyUnreadRevision: Long? = null
     private var transcriptVisible = true
     val allSessions: StateFlow<List<SessionSummary>> get() = sessionStore.sessions
     val machines: StateFlow<List<app.hapi.protocol.wire.Machine>> get() = machineStore.machines
     val actionSummary = summaryFlow().stateIn(scope, SharingStarted.Eagerly, null)
     fun setReaderForeground(value: Boolean) {
-        if (value && !readerForeground) manuallyUnreadAt = null
+        if (value && !readerForeground) manuallyUnreadRevision = null
         readerForeground = value
-        if (value) markVisibleSeen()
-    }
-    private fun markVisibleSeen() {
-        if (readerForeground && transcriptVisible) {
-            val at = maxOf(currentDetail()?.updatedAt ?: 0, sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.updatedAt ?: 0)
-            if (manuallyUnreadAt != at) lastSeenStore.markSeen(sessionId, at)
-        }
     }
     fun markUnread() {
-        val at = maxOf(currentDetail()?.updatedAt ?: 0, sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.updatedAt ?: 0)
-        manuallyUnreadAt = at
-        lastSeenStore.markUnread(sessionId, at)
+        val rendered = uiState.value
+        val revision = rendered.readThroughRevision ?: 0
+        val previous = manuallyUnreadRevision
+        manuallyUnreadRevision = revision
+        uiScope.launch {
+            try { lastSeenStore.markUnread(sessionId, rendered.renderedReadState) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (manuallyUnreadRevision == revision) manuallyUnreadRevision = previous
+                _events.tryEmit(ChatEvent.Notice(ChatNotice.ReadStateFailed(error.message)))
+            }
+        }
     }
     fun setPinMode(mode: app.hapi.companion.feature.sessions.PinMode) = sessionAction { sessionStore.setPinMode(sessionId, mode.wire) }
     fun archiveSession() = sessionAction {
@@ -448,10 +465,25 @@ class ChatViewModel(
     @MainThread
     internal fun setTranscriptVisible(visible: Boolean) {
         transcriptVisible = visible
-        if (visible) markVisibleSeen()
         if (!visible) {
             historyDemand = false
             cancelHistory()
+        }
+    }
+
+    /** The UI calls only after laying out the observed tail in a resumed screen. */
+    @MainThread
+    internal fun markDisplayed(revision: Long?, serverState: SessionReadState?) {
+        val rendered = uiState.value
+        if (!started || !readerForeground || !transcriptVisible || !readerFollowsTail || revision == null ||
+            manuallyUnreadRevision == revision ||
+            rendered.isSyncingTail || rendered.isInitialLoading || rendered.loadFailed ||
+            rendered.warning != null || rendered.requiresLatestReset) return
+        uiScope.launch {
+            if (!readerForeground || !transcriptVisible || !readerFollowsTail || manuallyUnreadRevision == revision) return@launch
+            try { lastSeenStore.markSeen(sessionId, revision, serverState) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _events.tryEmit(ChatEvent.Notice(ChatNotice.ReadStateFailed(error.message))) }
         }
     }
 
@@ -485,6 +517,12 @@ class ChatViewModel(
         scheduleSaveJob = scope.launch { runCatching { drafts?.saveSchedule(sessionId, value?.encode()) } }
     }
     private val sendInFlight = MutableStateFlow(false)
+    private val importingShare = MutableStateFlow(false)
+    private val draftReady = CompletableDeferred<Unit>()
+    private val importedShares = mutableSetOf<String>()
+    private val importedShareTexts = mutableSetOf<String>()
+    private val importedSharedFiles = mutableSetOf<String>()
+    private val shareImportMutex = Mutex()
 
     /**
      * Composer attachment tray (B-M3f). The screen feeds prepared picks in
@@ -615,13 +653,15 @@ class ChatViewModel(
         sendInFlight,
         sessionStateFlow(),
         composerFocusRequest,
-    ) { text, sending, session, focusRequest ->
+        importingShare,
+    ) { text, sending, session, focusRequest, importing ->
         ComposerUiState(
             text = text,
             isSending = sending,
             canSteer = session.canSteer,
             canStop = session.thinking && session.active,
             focusRequest = focusRequest,
+            isImportingShare = importing,
         )
     }.stateIn(scope, SharingStarted.Eagerly, ComposerUiState(text = "", isSending = false, canSteer = false))
 
@@ -743,18 +783,6 @@ class ChatViewModel(
         // Badge count + SSE-triggered refetches while this chat is on screen.
         scratchlist?.open(sessionId)
 
-        seenJob = scope.launch {
-            // Watermark = updatedAt currently on screen, from whichever cache
-            // is fresher (summary via global events, detail via this pipe).
-            merge(
-                sessionStore.sessions
-                    .map { list -> list.firstOrNull { it.id == sessionId }?.updatedAt },
-                sessionStore.sessionDetail(sessionId).map { it?.updatedAt },
-            )
-                .filterNotNull()
-                .distinctUntilChanged()
-                .collect { updatedAt -> if (readerForeground && transcriptVisible && manuallyUnreadAt != updatedAt) lastSeenStore.markSeen(sessionId, updatedAt) }
-        }
     }
 
     /** Tears the session pipe down (engine keeps the resume cursor). */
@@ -766,7 +794,6 @@ class ChatViewModel(
         sseJob?.cancel()
         sseJob = null
         initJob?.cancel()
-        seenJob?.cancel()
         cancelHistory()
         jumpJob?.cancel()
         jumpJob = null
@@ -958,6 +985,7 @@ class ChatViewModel(
     // ------------------------------------------------------------- composer --
 
     fun setComposerText(text: String) {
+        if (importingShare.value) return
         composerDraftInitialized = true
         // Fetch the RPC command list on the transition INTO slash mode (the
         // web refetches when the menu opens) — not on every keystroke, so a
@@ -971,6 +999,53 @@ class ChatViewModel(
         draftJob = scope.launch {
             delay(draftSaveDebounceMs)
             runCatching { store.save(sessionId, text) }
+        }
+    }
+
+    /** Commit the latest keystrokes before a share picker can reopen this session under a new ID. */
+    suspend fun persistComposerDraft() {
+        draftReady.await()
+        draftJob?.cancelAndJoin()
+        drafts?.save(sessionId, composerText.value)
+    }
+
+    /** Caller is the chat entry's Main-thread effect; cancellation preserves the inbox batch. */
+    suspend fun importShare(
+        share: PendingShare,
+        complete: suspend (ShareImportFailure?) -> Unit = {},
+        prepare: suspend (SharedFile) -> PrepareResult,
+    ): ShareImportFailure? = shareImportMutex.withLock {
+        check(share.canImport)
+        importingShare.value = true
+        try {
+            if (share.id in importedShares) {
+                complete(null)
+                return@withLock null
+            }
+            draftReady.await()
+            draftJob?.cancelAndJoin()
+            if (share.text.isNotBlank() && share.id !in importedShareTexts) {
+                composerText.value = drafts?.appendSharedText(sessionId, share.id, composerText.value, share.text)
+                    ?: appendSharedText(composerText.value, share.text)
+                importedShareTexts += share.id
+            }
+            for (file in share.files) {
+                if (file.id in importedSharedFiles) continue
+                when (val result = prepare(file)) {
+                    is PrepareResult.Ready -> {
+                        attachments.add(result.attachment)
+                        importedSharedFiles += file.id
+                    }
+                    is PrepareResult.TooLarge -> return@withLock ShareImportFailure(file.id, SharedFileStatus.TooLarge).also { complete(it) }
+                    is PrepareResult.Unreadable -> return@withLock ShareImportFailure(file.id, SharedFileStatus.Unreadable).also { complete(it) }
+                }
+            }
+            importedShares += share.id
+            complete(null)
+            composerFocusRequest.value += 1
+            null
+        } finally {
+            importingShare.value = false
         }
     }
 
@@ -1069,7 +1144,7 @@ class ChatViewModel(
      * Text may be empty when attachments exist (wire: text OR attachments).
      */
     fun sendMessage(steer: Boolean = false) {
-        if (sendInFlight.value) return
+        if (sendInFlight.value || importingShare.value) return
         // The runtime can withdraw readiness before the button recomposes.
         // Keep the draft and attachments intact when that happens.
         if (steer && !currentSessionState().canSteer) return
@@ -2090,15 +2165,21 @@ class ChatViewModel(
         .distinctUntilChanged()
 
     private suspend fun restoreDraft() {
-        if (composerDraftInitialized) return
-        val draft = runCatching { drafts?.load(sessionId) }.getOrElse {
-            if (it is CancellationException) throw it
-            null
+        if (draftReady.isCompleted) return
+        try {
+            if (!composerDraftInitialized) {
+                val draft = drafts?.load(sessionId)
+                if (!composerDraftInitialized) {
+                    composerDraftInitialized = true
+                    if (composerText.value.isEmpty() && draft != null) composerText.value = draft
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Ordinary chat remains usable when local draft storage fails.
         }
-        if (!composerDraftInitialized) {
-            composerDraftInitialized = true
-            if (composerText.value.isEmpty() && draft != null) composerText.value = draft
-        }
+        draftReady.complete(Unit)
     }
 
     private fun pipelineInputs(values: Array<Any?>): PipelineInputs {
@@ -2211,6 +2292,8 @@ class ChatViewModel(
             messagesVersion = window.messagesVersion,
             requiresLatestReset = window.requiresLatestReset,
             latestUsage = reduced.latestUsage,
+            readThroughRevision = window.readThroughRevision,
+            renderedReadState = SessionReadState.merge(inputs.detail?.readState, inputs.summary?.readState),
         )
     }
 

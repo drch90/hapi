@@ -71,7 +71,7 @@ internal fun buildSessionSections(
         addAll(workspaceSections.sortedWith(
             compareByDescending<SessionSectionUi> { section -> section.rows.any { it.summary.pinned == true } }
                 .thenBy { section -> if (searching) section.rows.minOf { searchOrder.getValue(it.id) } else 0 }
-                .thenByDescending { section -> section.rows.maxOf { it.summary.updatedAt } }
+                .thenByDescending { section -> section.rows.maxOf { it.summary.lastUserMessageAt ?: it.summary.createdAt ?: 0L } }
                 .thenBy { it.id },
         ))
         // Keep creation available when every row in a workspace floated to the
@@ -81,7 +81,7 @@ internal fun buildSessionSections(
         addAll(actionOnlyGroups.entries.sortedWith(
             compareBy<Map.Entry<WorkspaceKey, List<SessionRowUi>>> { (_, group) ->
                 if (searching) group.minOf { searchOrder.getValue(it.id) } else 0
-            }.thenByDescending { (_, group) -> group.maxOf { it.summary.updatedAt } }
+            }.thenByDescending { (_, group) -> group.maxOf { it.summary.lastUserMessageAt ?: it.summary.createdAt ?: 0L } }
                 .thenBy { it.key.id },
         ).map { (key, group) ->
             SessionSectionUi(

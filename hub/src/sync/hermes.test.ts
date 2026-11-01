@@ -42,11 +42,32 @@ describe('Hermes hub resume', () => {
             const ready = spyOn(engine, 'waitForSessionReady').mockResolvedValue('ready')
             const first = engine.resumeSession(session.id, 'default')
             const second = engine.resumeSession(session.id, 'default')
+            expect(await engine.resumeSession(session.id, 'other-namespace')).toMatchObject({ type: 'error', code: 'access_denied' })
+            expect(await engine.reopenSession(session.id, 'other-namespace')).toMatchObject({ type: 'error', code: 'access_denied' })
             release()
             expect(await first).toEqual({ type: 'success', sessionId: session.id })
             expect(await second).toEqual({ type: 'success', sessionId: session.id })
             expect(spawn).toHaveBeenCalledTimes(1)
             expect(ready).toHaveBeenCalledTimes(1)
+        } finally { engine.stop() }
+    })
+
+    it('clears stale Hermes readiness before reopening the original session', async () => {
+        const { engine, session } = harness()
+        try {
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+            const internals = engine as unknown as {
+                sessionReadyIds: Set<string>
+                rpcGateway: { spawnSession: SyncEngine['spawnSession'] }
+            }
+            internals.sessionReadyIds.add(session.id)
+            spyOn(internals.rpcGateway, 'spawnSession').mockImplementation(async () => {
+                expect(internals.sessionReadyIds.has(session.id)).toBe(false)
+                return { type: 'success', sessionId: session.id }
+            })
+            spyOn(engine, 'waitForSessionActive').mockResolvedValue(true)
+            spyOn(engine, 'waitForSessionReady').mockResolvedValue('ready')
+            expect(await engine.reopenSession(session.id, 'default')).toMatchObject({ type: 'success', sessionId: session.id })
         } finally { engine.stop() }
     })
 })

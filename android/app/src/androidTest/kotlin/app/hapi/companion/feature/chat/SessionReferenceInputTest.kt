@@ -12,6 +12,21 @@ import org.junit.Assert.*
 
 @RunWith(AndroidJUnit4::class)
 class SessionReferenceInputTest {
+    @Test fun disabledEditorKeepsReferencesAndRejectsInputActionsDuringShareImport() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val editor = SessionEditText(instrumentation.targetContext)
+            val wire = SessionReferences.markdown("Existing", "existing-session") + " @other"
+            editor.syncValue(wire)
+            editor.setSelection(editor.text.length)
+            editor.isEnabled = false
+            editor.insert(SessionSummary("other-session", true, metadata = SessionSummaryMetadata(name = "Other")))
+            editor.setSelection(0, editor.text.length)
+            editor.onTextContextMenuItem(android.R.id.cut)
+            assertEquals(wire, editor.serialize())
+        }
+    }
+
     @Test fun citationIsOneEditableAtomAndKeepsItsFullId() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {

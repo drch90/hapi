@@ -799,16 +799,58 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun `marks the session seen on entry and on updates`() = runTest {
+    fun `reads only rendered tail and keeps newer summary output unread`() = runTest {
         val harness = Harness(this, ScriptedTransport(listOf("ok")))
-        harness.sessionStore.summaries.value = listOf(summary(updatedAt = 500))
-
+        harness.sessionStore.summaries.value = listOf(summary(updatedAt = 500).copy(contentRevision = 4))
+        harness.api.tailResponses.add(MessagesResponse(
+            messages = listOf(agentMessage("a", 1, 100, "answer")),
+            page = page("latest", hasMore = false).copy(readThroughRevision = 3),
+        ))
         harness.viewModel.start()
-        harness.lastSeenStore.state.first { it.lastSeen[SESSION_ID] == 500L }
-
-        harness.sessionStore.summaries.value = listOf(summary(updatedAt = 900))
-        harness.lastSeenStore.state.first { it.lastSeen[SESSION_ID] == 900L }
+        val rendered = harness.viewModel.uiState.first { !it.isSyncingTail && it.readThroughRevision == 3L }
+        assertEquals(0, harness.lastSeenStore.lastSeenAt(SESSION_ID))
+        harness.viewModel.readingViewportChanged(followsTail = false, needsOlder = false)
+        harness.viewModel.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        assertEquals(0, harness.lastSeenStore.lastSeenAt(SESSION_ID))
+        harness.viewModel.readingViewportChanged(followsTail = true, needsOlder = false)
+        harness.viewModel.setTranscriptVisible(false)
+        harness.viewModel.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        assertEquals(0, harness.lastSeenStore.lastSeenAt(SESSION_ID))
+        harness.viewModel.setTranscriptVisible(true)
+        harness.viewModel.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        harness.lastSeenStore.state.first { it.lastSeen[SESSION_ID] == 3L }
+        assertTrue(LastSeenStore.isUnread(harness.sessionStore.summaries.value.single(), harness.lastSeenStore.state.value))
         harness.viewModel.stop()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test
+    fun `manual unread survives an unchanged rendered tail until a new foreground viewing action`() = runTest {
+        val harness = Harness(this, ScriptedTransport(listOf("ok")))
+        harness.sessionStore.summaries.value = listOf(summary().copy(contentRevision = 3))
+        harness.api.tailResponses.add(MessagesResponse(
+            messages = listOf(agentMessage("a", 1, 100, "answer")),
+            page = page("latest", hasMore = false).copy(readThroughRevision = 3),
+        ))
+        val vm = harness.viewModel
+        vm.start()
+        val rendered = vm.uiState.first { !it.isSyncingTail && it.readThroughRevision == 3L }
+        vm.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        harness.lastSeenStore.state.first { it.lastSeen[SESSION_ID] == 3L }
+        vm.markUnread()
+        harness.lastSeenStore.state.first { it.pending[SESSION_ID]?.request?.type == "unread" }
+        vm.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        runCurrent()
+        assertEquals("unread", harness.lastSeenStore.state.value.pending[SESSION_ID]?.request?.type)
+        vm.setReaderForeground(false)
+        vm.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        runCurrent()
+        assertEquals("unread", harness.lastSeenStore.state.value.pending[SESSION_ID]?.request?.type)
+        vm.setReaderForeground(true)
+        assertEquals("unread", harness.lastSeenStore.state.value.pending[SESSION_ID]?.request?.type)
+        vm.markDisplayed(rendered.readThroughRevision, rendered.renderedReadState)
+        harness.lastSeenStore.state.first { it.pending[SESSION_ID]?.request?.type == "read" }
+        vm.stop()
     }
 
     /** Pipeline smoke over real golden fixtures: wire JSON → visible blocks. */

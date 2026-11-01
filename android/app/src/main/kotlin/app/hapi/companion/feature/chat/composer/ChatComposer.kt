@@ -120,6 +120,10 @@ fun ChatComposer(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column {
+                    if (state.isImportingShare) {
+                        Text(stringResource(R.string.share_importing), style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                    }
                     if (attachments.isNotEmpty()) {
                         LazyRow(
                             modifier = Modifier
@@ -145,7 +149,7 @@ fun ChatComposer(
                         )
                     }
                     SessionReferenceInput(state.text, onTextChange, sessionId, sessions, machineLabel, state.focusRequest,
-                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp))
+                        enabled = !state.isImportingShare, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -163,7 +167,7 @@ fun ChatComposer(
                             }
                         }
                         ComposerActionButton(contentDescription = stringResource(R.string.chat_schedule),
-                            onClick = { scheduleOpen = true }, enabled = attachments.isEmpty() && !state.isSending) {
+                            onClick = { scheduleOpen = true }, enabled = attachments.isEmpty() && !state.isSending && !state.isImportingShare) {
                             Icon(ScheduleGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.weight(1f))
@@ -478,9 +482,9 @@ private fun PrimaryActionButton(
     // allows an attachments-only send (wire: text or attachments required).
     val attachmentsBusy = attachments.any { it.status != ComposerAttachmentStatus.Ready }
     val attachmentsReady = attachments.isNotEmpty() && !attachmentsBusy
-    val canSubmit = (hasText || attachmentsReady) && !attachmentsBusy && !state.isSending
+    val canSubmit = (hasText || attachmentsReady) && !attachmentsBusy && !state.isSending && !state.isImportingShare
     val action = when {
-        state.isSending -> ComposerPrimaryAction.Sending
+        state.isSending || state.isImportingShare -> ComposerPrimaryAction.Sending
         state.canStop && !hasDraft -> ComposerPrimaryAction.Stop
         else -> ComposerPrimaryAction.Send
     }

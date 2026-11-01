@@ -24,6 +24,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.focused
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.insertTextAtCursor
 import androidx.compose.ui.semantics.requestFocus
 import androidx.compose.ui.semantics.editableText
@@ -141,6 +142,7 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
         return (selectionStart - match.groupValues[1].length - 1) to match.groupValues[1]
     }
     fun insert(session: SessionSummary) {
+        if (!isEnabled) return
         val query = query() ?: return
         var end = selectionEnd
         while (end < text.length && !text[end].isWhitespace() && text[end] != '\uFFFC') end++
@@ -150,6 +152,7 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
         requestFocus()
     }
     override fun onTextContextMenuItem(id: Int): Boolean {
+        if (!isEnabled) return true
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val start = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
         val end = maxOf(selectionStart, selectionEnd).coerceAtLeast(start)
@@ -172,7 +175,8 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
 
 @Composable
 internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, sessionId: String,
-    sessions: List<SessionSummary>, machineLabel: (String?) -> String, focusRequest: Long, modifier: Modifier = Modifier) {
+    sessions: List<SessionSummary>, machineLabel: (String?) -> String, focusRequest: Long, modifier: Modifier = Modifier,
+    enabled: Boolean = true) {
     val focusRequester = remember { FocusRequester() }
     var editor by remember { mutableStateOf<SessionEditText?>(null) }
     var isFocused by remember { mutableStateOf(false) }
@@ -184,7 +188,7 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
         query?.let { SessionDiscovery.mentionCandidates(sessions, sessionId, it, machineLabel) }.orEmpty()
     }
     Column(modifier) {
-        if (candidates.isNotEmpty()) {
+        if (enabled && candidates.isNotEmpty()) {
             androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
                 items(candidates.size, key = { candidates[it].id }) { index ->
                     val item = candidates[index]
@@ -196,32 +200,39 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
         AndroidView(factory = { context -> SessionEditText(context).also { editor = it } },
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).testTag("chat-composer-input").semantics {
                 focused = isFocused
-                requestFocus { focusRequester.requestFocus(); true }
+                if (!enabled) disabled()
+                requestFocus { if (enabled) { focusRequester.requestFocus(); true } else false }
                 editableText = AnnotatedString(value)
                 insertTextAtCursor { input ->
-                    editor?.let { view ->
-                        val start = minOf(view.selectionStart, view.selectionEnd).coerceAtLeast(0)
-                        val end = maxOf(view.selectionStart, view.selectionEnd).coerceAtLeast(start)
-                        view.text.replace(start, end, input.text)
-                        view.setSelection(start + input.length)
+                    if (enabled) {
+                        editor?.let { view ->
+                            val start = minOf(view.selectionStart, view.selectionEnd).coerceAtLeast(0)
+                            val end = maxOf(view.selectionStart, view.selectionEnd).coerceAtLeast(start)
+                            view.text.replace(start, end, input.text)
+                            view.setSelection(start + input.length)
+                        }
                     }
-                    true
+                    enabled
                 }
-                setText { editor?.setSerialized(it.text); latestChange(it.text); true }
+                setText {
+                    if (enabled) { editor?.setSerialized(it.text); latestChange(it.text) }
+                    enabled
+                }
             },
             update = { view ->
+                view.isEnabled = enabled
                 view.linkColor = colors.primary.toArgb(); view.chipColor = colors.secondaryContainer.toArgb()
                 view.setTextColor(colors.onSurface.toArgb()); view.setHintTextColor(colors.onSurfaceVariant.toArgb())
                 view.textSize = 16f; view.hint = hint
                 view.focusChanged = { isFocused = it }
-                view.changed = { latestChange(it) }
+                view.changed = { if (enabled) latestChange(it) }
                 view.selectionChanged = { query = view.query()?.second }
                 view.syncValue(value)
             })
     }
     var handledFocus by remember { mutableLongStateOf(focusRequest) }
-    LaunchedEffect(focusRequest) {
-        if (handledFocus != focusRequest) {
+    LaunchedEffect(focusRequest, enabled) {
+        if (enabled && handledFocus != focusRequest) {
             handledFocus = focusRequest
             // The triggering button can leave composition in this frame. Let
             // Compose finish that focus transaction, then focus the interop node
