@@ -20,7 +20,7 @@ bun run build:single-exe
 The all-in-one executable embeds the Web app. On Linux x64 the output is
 `cli/dist-exe/bun-linux-x64-baseline/hapi`; check its `--version` before replacing
 the installed binary. The [fork update record](./fork-updates.md) describes the
-v0.34.0 source verification and the earlier v0.33.5 deployment.
+v0.34.0 source verification and live deployment, alongside earlier deployments.
 
 For an existing PM2 installation:
 
