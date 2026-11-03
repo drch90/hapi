@@ -21,7 +21,17 @@ import org.junit.Test
 class ChatMediaCardsTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private fun block(id: String, mime: String) = GeneratedImageBlock(id, null, 0, null, id, "$id.file", mime, null, null)
+    private fun block(id: String, mime: String) = GeneratedImageBlock(
+        id = id,
+        localId = null,
+        createdAt = 0,
+        invokedAt = null,
+        imageId = id,
+        fileName = "$id.file",
+        mimeType = mime,
+        source = null,
+        meta = null,
+    )
 
     @Test fun audioVideoAndFilesWaitForExplicitDownload() {
         val fetches = AtomicInteger()
