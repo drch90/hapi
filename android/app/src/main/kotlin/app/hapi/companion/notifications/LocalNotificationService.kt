@@ -68,10 +68,14 @@ internal class LocalNotificationService : Service() {
                     }
                     return@collectLatest
                 }
+                // Auth failure events are not replayed. The hub can lose its
+                // credentials before this service starts observing those events.
+                if (graph.credentialStore.get(hub.hubUrl) == null) {
+                    graph.localNotifications.status.value = ReceptionStatus.PairingRequired
+                    stopSelf()
+                    return@collectLatest
+                }
                 coroutineScope {
-                    val binding = launch {
-                        LocalNotificationReceiver(this@LocalNotificationService, graph, hub).run()
-                    }
                     val auth = launch {
                         graph.authTerminals.collect { terminal ->
                             if (terminal.hubUrl == hub.hubUrl) {
@@ -79,6 +83,9 @@ internal class LocalNotificationService : Service() {
                                 stopSelf()
                             }
                         }
+                    }
+                    val binding = launch {
+                        LocalNotificationReceiver(this@LocalNotificationService, graph, hub).run()
                     }
                     try {
                         val key = app.hapi.data.sse.SseSubscriptionKey.Global
@@ -164,7 +171,15 @@ internal class LocalNotificationService : Service() {
 
         fun startIfEnabled(context: Context) {
             val graph = (context.applicationContext as HapiApp).appGraph
-            if (!graph.localNotifications.enabled.value || graph.hubRegistry.activeHubUrl == null) return
+            if (!graph.localNotifications.enabled.value) return
+            val activeHub = graph.hubRegistry.activeHubUrl
+            // Preserve the cold-start wait for the saved roster to load.
+            if (activeHub == null && !graph.ready.value) return
+            if (activeHub == null || graph.credentialStore.get(activeHub) == null) {
+                graph.localNotifications.status.value = ReceptionStatus.PairingRequired
+                context.stopService(Intent(context, LocalNotificationService::class.java))
+                return
+            }
             if (!canNotify(context)) {
                 graph.localNotifications.status.value = ReceptionStatus.PermissionRequired
                 return
