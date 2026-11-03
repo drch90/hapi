@@ -73,10 +73,10 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
     var chipColor: Int = 0
     private var replacing = false
     private var lastExternalValue: String? = null
-    fun syncValue(value: String) {
+    fun syncValue(value: String, caretPosition: Int = -1) {
         if (value == lastExternalValue) return
         lastExternalValue = value
-        setSerialized(value)
+        setSerialized(value, caretPosition)
     }
     init {
         gravity = Gravity.TOP or Gravity.START
@@ -100,7 +100,10 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
         // without replacing Compose's listener or breaking focus interop.
         focusChanged?.invoke(gainFocus)
     }
-    override fun onSelectionChanged(start: Int, end: Int) { super.onSelectionChanged(start, end); selectionChanged?.invoke() }
+    override fun onSelectionChanged(start: Int, end: Int) {
+        super.onSelectionChanged(start, end)
+        if (!replacing) selectionChanged?.invoke()
+    }
     fun serialize(start: Int = 0, end: Int = text.length): String {
         val value = text
         val from = start.coerceIn(0, value.length)
@@ -127,11 +130,24 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
         out.append(value.substring(cursor))
         return out
     }
-    fun setSerialized(value: String) {
+    /** Translate the wire caret past full session links into one-slot chip offsets. */
+    private fun editableOffset(serializedOffset: Int): Int {
+        var remaining = serializedOffset.coerceAtLeast(0)
+        for (index in 0 until text.length) {
+            if (remaining <= 0) return index
+            remaining -= serialize(index, index + 1).length
+            if (remaining <= 0) return index + 1
+        }
+        return text.length
+    }
+    fun serializedSelection(): Pair<Int, Int> =
+        serialize(0, selectionStart.coerceAtLeast(0)).length to serialize(0, selectionEnd.coerceAtLeast(0)).length
+
+    fun setSerialized(value: String, caretPosition: Int = -1) {
         if (serialize() == value) return
         replacing = true
         setText(parse(value))
-        setSelection(text.length)
+        setSelection(if (caretPosition < 0) text.length else editableOffset(caretPosition))
         replacing = false
         selectionChanged?.invoke()
     }
@@ -174,9 +190,9 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
 }
 
 @Composable
-internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, sessionId: String,
+internal fun SessionReferenceInput(value: String, onChange: (String, Int, Int) -> Unit, sessionId: String,
     sessions: List<SessionSummary>, machineLabel: (String?) -> String, focusRequest: Long, modifier: Modifier = Modifier,
-    enabled: Boolean = true) {
+    enabled: Boolean = true, caretPosition: Int = -1, showSessionSuggestions: Boolean = true) {
     val focusRequester = remember { FocusRequester() }
     var editor by remember { mutableStateOf<SessionEditText?>(null) }
     var isFocused by remember { mutableStateOf(false) }
@@ -188,7 +204,7 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
         query?.let { SessionDiscovery.mentionCandidates(sessions, sessionId, it, machineLabel) }.orEmpty()
     }
     Column(modifier) {
-        if (enabled && candidates.isNotEmpty()) {
+        if (enabled && showSessionSuggestions && candidates.isNotEmpty()) {
             androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
                 items(candidates.size, key = { candidates[it].id }) { index ->
                     val item = candidates[index]
@@ -215,7 +231,7 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
                     enabled
                 }
                 setText {
-                    if (enabled) { editor?.setSerialized(it.text); latestChange(it.text) }
+                    if (enabled) { editor?.setSerialized(it.text); latestChange(it.text, it.length, it.length) }
                     enabled
                 }
             },
@@ -225,9 +241,20 @@ internal fun SessionReferenceInput(value: String, onChange: (String) -> Unit, se
                 view.setTextColor(colors.onSurface.toArgb()); view.setHintTextColor(colors.onSurfaceVariant.toArgb())
                 view.textSize = 16f; view.hint = hint
                 view.focusChanged = { isFocused = it }
-                view.changed = { if (enabled) latestChange(it) }
-                view.selectionChanged = { query = view.query()?.second }
-                view.syncValue(value)
+                // External mention insertion supplies a wire caret. Do not
+                // report the intermediate chip replacement as a user edit.
+                view.selectionChanged = null
+                view.syncValue(value, caretPosition)
+                query = view.query()?.second
+                val reportChange = {
+                    query = view.query()?.second
+                    if (enabled) {
+                        val (start, end) = view.serializedSelection()
+                        latestChange(view.serialize(), start, end)
+                    }
+                }
+                view.changed = { reportChange() }
+                view.selectionChanged = reportChange
             })
     }
     var handledFocus by remember { mutableLongStateOf(focusRequest) }

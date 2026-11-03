@@ -3,14 +3,14 @@
 Run the hub and runner as persistent background services, and configure remote access tunnels.
 
 [Native iOS / Android apps](./native-apps.md#pair-with-your-hub) connect to the
-same hub as the web app. Provide an HTTPS hub origin for pairing; Android
-rejects cleartext URLs. The push relay used for native notifications is a
+same hub as the web app. Prefer an HTTPS hub origin for pairing; Android also
+accepts HTTP origins for self-hosted hubs. The push relay used for native notifications is a
 separate service from the network tunnels described here.
 
 ## Upgrading a source build with PM2
 
 Build this fork from source to retain its local extensions. Use the Bun version
-pinned in the root `package.json` (`bun@1.4.4` for v0.33.5):
+pinned in the root `package.json` (`bun@1.4.4` for v0.34.0):
 
 ```bash
 bun install --frozen-lockfile
@@ -20,7 +20,7 @@ bun run build:single-exe
 The all-in-one executable embeds the Web app. On Linux x64 the output is
 `cli/dist-exe/bun-linux-x64-baseline/hapi`; check its `--version` before replacing
 the installed binary. The [fork update record](./fork-updates.md) describes the
-v0.33.5 build and verification results.
+v0.34.0 source verification and the earlier v0.33.5 deployment.
 
 For an existing PM2 installation:
 

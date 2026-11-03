@@ -42,7 +42,7 @@ class ContextUsageIndicatorTest {
                         ChatComposer(
                             state = ComposerUiState("Keep my draft", false, false),
                             contextUsage = usage.value,
-                            onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                            onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                         )
                     }
                 }

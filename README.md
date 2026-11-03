@@ -4,7 +4,7 @@ Run official Claude Code / Codex / Cursor Agent / Grok Build / OpenCode / Kimi /
 
 > **Why HAPI?** HAPI is a local-first alternative to Happy. See [Why Not Happy?](docs/guide/why-hapi.md) for the key differences.
 
-This fork includes upstream **v0.33.5** with local Hermes, steering, Web and Android extensions preserved. [Build from source](#build-from-source) to use these extensions; the published npm package follows upstream releases. See [Fork updates](docs/guide/fork-updates.md) for the merge, deployment and verification record.
+This fork includes upstream **v0.34.0** with local Hermes, steering, Web and Android extensions preserved. [Build from source](#build-from-source) to use these extensions; the published npm package follows upstream releases. See [Fork updates](docs/guide/fork-updates.md) for the merge, deployment and verification record.
 
 ## Features
 

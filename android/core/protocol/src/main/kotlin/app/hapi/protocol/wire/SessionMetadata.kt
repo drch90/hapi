@@ -49,6 +49,7 @@ data class SessionMetadata(
     val piAvailableModels: List<AgentModelEntry>? = null,
     val piSelectedModel: ProviderModel? = null,
     val cursorCliModelSkus: List<AgentModelEntry>? = null,
+    val dshSessionId: String? = null,
 )
 
 /** `metadata.summary` on the detail session (`{text, updatedAt}`). */

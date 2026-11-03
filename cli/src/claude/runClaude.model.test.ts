@@ -50,7 +50,10 @@ vi.mock('@/agent/sessionFactory', () => ({
     }),
     bootstrapExistingSession: vi.fn(),
 }))
-vi.mock('@/claude/loop', () => ({ loop: harness.loop }))
+vi.mock('@/claude/loop', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./loop')>(),
+    loop: harness.loop,
+}))
 vi.mock('@/agent/runnerLifecycle', () => ({
     createModeChangeHandler: () => vi.fn(),
     setControlledByUser: vi.fn(),

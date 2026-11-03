@@ -5,16 +5,18 @@ import { claudeRemote, type CompactSummaryPayload } from "./claudeRemote";
 import { convertAgentMessage } from "@/agent/messageConverter";
 import { PermissionHandler } from "./utils/permissionHandler";
 import { Future } from "@/utils/future";
+import { hashObject } from "@/utils/deterministicJson";
 import { SDKAssistantMessage, SDKMessage, SDKUserMessage } from "./sdk";
 import { formatClaudeMessageForInk } from "@/ui/messageFormatterInk";
 import { logger } from "@/ui/logger";
 import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
-import { EnhancedMode } from "./loop";
+import { claudeProcessModeKey, EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import type { ClaudePermissionMode } from "@hapi/protocol/types";
+import { RPC_METHODS } from "@hapi/protocol/rpcMethods";
+import { ClaudeToolResultImages } from './utils/toolResultImages';
 import { applySessionTitleFallback, readNativeSessionTitle, stripAttachmentReferences } from './utils/sessionTitleFallback';
-import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { ClaudeSteering } from './steering';
 import {
     RemoteLauncherBase,
@@ -141,8 +143,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
         const permissionHandler = new PermissionHandler(session);
         this.permissionHandler = permissionHandler;
 
+        const toolResultImages = new ClaudeToolResultImages();
         const messageQueue = new OutgoingMessageQueue(
-            (logMessage) => session.client.sendClaudeSessionMessage(logMessage)
+            (logMessage) => toolResultImages.send(session.client, logMessage)
         );
         const steering = new ClaudeSteering(session, () => messageQueue.flush());
         this.steering = steering;
@@ -361,6 +364,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                 this.abortFuture = new Future<void>();
                 let modeHash: string | null = null;
                 let mode: EnhancedMode | null = null;
+                let applyEffort: ((effort: string | null) => Promise<boolean>) | null = null;
                 // True once onReady() has fired at least once during this
                 // attempt. Used to distinguish an immediate/deterministic
                 // failure (never reached ready) from a failure after real
@@ -409,6 +413,9 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         hookSettingsPath: session.hookSettingsPath,
                         canCallTool: permissionHandler.handleToolCall,
                         setPermissionModeListener: session.setPermissionModeListener,
+                        setEffortApplier: (applier) => {
+                            applyEffort = applier;
+                        },
                         onPermissionModeRejected: (mode, reason) => {
                             session.setPermissionMode(mode);
                             session.pushKeepAlive();
@@ -465,7 +472,24 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             let msg = await session.queue.waitForMessagesAndGetAsString(controller.signal, 1);
 
                             if (msg) {
-                                if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
+                                // An effort-only change is applied to the running process.
+                                // The batch is already dequeued, so park it first: if Claude
+                                // refuses, times out or exits meanwhile, it stays in `pending`
+                                // and the next attempt starts with the new effort instead.
+                                const effortOnlyChange = Boolean(modeHash && msg.hash !== modeHash && !msg.isolate && mode
+                                    && hashObject(claudeProcessModeKey(msg.mode)) === hashObject(claudeProcessModeKey(mode)));
+                                let effortApplied = false;
+                                if (effortOnlyChange && applyEffort !== null) {
+                                    const parked = msg;
+                                    pending = parked;
+                                    effortApplied = await applyEffort(parked.mode.effort ?? null) && pending === parked;
+                                    if (!effortApplied) {
+                                        logger.debug('[remote]: live effort change not applied, pending message');
+                                        return null;
+                                    }
+                                    pending = null;
+                                }
+                                if (((modeHash && msg.hash !== modeHash) || msg.isolate) && !effortApplied) {
                                     // Parked into `pending`, not handed to the
                                     // SDK -- deliberately NOT tracked as
                                     // inFlightMessage. `pending` is declared
@@ -530,10 +554,6 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                             }
                         }),
                         onSteerEcho: uuid => steering.acknowledge(uuid),
-                        onResult: () => {
-                            reachedReadyThisAttempt = true;
-                            inFlightMessage = null;
-                        },
                         claudeEnvVars: session.claudeEnvVars,
                         claudeArgs: session.claudeArgs,
                         onMessage,
@@ -547,10 +567,11 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                     nativeTitle ?? stripAttachmentReferences(initialMessage)
                                 ));
                         },
-                        onCompactResultAccepted: () => {
-                            // The command has completed at the SDK boundary even
-                            // if transcript summary lookup is still pending. A
-                            // later stream failure must not replay /compact.
+                        onResultAccepted: () => {
+                            // The input has completed at the SDK boundary even
+                            // if ready is deferred (compact summary lookup, or
+                            // a steer follow-up turn). A later stream failure
+                            // must not replay it.
                             reachedReadyThisAttempt = true;
                             inFlightMessage = null;
                         },

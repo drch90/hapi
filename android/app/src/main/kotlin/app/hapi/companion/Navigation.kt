@@ -78,6 +78,7 @@ import app.hapi.companion.feature.settings.StorageViewModel
 import app.hapi.companion.feature.settings.UsageScreen
 import app.hapi.companion.feature.settings.UsageViewModel
 import app.hapi.data.auth.AuthTerminalReason
+import app.hapi.data.sse.SseSubscriptionKey
 import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -374,6 +375,8 @@ fun HapiNavigation() {
                 onOpenWorkspace = { navController.navigate(Routes.WORKSPACE) },
                 onNewInDirectory = { machine, directory -> navController.navigate(Routes.newSession(machine, directory)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                connectionChrome = hubGraph.connectionChrome,
+                runnerSkewChrome = hubGraph.runnerSkewChrome,
             )
         }
 
@@ -843,6 +846,7 @@ private class SessionListViewModelHolder : ViewModel() {
             lastSeenStore = hubGraph.lastSeenStore,
             scope = nextScope,
             hubKey = hubGraph.hubUrl,
+            connectionState = hubGraph.sseEngine.connectionState(SseSubscriptionKey.Global),
         ).also { model = it }
     }
 

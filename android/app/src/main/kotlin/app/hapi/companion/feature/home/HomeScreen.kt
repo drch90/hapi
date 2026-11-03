@@ -1,5 +1,6 @@
 package app.hapi.companion.feature.home
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -39,6 +40,10 @@ fun HomeScreen(
     onOpenSettings: (() -> Unit)? = null,
     onOpenWorkspace: (() -> Unit)? = null,
     onNewInDirectory: ((String?, String) -> Unit)? = null,
+    /** Global connection banner state; null hides the banner (slice C-①). */
+    connectionChrome: ConnectionChrome? = null,
+    /** Runner version-skew banner state; null hides the banner (slice C-②). */
+    runnerSkewChrome: RunnerSkewChrome? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     var searchExpanded by rememberSaveable(activeHubUrl) { mutableStateOf(state.searchQuery.isNotEmpty()) }
@@ -51,6 +56,7 @@ fun HomeScreen(
                 activeHubUrl = activeHubUrl,
                 pairedHubs = pairedHubs,
                 hasActiveFilters = state.hasActiveFilters,
+                connectionStatus = state.connectionStatus,
                 searchExpanded = searchExpanded,
                 searchQuery = state.searchQuery,
                 onOpenSearch = { searchExpanded = true },
@@ -68,13 +74,17 @@ fun HomeScreen(
             )
         },
     ) { padding ->
-        SessionListScreen(
-            viewModel = viewModel,
-            onOpenSession = onOpenSession,
-            modifier = Modifier.fillMaxSize().padding(padding),
-            onNewSession = onNewSession,
-            onNewInDirectory = onNewInDirectory,
-        )
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            connectionChrome?.let { GlobalConnectionBanner(it) }
+            runnerSkewChrome?.let { RunnerSkewBanner(it) }
+            SessionListScreen(
+                viewModel = viewModel,
+                onOpenSession = onOpenSession,
+                modifier = Modifier.fillMaxSize(),
+                onNewSession = onNewSession,
+                onNewInDirectory = onNewInDirectory,
+            )
+        }
     }
 
     if (filterDestination == FilterDestination.Filters) {

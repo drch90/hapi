@@ -26,9 +26,11 @@ import app.hapi.protocol.chat.VisibleChatBlock
 import coil.ImageLoader
 
 /**
- * Hub-scoped media plumbing for chat blocks: the authed Coil loader plus the
- * generated-image URL builder (both from `HubGraph`). Null loader (previews,
- * tests) degrades to a filename placeholder.
+ * Hub-scoped media plumbing for chat blocks: the authed Coil loader, the
+ * generated-image URL builder (both from `HubGraph`) and the raw byte
+ * fetcher used by non-image generated media (video/audio/file download to
+ * the media cache). Null loader/fetcher (previews, tests) degrade: images
+ * to a filename placeholder, gated media to the unavailable error line.
  */
 data class ChatMedia(
     val imageLoader: ImageLoader?,
@@ -36,7 +38,9 @@ data class ChatMedia(
     val generatedImageUrl: (imageId: String) -> String?,
 )
 
-val LocalChatMedia = staticCompositionLocalOf { ChatMedia(imageLoader = null) { null } }
+val LocalChatMedia = staticCompositionLocalOf {
+    ChatMedia(imageLoader = null, generatedImageUrl = { null })
+}
 
 /** Stable LazyColumn key. */
 val VisibleChatBlock.stableId: String

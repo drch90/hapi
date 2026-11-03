@@ -1,6 +1,7 @@
 package app.hapi.companion.feature.sessions
 
 import app.hapi.data.api.ApiError
+import app.hapi.data.sse.ConnectionState
 import app.hapi.data.store.LastSeenState
 import app.hapi.data.store.LastSeenStore
 import app.hapi.data.store.MachineListStore
@@ -13,6 +14,9 @@ import java.time.ZoneId
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,7 +24,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -93,11 +101,24 @@ data class SessionListUiState(
     val dateActivityEpochDays: Set<Long> = emptySet(),
     /** Live search-box text; blank = no filtering/ranking. */
     val searchQuery: String = "",
+    /** Last successful sessions fetch (epoch ms), for "Offline · updated …". */
+    val lastRefreshedAt: Long? = null,
+    /**
+     * Transient global-SSE status, already delayed by [CONNECTION_REVEAL_MS]
+     * so routine foreground reconnects never flash; null while connected.
+     */
+    val connectionStatus: HomeConnectionStatus? = null,
 ) {
     val hasMachineFilters: Boolean get() = machineFilters.size >= 2
     val hasActiveFilters: Boolean get() = activeMachineFilter != null || dateRange != null || filters.activeOnly || filters.unreadOnly
     val isSearching: Boolean get() = searchQuery.isNotBlank()
 }
+
+/** Quiet, transient connection states (the failed-refresh offline notice is [SessionListUiState.isOffline]). */
+enum class HomeConnectionStatus { Connecting, Reconnecting, Paused }
+
+/** A transient state must persist this long before the home shows it (Telegram-style). */
+const val CONNECTION_REVEAL_MS: Long = 2_000
 
 /**
  * Session-list state machine: combines [SessionListStore] / [MachineListStore]
@@ -121,6 +142,9 @@ class SessionListViewModel(
     private val hubKey: String = "default",
     /** Current clock zone; resolved for every date derivation, including after resume. */
     private val zoneProvider: () -> ZoneId = ZoneId::systemDefault,
+    /** Global SSE transport state (`SseEngine.connectionState(Global)`); none in tests by default. */
+    connectionState: Flow<ConnectionState> = emptyFlow(),
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val machineFilter = MutableStateFlow(lastSeenStore.state.value.machineFilter)
     private val filters = MutableStateFlow(SessionFilters(activeOnly = lastSeenStore.state.value.activeOnly))
@@ -129,6 +153,9 @@ class SessionListViewModel(
     private val isRefreshing = MutableStateFlow(false)
     private val isOffline = MutableStateFlow(false)
     private val hasRefreshedOnce = MutableStateFlow(false)
+    private val lastRefreshedAt = MutableStateFlow<Long?>(null)
+    private val connectionStatus = delayedConnectionStatus(connectionState)
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
     private val timeZone = MutableStateFlow(zoneProvider())
 
@@ -173,9 +200,13 @@ class SessionListViewModel(
         combine(machineFilter, filters, collapseOverrides, selectedSessionId) { machine, options, collapsed, selected ->
             FilterState(machine, options, collapsed, selected)
         },
-        combine(isRefreshing, isOffline, hasRefreshedOnce, timeZone) { refreshing, offline, loaded, _ ->
-            ChromeState(refreshing, offline, loaded)
-        },
+        combine(
+            combine(isRefreshing, isOffline, hasRefreshedOnce, timeZone) { refreshing, offline, loaded, _ ->
+                ChromeState(refreshing, offline, loaded)
+            },
+            lastRefreshedAt,
+            connectionStatus,
+        ) { chrome, refreshedAt, status -> chrome.copy(lastRefreshedAt = refreshedAt, connectionStatus = status) },
     ) { (sessions, machines, lastSeen), selection, chrome ->
         buildUiState(
             sessions = sessions,
@@ -188,7 +219,7 @@ class SessionListViewModel(
             isRefreshing = chrome.refreshing,
             isOffline = chrome.offline,
             hasLoaded = chrome.refreshedOnce || sessions.isNotEmpty(),
-        )
+        ).copy(lastRefreshedAt = chrome.lastRefreshedAt, connectionStatus = chrome.connectionStatus)
     }.stateIn(
         scope = scope,
         started = SharingStarted.Eagerly,
@@ -207,9 +238,13 @@ class SessionListViewModel(
      * this only kicks the explicit entry refresh (the snapshot may be stale
      * and a `resume: ok` handshake deliberately skips the REST resync).
      * Safe to call repeatedly.
+     *
+     * Silent: the screen is composed as soon as a predictive back gesture
+     * starts previewing it, so an indicator here would flash a spinner on
+     * every back swipe. The empty state covers a first load with no rows.
      */
     fun start() {
-        refresh()
+        refresh(showIndicator = false)
     }
 
     /** Screen exit. The hub-lifetime global pipe stays up by design. */
@@ -217,12 +252,19 @@ class SessionListViewModel(
         refreshJob?.cancel()
     }
 
-    /** Pull-to-refresh / initial load. Coalesces concurrent calls. */
-    fun refresh() {
+    /**
+     * Pull-to-refresh / retry (indicator shown) or entry load (silent).
+     * Coalesces concurrent calls; a user refresh joining a silent one in
+     * flight still shows the indicator until it settles.
+     */
+    fun refresh(showIndicator: Boolean = true) {
         refreshTimeZone()
-        if (refreshJob?.isActive == true) return
+        if (refreshJob?.isActive == true) {
+            if (showIndicator) isRefreshing.value = true
+            return
+        }
         refreshJob = scope.launch {
-            isRefreshing.value = true
+            if (showIndicator) isRefreshing.value = true
             try {
                 // Only a failed *sessions* fetch means "offline". Machines and
                 // other stores are secondary: their failures must not
@@ -231,6 +273,7 @@ class SessionListViewModel(
                 // the banner up while SSE streamed active sessions).
                 sessionStore.refresh()
                 isOffline.value = false
+                lastRefreshedAt.value = nowMs()
                 hasRefreshedOnce.value = true
                 try {
                     machineStore.refresh()
@@ -334,6 +377,20 @@ class SessionListViewModel(
     /** Keep the selected row visible under list filters; reading is acknowledged by the transcript. */
     fun onSessionOpened(sessionId: String) {
         selectedSessionId.value = sessionId
+    }
+
+    /** Swipe action: mark the observed head of one session as read (iOS `markRead`). */
+    fun markRead(sessionId: String) {
+        val summary = sessionStore.sessions.value.firstOrNull { it.id == sessionId } ?: return
+        scope.launch {
+            try {
+                lastSeenStore.markSeen(summary.id, summary.contentRevision ?: 0, summary.readState)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                _errors.tryEmit(SessionListError.MarkReadFailed(sessionId, error.message))
+            }
+        }
     }
 
     /** `PUT /sessions/:id/pin` with optimistic re-sort; failures surface on [errors]. */
@@ -564,7 +621,44 @@ class SessionListViewModel(
         val refreshing: Boolean,
         val offline: Boolean,
         val refreshedOnce: Boolean,
+        val lastRefreshedAt: Long? = null,
+        val connectionStatus: HomeConnectionStatus? = null,
     )
+
+    /**
+     * Maps transport phases to quiet statuses, revealed only after the
+     * outage has lasted [CONNECTION_REVEAL_MS]. The clock starts at the first
+     * non-connected phase, so Connecting → Backoff does not restart it.
+     * `Idle` means no subscription (not an outage) and shows nothing.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun delayedConnectionStatus(source: Flow<ConnectionState>): Flow<HomeConnectionStatus?> {
+        var outageSince: Long? = null
+        return source
+            .map {
+                when (it.phase) {
+                    ConnectionState.Phase.Connecting -> HomeConnectionStatus.Connecting
+                    ConnectionState.Phase.Backoff -> HomeConnectionStatus.Reconnecting
+                    ConnectionState.Phase.Suspended -> HomeConnectionStatus.Paused
+                    ConnectionState.Phase.Connected, ConnectionState.Phase.Idle -> null
+                }
+            }
+            .distinctUntilChanged()
+            .transformLatest { status ->
+                if (status == null) {
+                    outageSince = null
+                    emit(null)
+                    return@transformLatest
+                }
+                val since = outageSince ?: nowMs().also { outageSince = it }
+                val remaining = since + CONNECTION_REVEAL_MS - nowMs()
+                if (remaining > 0) {
+                    emit(null)
+                    delay(remaining)
+                }
+                emit(status)
+            }
+    }
 
     companion object {
         /** `getSessionTitle` (`web/src/lib/sessionTitle.ts`). */
@@ -623,6 +717,8 @@ sealed interface SessionListError {
     data class PreferencesFailed(override val message: String?) : SessionListError {
         override val sessionId: String get() = ""
     }
+
+    data class MarkReadFailed(override val sessionId: String, override val message: String?) : SessionListError
 
     /** Machines list refresh failed — advisory only, never the offline banner. */
     data class MachinesRefreshFailed(override val message: String?) : SessionListError {

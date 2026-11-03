@@ -32,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,26 +63,26 @@ import app.hapi.protocol.wire.SlashCommand
 import kotlinx.coroutines.delay
 
 /**
- * The chat input card (B-M3a, extended in B-M3ce/B-M3f): attachments and the
+ * The chat input card (B-M3a, extended in B-M3ce/B-M3f/B-M16b): attachments and the
  * multiline text field grow above a fixed bottom action row. The trailing
  * primary action is stateful: Stop while a turn runs with an empty draft,
  * otherwise Send (long-press offers "Send & steer" during a turn). The card
- * also hosts dictation and attachment controls, while slash suggestions stay
- * outside so the popup cannot be clipped by the rounded surface.
+ * also hosts dictation, attachment and schedule-send controls, while slash /
+ * mention suggestions stay outside so the popup cannot be clipped by the
+ * rounded surface.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatComposer(
     state: ComposerUiState,
-    onTextChange: (String) -> Unit,
+    /** User edit (text + live selection start/end) from the native field, as one atomic report. */
+    onTextChange: (String, Int, Int) -> Unit,
     onSend: () -> Unit,
     onSendSteer: () -> Unit,
     onAbort: () -> Unit,
     modifier: Modifier = Modifier,
     agentStatus: app.hapi.companion.feature.chat.AgentStatusUi? = null,
     contextUsage: app.hapi.companion.feature.chat.ContextUsageUi? = null,
-    schedule: SendSchedule? = null,
-    onSchedule: (SendSchedule?) -> Unit = {},
     sessionId: String = "",
     sessions: List<app.hapi.protocol.wire.SessionSummary> = emptyList(),
     machineLabel: (String?) -> String = { it.orEmpty() },
@@ -93,21 +92,50 @@ fun ChatComposer(
     onAttachmentRemove: (String) -> Unit = {},
     slashSuggestions: List<SlashCommand> = emptyList(),
     onSlashCommandSelected: (SlashCommand) -> Unit = {},
+    /** `@word` mention rows (B-M16a); rendered when the slash dropdown is empty. */
+    mentionSuggestions: List<MentionSuggestion> = emptyList(),
+    onMentionSelected: (MentionSuggestion) -> Unit = {},
+    /**
+     * Pending scheduled-send pick (B-M16b); non-null turns the clock button
+     * accent-filled, disables the attach button (web `hasSchedule`) and makes
+     * the next Send resolve `scheduledAt` at the send instant.
+     */
+    pendingSchedule: PendingSchedule? = null,
+    onScheduleSelected: (PendingSchedule) -> Unit = {},
+    onClearSchedule: () -> Unit = {},
     /** null ⇒ dictation unavailable (no controller wired) — mic button hidden. */
     dictation: DictationState? = null,
     onDictationToggle: () -> Unit = {},
     onDictationCancel: () -> Unit = {},
 ) {
-    var scheduleOpen by remember { mutableStateOf(false) }
-    if (scheduleOpen) ScheduleSendPicker({ scheduleOpen = false }, onSchedule)
+    var schedulePickerOpen by remember { mutableStateOf(false) }
+    val hasSchedule = pendingSchedule != null
+    LaunchedEffect(attachments.isNotEmpty(), state.isImportingShare) {
+        if (attachments.isNotEmpty() || state.isImportingShare) schedulePickerOpen = false
+    }
     Surface(color = MaterialTheme.colorScheme.surface, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(vertical = 8.dp)) {
             AgentStatusBar(agentStatus, contextUsage)
-            if (schedule != null) TextButton(onClick = { scheduleOpen = true }) { Text(scheduleLabel(schedule)) }
             if (slashSuggestions.isNotEmpty()) {
                 SlashCommandDropdown(
                     suggestions = slashSuggestions,
                     onSelect = onSlashCommandSelected,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            } else if (mentionSuggestions.isNotEmpty()) {
+                MentionDropdown(
+                    suggestions = mentionSuggestions,
+                    onSelect = onMentionSelected,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+            if (schedulePickerOpen) {
+                ScheduleTimePicker(
+                    pendingSchedule = pendingSchedule,
+                    onSchedule = {
+                        schedulePickerOpen = false
+                        onScheduleSelected(it)
+                    },
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
             }
@@ -148,8 +176,13 @@ fun ChatComposer(
                             modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 2.dp),
                         )
                     }
-                    SessionReferenceInput(state.text, onTextChange, sessionId, sessions, machineLabel, state.focusRequest,
-                        enabled = !state.isImportingShare, modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp))
+                    SessionReferenceInput(
+                        value = state.text, onChange = onTextChange, sessionId = sessionId,
+                        sessions = sessions, machineLabel = machineLabel, focusRequest = state.focusRequest,
+                        caretPosition = state.caretPosition, showSessionSuggestions = false,
+                        enabled = !state.isImportingShare,
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
+                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -162,20 +195,48 @@ fun ChatComposer(
                             ComposerActionButton(
                                 contentDescription = stringResource(R.string.chat_composer_add_attachment),
                                 onClick = onAddAttachment,
+                                // web: attachments and a schedule are mutually
+                                // exclusive (`disabled={controlsDisabled || hasSchedule}`).
+                                enabled = !hasSchedule,
                             ) {
                                 Icon(PlusGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
                             }
                         }
-                        ComposerActionButton(contentDescription = stringResource(R.string.chat_schedule),
-                            onClick = { scheduleOpen = true }, enabled = attachments.isEmpty() && !state.isSending && !state.isImportingShare) {
-                            Icon(ScheduleGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
-                        }
                         Spacer(modifier = Modifier.weight(1f))
+                        // Clock toggle (B-M16b, web ComposerButtons schedule
+                        // slot): with a pending pick the tap clears it; else it
+                        // toggles the picker. Disabled while sending or with
+                        // attachments on the tray (web `controlsDisabled ||
+                        // hasAttachments`); accent-filled while pending.
+                        ComposerActionButton(
+                            contentDescription = stringResource(R.string.chat_schedule_send),
+                            onClick = {
+                                if (hasSchedule) {
+                                    schedulePickerOpen = false
+                                    onClearSchedule()
+                                } else {
+                                    schedulePickerOpen = !schedulePickerOpen
+                                }
+                            },
+                            enabled = !state.isSending && !state.isImportingShare && attachments.isEmpty(),
+                            color = if (hasSchedule) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            contentColor = if (hasSchedule) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        ) {
+                            Icon(ScheduleGlyph, contentDescription = null, modifier = Modifier.size(19.dp))
+                        }
                         if (dictation != null) {
                             MicButton(state = dictation, onToggle = onDictationToggle)
                         }
                         PrimaryActionButton(
-                            state = state.copy(canSteer = state.canSteer && schedule == null),
+                            state = state.copy(canSteer = state.canSteer && !hasSchedule),
                             attachments = attachments,
                             onSend = onSend,
                             onSendSteer = onSendSteer,
@@ -380,6 +441,57 @@ private fun SlashCommandDropdown(
     }
 }
 
+// -------------------------------------------------------- mention dropdown --
+
+/**
+ * `@` mention rows above the input (B-M16a, web `Autocomplete.tsx` twin):
+ * session chips (`@<title>` + `Session · <id8> [· active]`) ahead of file hits
+ * (`@<fileName>` + path); tap swaps the active word for the insert text.
+ */
+@Composable
+private fun MentionDropdown(
+    suggestions: List<MentionSuggestion>,
+    onSelect: (MentionSuggestion) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val mentionSuggestionsDescription = stringResource(R.string.chat_mention_suggestions)
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 2.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = mentionSuggestionsDescription },
+    ) {
+        LazyColumn(modifier = Modifier.heightIn(max = 240.dp)) {
+            items(suggestions, key = { it.key }) { suggestion ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(onClick = { onSelect(suggestion) })
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = suggestion.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = suggestion.description,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.hapi.hint,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceContainerHighest)
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------- dictation --
 
 /** Elapsed-time recording chip with a cancel affordance (discards the take). */
@@ -564,12 +676,12 @@ private fun ChatComposerPreview() {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ChatComposer(
                     state = ComposerUiState(text = "", isSending = false, canSteer = false),
-                    onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                    onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                     dictation = DictationState.Idle,
                 )
                 ChatComposer(
                     state = ComposerUiState(text = "", isSending = false, canSteer = true),
-                    onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                    onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                     onAddAttachment = {},
                     dictation = DictationState.Idle,
                 )
@@ -579,12 +691,12 @@ private fun ChatComposerPreview() {
                         isSending = false,
                         canSteer = true,
                     ),
-                    onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                    onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                     dictation = DictationState.Idle,
                 )
                 ChatComposer(
                     state = ComposerUiState(text = "Sending…", isSending = true, canSteer = false),
-                    onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                    onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                     onAddAttachment = {},
                     attachments = listOf(
                         ComposerAttachmentUi(
@@ -609,7 +721,7 @@ private fun AttachmentChipsComposerPreview() {
         Surface {
             ChatComposer(
                 state = ComposerUiState(text = "", isSending = false, canSteer = true),
-                onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                 onAddAttachment = {},
                 attachments = listOf(
                     ComposerAttachmentUi(
@@ -649,7 +761,7 @@ private fun RecordingComposerPreview() {
         Surface {
             ChatComposer(
                 state = ComposerUiState(text = "", isSending = false, canSteer = false),
-                onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                 dictation = DictationState.Recording(startedAtMs = System.currentTimeMillis() - 42_000),
             )
         }
@@ -663,7 +775,7 @@ private fun SlashDropdownComposerPreview() {
         Surface {
             ChatComposer(
                 state = ComposerUiState(text = "/co", isSending = false, canSteer = false),
-                onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                 dictation = DictationState.Idle,
                 slashSuggestions = listOf(
                     SlashCommand(
@@ -678,6 +790,57 @@ private fun SlashDropdownComposerPreview() {
                     ),
                     SlashCommand(name = "code-review", description = null, source = "project"),
                 ),
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun MentionDropdownComposerPreview() {
+    HapiTheme {
+        Surface {
+            ChatComposer(
+                state = ComposerUiState(text = "@ref", isSending = false, canSteer = false),
+                onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
+                dictation = DictationState.Idle,
+                mentionSuggestions = listOf(
+                    MentionSuggestion.SessionMention(
+                        id = "3f9d2c1b8e7a4d60",
+                        title = "Refactor auth flow",
+                        key = "session:3f9d2c1b8e7a4d60",
+                        label = "@Refactor auth flow",
+                        description = "Session · 3f9d2c1b",
+                        insertText = "See session \"Refactor auth flow\" (/sessions/3f9d2c1b8e7a4d60) for context.",
+                    ),
+                    MentionSuggestion.FileMention(
+                        key = "@docs/auth.md",
+                        label = "@auth.md",
+                        description = "docs/auth.md",
+                        insertText = "@docs/auth.md",
+                    ),
+                ),
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun ScheduledComposerPreview() {
+    HapiTheme {
+        Surface {
+            ChatComposer(
+                state = ComposerUiState(
+                    text = "Wrap up the release notes and ping me",
+                    isSending = false,
+                    canSteer = false,
+                ),
+                onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
+                pendingSchedule = PendingSchedule.Preset("+30m"),
+                onScheduleSelected = {},
+                onClearSchedule = {},
+                dictation = DictationState.Idle,
             )
         }
     }

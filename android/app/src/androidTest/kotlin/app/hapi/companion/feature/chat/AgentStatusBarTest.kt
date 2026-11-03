@@ -43,7 +43,7 @@ class AgentStatusBarTest {
                             state = ComposerUiState("Keep my draft", false, false),
                             agentStatus = status.value,
                             contextUsage = ContextUsageUi(90_000.0, 258_000.0, null),
-                            onTextChange = {}, onSend = {}, onSendSteer = {}, onAbort = {},
+                            onTextChange = { _, _, _ -> }, onSend = {}, onSendSteer = {}, onAbort = {},
                         )
                     }
                 }

@@ -223,8 +223,7 @@ class LastSeenStore(
             val manual = if (pending != null && pending.request.expectedVersion == server.version) {
                 pending.request.type == "unread"
             } else server.manualUnread
-            return manual || (!(summary.active && summary.thinking)
-                && (summary.contentRevision ?: 0) > maxOf(server.readRevision, state.lastSeen[summary.id] ?: 0))
+            return manual || (summary.contentRevision ?: 0) > maxOf(server.readRevision, state.lastSeen[summary.id] ?: 0)
         }
     }
 }

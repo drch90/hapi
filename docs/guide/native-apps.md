@@ -88,7 +88,7 @@ directory browsing and session creation.
 | Capability | Current native behavior |
 |---|---|
 | Chat and permissions | Streaming messages, history, tool inspection, approvals and question answering on both platforms. |
-| Composer | Text, photos/camera/files, drafts, queued-message actions, `/` command suggestions and steering when supported by the session. |
+| Composer | Text, photos/camera/files, drafts, queued-message actions, `/` command suggestions and steering when supported by the session. iOS also offers `@` session references, plus file references for Codex/Copilot (editable text, not inline chips). |
 | Context usage | Android shows the latest parent-conversation context below the composer, with a details dialog using Web's calculation rules. See [context usage](#android-context-usage). |
 | Unknown deliveries | Android can locally dismiss an unresolved pending message, retain the choice across restarts and reconcile confirmed deletions from other clients. See [pending messages](#android-pending-messages). |
 | Android incoming shares | Share files, photos, text or links to HAPI, choose a session and confirm sending from its composer. The picker can switch paired hubs and explicitly restore stopped sessions. |

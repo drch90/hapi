@@ -195,7 +195,8 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  * Steer = soft mid-turn delivery (same idea as Cursor GUI default "Send"):
  * - Pi: native steer over the Pi runtime (first-class since #1466)
  * - Codex: app-server `turn/steer` (true mid-turn inject)
- * - Claude: stream-json stdin injection, acknowledged by native user UUID echo.
+ * - Claude: stream-json stdin injection, acknowledged by native user UUID echo;
+ *   Claude folds it in at the next tool boundary. Remote mode only.
  * - Hermes: native `/steer` through a concurrent ACP prompt (no cancel).
  * - Cursor ACP: concurrent `session/prompt` soft-send (no cancel). Legacy
  *   stream-json Cursor sessions are NOT steerable — gate with

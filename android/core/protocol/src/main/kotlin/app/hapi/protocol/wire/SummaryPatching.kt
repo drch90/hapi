@@ -124,6 +124,7 @@ object SummaryPatching {
                 "kimi" -> metadata.kimiSessionId
                 "copilot" -> metadata.copilotSessionId
                 "pi" -> metadata.piSessionId
+                "dsh" -> metadata.dshSessionId
                 else -> null
             }
             return flavorSessionId?.trim()?.takeIf { it.isNotEmpty() }
@@ -137,6 +138,7 @@ object SummaryPatching {
             ?: metadata.cursorSessionId
             ?: metadata.kimiSessionId
             ?: metadata.copilotSessionId
+            ?: metadata.dshSessionId
     }
 
     /** `toSessionSummaryMetadata` — list-sized projection of full metadata. */

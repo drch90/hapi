@@ -203,6 +203,12 @@ private open class FakeMessagesApi : ChatSessionApi {
         app.hapi.protocol.wire.HermesModelsResponse(success = false, error = "not scripted")
     override suspend fun getSlashCommands(sessionId: String): app.hapi.protocol.wire.SlashCommandsResponse =
         app.hapi.protocol.wire.SlashCommandsResponse(success = false, error = "not scripted")
+    override suspend fun searchSessionFiles(
+        sessionId: String,
+        query: String,
+        limit: Int?,
+    ): app.hapi.protocol.wire.FileSearchResponse =
+        app.hapi.protocol.wire.FileSearchResponse(success = false, error = "not scripted")
     override suspend fun uploadFile(
         sessionId: String,
         filename: String,

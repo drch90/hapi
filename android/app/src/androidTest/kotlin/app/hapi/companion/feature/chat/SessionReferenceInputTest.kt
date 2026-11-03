@@ -43,6 +43,21 @@ class SessionReferenceInputTest {
         }
     }
 
+    @Test fun externalMentionCaretMapsAcrossReferenceChips() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val editor = SessionEditText(instrumentation.targetContext)
+            val mention = "[会话](/sessions/session-id)"
+            val prefix = "前文 $mention "
+            editor.syncValue(prefix + "后文", prefix.length)
+            assertEquals("前文 \uFFFC 后文", editor.text.toString())
+            assertEquals("前文 \uFFFC ".length, editor.selectionStart)
+            assertEquals(prefix.length to prefix.length, editor.serializedSelection())
+            editor.setSelection(3, 4)
+            assertEquals(3 to 3 + mention.length, editor.serializedSelection())
+        }
+    }
+
     @Test fun selectionInsertsReferenceWithoutDiscardingSurroundingText() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {

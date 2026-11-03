@@ -1,70 +1,205 @@
 package app.hapi.companion.feature.chat.composer
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
-import app.hapi.companion.R
 import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
+import java.util.Locale
 
-/** Stored selection; relative presets are resolved once, when sending, never on retry. */
-data class SendSchedule(val delayMinutes: Int? = null, val epochMs: Long? = null) {
-    init { require((delayMinutes == null) != (epochMs == null)) }
-    fun resolve(now: Long): Long = delayMinutes?.let { now + it * 60_000L } ?: requireNotNull(epochMs)
-    fun encode(): String = delayMinutes?.let { "preset:$it" } ?: "at:$epochMs"
+/**
+ * Scheduled-send domain (B-M16b) — the web `ScheduleTimePicker.tsx` /
+ * `SessionChat.tsx` pending-schedule contract as pure functions, so the
+ * preset set, send-time resolution, validation windows and edit restore are
+ * unit-testable without Compose.
+ *
+ * web 同构/分歧:
+ * - The preset set is exactly the web `PRESETS` — `+5m/+30m/+1h/+4h` (no
+ *   `+15m`); the button labels are the raw preset strings, unlocalized,
+ *   exactly like the web renders them.
+ * - A preset stores only its key; the absolute time is computed at SEND time
+ *   ([resolvePendingSchedule] with the send instant), so "+5m" means five
+ *   minutes from the Send tap, not from the picker tap.
+ * - Specific times validate with the web's 30 s past-grace (minute-resolution
+ *   picks can go stale before Submit) and 7-day ceiling. The web's
+ *   `datetime-local` min/max attributes are browser input affordances, not
+ *   the gate — deliberately not mirrored; [validateSpecificDatetime] is the
+ *   gate, like the web's real check.
+ * - 分歧: the web blocks *file pastes* while a schedule is pending (the whole
+ *   paste is dropped); the Android composer has no clipboard-file paste path,
+ *   so nothing to block — the illegal combos are instead made unreachable at
+ *   three layers (tray gates: schedule button disabled with attachments,
+ *   attach button disabled while pending; the picker panel closes when a chip
+ *   appears; and the ViewModel rejects arming over a non-empty tray and
+ *   validates again before consuming uploads), the same mutual exclusion the
+ *   web enforces.
+ */
+sealed interface PendingSchedule {
+    /** A relative preset key (`+5m`/`+30m`/`+1h`/`+4h`); resolved at send time. */
+    data class Preset(val preset: String) : PendingSchedule
+
+    /** A user-chosen instant, epoch ms; sent unchanged. */
+    data class Absolute(val ms: Long) : PendingSchedule
+
+    /** Persist the existing draft format; relative picks stay relative until Send. */
+    fun encode(): String = when (this) {
+        is Preset -> "preset:${ScheduleSend.parsePreset(preset, 0) / 60_000}"
+        is Absolute -> "at:$ms"
+    }
+
     companion object {
-        fun decode(value: String?): SendSchedule? = when {
-            value?.startsWith("preset:") == true -> value.substringAfter(':').toIntOrNull()?.takeIf { it in listOf(5, 30, 60, 240) }?.let { SendSchedule(delayMinutes = it) }
-            value?.startsWith("at:") == true -> value.substringAfter(':').toLongOrNull()?.let { SendSchedule(epochMs = it) }
+        fun decode(value: String?): PendingSchedule? = when {
+            value?.startsWith("preset:") == true -> {
+                val minutes = value.substringAfter(':').toIntOrNull()
+                ScheduleSend.PRESETS.firstOrNull {
+                    ScheduleSend.parsePreset(it, 0) / 60_000 == minutes?.toLong()
+                }?.let(::Preset)
+            }
+            value?.startsWith("at:") == true -> value.substringAfter(':').toLongOrNull()?.let(::Absolute)
             else -> null
         }
-        fun valid(at: Long, now: Long): Boolean = at >= now - 30_000L && at <= now + 7 * 24 * 60 * 60_000L
     }
 }
 
-@Composable
-internal fun scheduleLabel(schedule: SendSchedule): String = schedule.delayMinutes?.let {
-    stringResource(R.string.chat_schedule_preset, it)
-} ?: stringResource(R.string.chat_schedule_at, DateTimeFormatter.ofPattern("MM-dd HH:mm")
-    .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(requireNotNull(schedule.epochMs))))
+/** Pure helpers around [PendingSchedule] (web `ScheduleTimePicker.tsx` twins). */
+object ScheduleSend {
+    /** The web `PRESETS` enumeration, order-stable. */
+    val PRESETS: List<String> = listOf("+5m", "+30m", "+1h", "+4h")
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun ScheduleSendPicker(onDismiss: () -> Unit, onSelect: (SendSchedule?) -> Unit) {
-    var specific by remember { mutableStateOf(false) }
-    var timeStep by remember { mutableStateOf(false) }
-    var dateMillis by remember { mutableStateOf<Long?>(null) }
-    var invalid by remember { mutableStateOf(false) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(16.dp)) {
-            Text(stringResource(R.string.chat_schedule), style = MaterialTheme.typography.titleLarge)
-            listOf(5, 30, 60, 240).forEach { minutes -> TextButton(onClick = { onSelect(SendSchedule(delayMinutes = minutes)); onDismiss() }) {
-                Text(stringResource(R.string.chat_schedule_preset, minutes))
-            } }
-            TextButton(onClick = { specific = true }) { Text(stringResource(R.string.chat_schedule_specific)) }
-            TextButton(onClick = { onSelect(null); onDismiss() }) { Text(stringResource(R.string.chat_schedule_clear)) }
+    /** Past tolerance for specific picks (web `GRACE_MS`). */
+    const val SPECIFIC_GRACE_MS: Long = 30_000
+
+    /** Ceiling for any scheduled fire time (web: "must be within 7 days"). */
+    const val MAX_SCHEDULE_MS: Long = 7L * 24 * 60 * 60 * 1000
+
+    /** Web `parsePreset`: preset key → epoch ms against [now]. */
+    fun parsePreset(preset: String, now: Long): Long = when (preset) {
+        "+5m" -> now + 5 * 60_000L
+        "+30m" -> now + 30 * 60_000L
+        "+1h" -> now + 60 * 60_000L
+        "+4h" -> now + 4 * 60 * 60_000L
+        else -> throw IllegalArgumentException("Unknown preset: $preset")
+    }
+
+    /**
+     * Web `resolvePendingSchedule`: pending → epoch ms at send time; null →
+     * null. Presets resolve against [sendNow]; absolute picks pass through.
+     */
+    fun resolvePendingSchedule(pending: PendingSchedule?, sendNow: Long): Long? = when (pending) {
+        null -> null
+        is PendingSchedule.Preset -> parsePreset(pending.preset, sendNow)
+        is PendingSchedule.Absolute -> pending.ms
+    }
+
+    /**
+     * Why a specific datetime was rejected. [Invalid] is Android-only: the
+     * web's `datetime-local` box cannot hold a malformed shape (the browser
+     * affordances enforce it), while two masked text fields can be submitted
+     * half-typed.
+     */
+    enum class SpecificError { Past, TooFar, Invalid }
+
+    /** Web `validateSpecificDatetime`: 30 s past-grace, 7-day ceiling, else null. */
+    fun validateSpecificDatetime(value: Long, now: Long): SpecificError? {
+        if (value < now - SPECIFIC_GRACE_MS) return SpecificError.Past
+        if (value > now + MAX_SCHEDULE_MS) return SpecificError.TooFar
+        return null
+    }
+
+    /**
+     * Web `computeEditPendingSchedule` (queued-bar Edit): a future fire time
+     * re-arms the composer as an absolute pick; past/null → null so the
+     * re-send goes out immediately.
+     */
+    fun computeEditPendingSchedule(scheduledAt: Long?, now: Long): PendingSchedule? =
+        if (scheduledAt == null || scheduledAt <= now) null else PendingSchedule.Absolute(scheduledAt)
+
+    /** Web `shouldAutoClearPendingSchedule`: only absolute picks expire on the clock. */
+    fun shouldAutoClearPendingSchedule(pending: PendingSchedule?): Boolean =
+        pending is PendingSchedule.Absolute
+
+    private val strictDate = DateTimeFormatter.ofPattern("uuuu-MM-dd").withResolverStyle(ResolverStyle.STRICT)
+    private val clockTime = DateTimeFormatter.ofPattern("HH:mm")
+
+    /**
+     * Auto-format the Specific-tab date field for digit keyboards
+     * (`KeyboardType.Number`): the IME exposes no `-` key, so the field
+     * inserts the `YYYY-MM-DD` separators itself as the digits arrive —
+     * "20261105" renders (and round-trips through the state) as
+     * "2026-11-05". Non-digits are dropped and the shape is capped at 8
+     * digits; already-formatted text round-trips unchanged (pasting
+     * "2026-11-05" stays put). Deleting just re-masks the remaining digits.
+     */
+    fun maskDateInput(input: String): String {
+        val digits = input.filter { it in '0'..'9' }.take(8)
+        return buildString {
+            digits.forEachIndexed { index, digit ->
+                if (index == 4 || index == 6) append('-')
+                append(digit)
+            }
         }
     }
-    if (specific) {
-        val date = rememberDatePickerState()
-        DatePickerDialog(onDismissRequest = { specific = false }, confirmButton = {
-            TextButton(enabled = date.selectedDateMillis != null, onClick = { dateMillis = date.selectedDateMillis; specific = false; timeStep = true }) { Text(stringResource(R.string.chat_link_open)) }
-        }) { DatePicker(date) }
+
+    /**
+     * [maskDateInput]'s time twin: the `HH:mm` colon appears after the
+     * second digit — "1430" becomes "14:30" — because common numeric IMEs
+     * (Gboard's number pad) have no `:` key.
+     */
+    fun maskTimeInput(input: String): String {
+        val digits = input.filter { it in '0'..'9' }.take(4)
+        return buildString {
+            digits.forEachIndexed { index, digit ->
+                if (index == 2) append(':')
+                append(digit)
+            }
+        }
     }
-    if (timeStep) {
-        val now = java.time.LocalTime.now()
-        val time = rememberTimePickerState(now.hour, now.minute, true)
-        AlertDialog(onDismissRequest = { timeStep = false }, text = {
-            Column { TimeInput(time); if (invalid) Text(stringResource(R.string.chat_schedule_invalid), color = MaterialTheme.colorScheme.error) }
-        }, confirmButton = { TextButton(onClick = {
-            val day = Instant.ofEpochMilli(requireNotNull(dateMillis)).atZone(ZoneOffset.UTC).toLocalDate()
-            val at = day.atTime(time.hour, time.minute).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            if (SendSchedule.valid(at, System.currentTimeMillis())) { onSelect(SendSchedule(epochMs = at)); timeStep = false; onDismiss() } else invalid = true
-        }) { Text(stringResource(R.string.chat_schedule)) } })
+
+    /**
+     * Parse the two specific-tab fields (`YYYY-MM-DD` + `HH:mm`, the web's
+     * `datetime-local` minute resolution split across two boxes) as local
+     * wall time in [zone] → epoch ms. Strict date resolution (Feb 30 is
+     * invalid, not adjusted); null on empty, malformed or impossible input
+     * (web: `isNaN(parsed)` → ignore).
+     */
+    fun parseSpecificInput(dateText: String, timeText: String, zone: ZoneId): Long? {
+        val date = runCatching { LocalDate.parse(dateText.trim(), strictDate) }.getOrNull() ?: return null
+        val time = runCatching { LocalTime.parse(timeText.trim(), clockTime) }.getOrNull() ?: return null
+        return date.atTime(time).atZone(zone).toInstant().toEpochMilli()
+    }
+
+    /**
+     * Web `scheduledTime.ts#formatScheduledTime` twin: an absolute fire time
+     * like "Oct 25, 2:30 PM"; the year appears only when it differs from the
+     * current year in [zone]. The hour cycle follows the locale like web Intl:
+     * 24-hour for the shipped ru/zh locales ("25 окт., 14:30"), 12-hour AM/PM
+     * elsewhere. Locale/zone/[now] injectable for tests.
+     */
+    fun formatScheduledTime(
+        scheduledAt: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+        locale: Locale = Locale.getDefault(),
+        now: () -> Long = System::currentTimeMillis,
+    ): String {
+        val fireTime = Instant.ofEpochMilli(scheduledAt).atZone(zone)
+        val currentYear = Instant.ofEpochMilli(now()).atZone(zone).year
+        // Date section + hour cycle follow web Intl output per locale:
+        // ru "25 окт., 14:30", zh "10月25日 14:30", en "Oct 25, 2:30 PM".
+        val dateAndTimePattern = when (locale.language) {
+            "ru" -> "d MMM, HH:mm"
+            "zh" -> "M月d日 HH:mm"
+            else -> "MMM d, h:mm a"
+        }
+        val pattern = if (fireTime.year == currentYear) {
+            dateAndTimePattern
+        } else {
+            when (locale.language) {
+                "ru" -> "d MMM, yyyy, HH:mm"
+                "zh" -> "yyyy年M月d日 HH:mm"
+                else -> "MMM d, yyyy, h:mm a"
+            }
+        }
+        return fireTime.format(DateTimeFormatter.ofPattern(pattern, locale))
     }
 }

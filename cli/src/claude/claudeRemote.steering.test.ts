@@ -28,7 +28,7 @@ async function harness() {
     });
     const controller = new AbortController();
     const onReady = vi.fn();
-    const onResult = vi.fn();
+    const onResultAccepted = vi.fn();
     const onSteerEcho = vi.fn();
     const targets: Array<ClaudeSteerTarget | null> = [];
     const onThinkingChange = vi.fn();
@@ -40,7 +40,7 @@ async function harness() {
     const run = claudeRemote({
         sessionId: null, path: '/tmp/steering', allowedTools: [], hookSettingsPath: '/tmp/hooks.json',
         signal: controller.signal, canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-        nextMessage, onReady, onResult, onSteerEcho, onThinkingChange,
+        nextMessage, onReady, onResultAccepted, onSteerEcho, onThinkingChange,
         onSteeringTarget: target => { targets.push(target); },
         isAborted: () => false, onSessionFound: () => {}, onMessage: () => {}
     });
@@ -58,7 +58,7 @@ async function harness() {
         await run;
         await promptReader;
     };
-    return { output, prompts, writes, query, target, targets, steer, nextMessage, onReady, onResult, onSteerEcho, onThinkingChange, controller, finish };
+    return { output, prompts, writes, query, target, targets, steer, nextMessage, onReady, onResultAccepted, onSteerEcho, onThinkingChange, controller, finish };
 }
 
 describe('Claude active-turn stdin injection', () => {
@@ -114,7 +114,7 @@ describe('Claude active-turn stdin injection', () => {
         try {
             h.target.send(h.steer);
             h.output.push({ type: 'result', subtype: 'success' });
-            await vi.waitFor(() => expect(h.onResult).toHaveBeenCalledOnce());
+            await vi.waitFor(() => expect(h.onResultAccepted).toHaveBeenCalledOnce());
             expect(h.targets.at(-1)).toBe(h.target);
             const second = { ...h.steer, uuid: 'second-guidance', message: { role: 'user' as const, content: 'another correction' } };
             expect(h.target.send(second)).toBe(true);
@@ -143,7 +143,7 @@ describe('Claude active-turn stdin injection', () => {
             h.output.push({ ...h.steer, isReplay: true, isMeta: true });
             h.output.push({ ...h.steer, isReplay: true, parent_tool_use_id: 'child' });
             h.output.push({ type: 'result', subtype: 'success' });
-            await vi.waitFor(() => expect(h.onResult).toHaveBeenCalledOnce());
+            await vi.waitFor(() => expect(h.onResultAccepted).toHaveBeenCalledOnce());
             expect(h.onSteerEcho).not.toHaveBeenCalled();
             expect(h.onReady).not.toHaveBeenCalled();
         } finally { await h.finish(); }

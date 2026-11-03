@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,7 +47,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
 import app.hapi.data.store.ChatHistoryPagingState
+import app.hapi.protocol.chat.AggregatedAssistantMeta
 import app.hapi.protocol.chat.VisibleChatBlock
+import app.hapi.protocol.chat.buildMessageMetadataLabels
+import app.hapi.protocol.chat.messageMetadataForBlock
 import app.hapi.protocol.wire.SessionReadState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -78,6 +82,8 @@ internal fun ChatTranscript(
     onLocationMissing: () -> Unit = {},
     listState: LazyListState = rememberLazyListState(),
     readingState: TranscriptReadingState = rememberTranscriptReadingState(state.sessionId),
+    messageAggregates: Map<String, AggregatedAssistantMeta> = emptyMap(),
+    onShowMessageInfo: (VisibleChatBlock) -> Unit = {},
 ) {
     var highlightedId by remember { mutableStateOf<String?>(null) }
     val rowState = rememberSaveableStateHolder()
@@ -354,7 +360,18 @@ internal fun ChatTranscript(
                             .onSizeChanged { heights[row.id] = it.height }
                             .testTag("chat-row-" + row.id)
                         app.hapi.companion.ui.theme.ReadingColumn(modifier = rowModifier) {
-                            ChatBlockCard(block = row.block, basePath = state.basePath, processSteps = state.processSteps[row.id])
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                ChatBlockCard(block = row.block, basePath = state.basePath, processSteps = state.processSteps[row.id])
+                                val metadata = remember(row.block, messageAggregates) {
+                                    messageMetadataForBlock(row.block, messageAggregates)
+                                }
+                                val labels = remember(metadata) {
+                                    metadata?.let(::buildMessageMetadataLabels).orEmpty()
+                                }
+                                if (labels.isNotEmpty()) {
+                                    MessageInfoEntry(onClick = { onShowMessageInfo(row.block) })
+                                }
+                            }
                         }
                     }
                 }

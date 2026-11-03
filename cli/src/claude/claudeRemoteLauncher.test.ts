@@ -198,7 +198,7 @@ describe('claudeRemoteLauncher resume anchor', () => {
             await opts.onSteerEcho(message.uuid)
             expect(client.emitMessagesConsumed).toHaveBeenCalledExactlyOnceWith(['guidance'], { steered: true })
             opts.onSteeringTarget(null)
-            opts.onResult()
+            opts.onResultAccepted()
             await opts.onReady()
         }
         try {

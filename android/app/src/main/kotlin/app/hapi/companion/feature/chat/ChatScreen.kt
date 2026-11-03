@@ -85,6 +85,9 @@ import app.hapi.companion.feature.sessions.RenameSessionDialog
 import app.hapi.companion.ui.markdown.LocalMarkdownRenderCache
 import app.hapi.companion.ui.markdown.LocalMarkdownLinkHandler
 import app.hapi.companion.ui.theme.hapi
+import app.hapi.protocol.chat.VisibleChatBlock
+import app.hapi.protocol.chat.buildMessageMetadataLabels
+import app.hapi.protocol.chat.messageMetadataForBlock
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -129,6 +132,7 @@ internal fun ChatScreen(
     val composerState by viewModel.composer.collectAsState()
     val agentStatus by viewModel.agentStatus.collectAsState()
     val contextUsage by viewModel.contextUsage.collectAsState()
+    val pendingSchedule by viewModel.pendingSchedule.collectAsState()
     val codexPlanActions by viewModel.codexPlanActions.collectAsState()
     val queuedRows by viewModel.queuedRows.collectAsState()
     val configState by viewModel.config.collectAsState()
@@ -143,7 +147,6 @@ internal fun ChatScreen(
         onDispose { if (outlineOpen) viewModel.setTranscriptVisible(true) }
     }
     LaunchedEffect(jumpToken) { outlineOpen = false; location = null }
-    val sendSchedule by viewModel.schedule.collectAsState()
     val actionSummary by viewModel.actionSummary.collectAsState()
     val allSessions by viewModel.allSessions.collectAsState()
     val machines by viewModel.machines.collectAsState()
@@ -156,6 +159,7 @@ internal fun ChatScreen(
     }
     var renameDialogOpen by remember { mutableStateOf(false) }
     var deleteDialogOpen by remember { mutableStateOf(false) }
+    var messageInfoBlock by remember { mutableStateOf<VisibleChatBlock?>(null) }
 
     DisposableEffect(viewModel) {
         viewModel.setTranscriptVisible(true)
@@ -220,6 +224,7 @@ internal fun ChatScreen(
         }
     }
     val slashSuggestions by viewModel.slashSuggestions.collectAsState()
+    val mentionSuggestions by viewModel.mentionSuggestions.collectAsState()
 
     // --------------------------------------------------------- attachments --
     val attachmentItems by viewModel.attachments.items.collectAsState()
@@ -388,9 +393,8 @@ internal fun ChatScreen(
                         state = composerState,
                         agentStatus = agentStatus,
                         contextUsage = contextUsage,
-                        onTextChange = viewModel::setComposerText,
+                        onTextChange = viewModel::onComposerChange,
                         sessionId = viewModel.sessionId, sessions = allSessions,
-                        schedule = sendSchedule, onSchedule = viewModel::setSchedule,
                         machineLabel = { id -> machines.firstOrNull { it.id == id }?.metadata?.let { it.displayName ?: it.host } ?: id.orEmpty() },
                         onSend = { viewModel.sendMessage() },
                         onSendSteer = { viewModel.sendMessage(steer = true) },
@@ -401,6 +405,11 @@ internal fun ChatScreen(
                         onAttachmentRemove = viewModel.attachments::remove,
                         slashSuggestions = slashSuggestions,
                         onSlashCommandSelected = viewModel::selectSlashCommand,
+                        mentionSuggestions = mentionSuggestions,
+                        onMentionSelected = viewModel::selectMentionSuggestion,
+                        pendingSchedule = pendingSchedule,
+                        onScheduleSelected = viewModel::setPendingSchedule,
+                        onClearSchedule = { viewModel.setPendingSchedule(null) },
                         dictation = if (dictationAvailable) dictationState else null,
                         onDictationToggle = onDictationToggle,
                         onDictationCancel = { dictation?.cancel() },
@@ -438,6 +447,8 @@ internal fun ChatScreen(
                             onRetryHistory = viewModel::loadOlder,
                             onJumpToLatest = viewModel::jumpToLatest,
                             listState = transcriptList, readingState = readingState,
+                            messageAggregates = state.messageAggregates,
+                            onShowMessageInfo = { messageInfoBlock = it },
                         )
                     }
                     if (!state.loadFailed) state.warning?.let { warning ->
@@ -507,6 +518,19 @@ internal fun ChatScreen(
             },
             onDismiss = { deleteDialogOpen = false },
         )
+    }
+    messageInfoBlock?.let { infoBlock ->
+        val labels = remember(infoBlock, state.messageAggregates) {
+            messageMetadataForBlock(infoBlock, state.messageAggregates)
+                ?.let(::buildMessageMetadataLabels)
+                .orEmpty()
+        }
+        if (labels.isNotEmpty()) {
+            MessageMetadataDialog(
+                labels = labels,
+                onDismiss = { messageInfoBlock = null },
+            )
+        }
     }
 }
 
@@ -672,6 +696,8 @@ internal fun chatNoticeText(context: Context, notice: ChatNotice): String = when
     ChatNotice.AttachmentsUploading -> context.getString(R.string.chat_notice_attachments_uploading)
     ChatNotice.ResumeFailed -> context.getString(R.string.chat_notice_resume_failed)
     ChatNotice.QueuedEditKeptDraft -> context.getString(R.string.chat_notice_edit_kept_draft)
+    ChatNotice.QueuedEditScheduleDropped -> context.getString(R.string.chat_notice_edit_schedule_dropped)
+    ChatNotice.ScheduleAttachmentConflict -> context.getString(R.string.chat_notice_schedule_attachment_conflict)
     ChatNotice.QueuedAlreadyDelivered -> context.getString(R.string.chat_notice_already_delivered)
     ChatNotice.QueuedDismissed -> context.getString(R.string.chat_queued_dismissed)
     ChatNotice.PermissionAlreadyHandled -> context.getString(R.string.chat_notice_request_already_handled)

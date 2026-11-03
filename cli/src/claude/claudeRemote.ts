@@ -40,6 +40,8 @@ interface ActiveCompact {
 // acceptEdits/bypassPermissions are emulated in canCallTool so they can change
 // mid-session. Launching Claude natively in them skips canCallTool, so a later
 // downgrade (e.g. Yolo -> Default) would never take effect.
+const EFFORT_APPLY_TIMEOUT_MS = 5_000;
+
 function nativePermissionMode(mode: PermissionMode): PermissionMode {
     return mode === 'acceptEdits' || mode === 'bypassPermissions' ? 'default' : mode;
 }
@@ -58,6 +60,8 @@ export async function claudeRemote(opts: {
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
     /** Receives mid-turn permission mode changes so Claude's native mode can follow them. */
     setPermissionModeListener?: (listener: ((mode: PermissionMode) => void) | null) => void,
+    /** Receives a live effort applier; it resolves false when Claude must restart instead. */
+    setEffortApplier?: (applier: ((effort: string | null) => Promise<boolean>) | null) => void,
     /** Claude refused or fell back from a requested mode; `mode` is the one it actually runs. */
     onPermissionModeRejected?: (mode: PermissionMode, reason: string) => void,
     /** Session modes used to spawn Claude before the first fork child prompt. */
@@ -74,12 +78,15 @@ export async function claudeRemote(opts: {
     onMessage: (message: SDKMessage) => void,
     onContextUsage?: (usage: { model?: string, maxTokens?: number }) => void,
     onFirstResult?: (initialMessage: string) => void,
-    onCompactResultAccepted?: () => void,
+    /**
+     * The delivered input finished at the SDK boundary although onReady is
+     * still deferred (compact summary lookup, or a steer follow-up turn).
+     */
+    onResultAccepted?: () => void,
     onCompletionEvent?: (message: string) => void,
     onSessionReset?: () => void,
     onSteeringTarget?: (target: ClaudeSteerTarget | null) => void,
     onSteerEcho?: (uuid: string) => void | Promise<void>,
-    onResult?: () => void,
 }) {
     const debugPrefix = '[claudeRemote][async-debug]';
 
@@ -145,6 +152,8 @@ export async function claudeRemote(opts: {
     let awaitingForkInit = forkSession;
 
     const messages = new PushableAsyncIterable<SDKUserMessage>();
+    let responseClosed = false;
+    let inputEnded = false;
 
     // Success-only: a failed compaction keeps its failure line, an unknown
     // session id or any transcript read problem falls back to the plain
@@ -253,13 +262,7 @@ export async function claudeRemote(opts: {
         }
 
         mode = next.mode;
-        messages.push({
-            type: 'user',
-            message: {
-                role: 'user',
-                content: next.message,
-            },
-        });
+        messages.push({ type: 'user', message: { role: 'user', content: next.message } });
         return next;
     };
 
@@ -329,21 +332,29 @@ export async function claudeRemote(opts: {
     };
 
     // Start the loop
-    const response = query({
-        prompt: messages,
-        options: sdkOptions,
-    });
+    let response: ReturnType<typeof query>;
+    try {
+        response = query({
+            prompt: messages,
+            options: sdkOptions,
+        });
+    } catch (e) {
+        messages.end();
+        opts.onSteeringTarget?.(null);
+        throw e;
+    }
 
     let processInitialized = false;
     let turnOpen = initial !== null;
     let steeringTarget: ClaudeSteerTarget | null = null;
     const pendingSteers = new Set<string>();
     const publishSteeringTarget = () => {
-        if (!processInitialized || !turnOpen || (compactState.active !== null || compactCompletion !== null) || opts.signal?.aborted) return;
+        if (!processInitialized || !turnOpen || specialCommand.type !== null
+            || compactState.active !== null || compactCompletion !== null || opts.signal?.aborted) return;
         const target: ClaudeSteerTarget = {
             mode,
             send: (message) => {
-                if (steeringTarget !== target || !turnOpen || opts.signal?.aborted || !message.uuid) return false;
+                if (steeringTarget !== target || !turnOpen || responseClosed || inputEnded || opts.signal?.aborted || !message.uuid) return false;
                 pendingSteers.add(message.uuid);
                 const sent = response.sendUserMessage(message);
                 if (!sent) pendingSteers.delete(message.uuid);
@@ -393,13 +404,40 @@ export async function claudeRemote(opts: {
         });
     });
 
+    // Effort applies to the next request of the running process, so an
+    // effort-only change does not need the --resume restart other modes do.
+    let nativeEffort: string | null = sdkOptions.effort ?? null;
+    opts.setEffortApplier?.(async (effort) => {
+        if (effort === nativeEffort) {
+            return true;
+        }
+        // Control responses are not rejected when the process exits; never let
+        // a lost reply hold the next prompt. Timing out falls back to a restart.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await Promise.race([
+                response.setEffort(effort),
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error('timed out')), EFFORT_APPLY_TIMEOUT_MS);
+                })
+            ]);
+            nativeEffort = effort;
+            // A process that closed while we waited cannot take the prompt;
+            // report a restart so the launcher keeps the batch for the next one.
+            return !responseClosed && !inputEnded;
+        } catch (e) {
+            logger.debug(`[claudeRemote] apply_flag_settings effortLevel=${effort ?? 'default'} failed`, e);
+            return false;
+        } finally {
+            clearTimeout(timer);
+        }
+    });
+
     let nextMessageFetchInFlight = false;
-    let inputEnded = false;
     let nextMessageFetchSeq = 0;
     let streamMessageSeq = 0;
     let resultSeq = 0;
     const compactCompletionAbort = new AbortController();
-    let responseClosed = false;
     let compactCompletion: Promise<CompactCompletion> | null = null;
     const abortCompactCompletion = () => compactCompletionAbort.abort();
     opts.signal?.addEventListener('abort', abortCompactCompletion, { once: true });
@@ -560,12 +598,14 @@ export async function claudeRemote(opts: {
                 // result. Keep its input channel available until all pending
                 // input has been echoed and the following result completes.
                 if (pendingSteers.size === 0) closeSteeringTarget();
-                opts.onResult?.();
+                if (!compactState.active || compactState.active.sawCompactSignal) {
+                    opts.onResultAccepted?.();
+                }
             }
             if (message.type === 'user' && message.isReplay === true && !message.isSynthetic && !message.isMeta
-                && !message.parent_tool_use_id && typeof message.uuid === 'string') {
+                && !message.parent_tool_use_id && typeof message.uuid === 'string' && pendingSteers.delete(message.uuid)) {
                 await opts.onSteerEcho?.(message.uuid);
-                pendingSteers.delete(message.uuid);
+                continue;
             }
 
             const compactMetadata =
@@ -682,14 +722,13 @@ export async function claudeRemote(opts: {
             // Handle result messages
             if (message.type === 'result') {
                 resultSeq += 1;
+                if (resultSeq === 1 && specialCommand.type === null && initial) {
+                    opts.onFirstResult?.(initial.message);
+                }
                 logger.debug(
                     `${debugPrefix} result #${resultSeq} received; scheduling next user message ` +
                     `(nextInFlight=${nextMessageFetchInFlight}, inputEnded=${inputEnded})`
                 );
-
-                if (resultSeq === 1 && specialCommand.type === null && initial) {
-                    opts.onFirstResult?.(initial.message);
-                }
 
                 if (compactState.active) {
                     if (!compactState.active.sawCompactSignal) continue;
@@ -707,7 +746,6 @@ export async function claudeRemote(opts: {
                     // with the next model response.
                     compactState.active = null;
                     updateThinking(false);
-                    opts.onCompactResultAccepted?.();
 
                     compactCompletion = (async () => {
                         let compactSummary = await lookupCompactSummary(
@@ -799,6 +837,7 @@ export async function claudeRemote(opts: {
             `(streamMessages=${streamMessageSeq}, results=${resultSeq}, nextFetches=${nextMessageFetchSeq}, inputEnded=${inputEnded})`
         );
         opts.setPermissionModeListener?.(null);
+        opts.setEffortApplier?.(null);
         updateThinking(false);
     }
 }

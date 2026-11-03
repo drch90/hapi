@@ -1,5 +1,7 @@
 package app.hapi.companion.feature.chat.media
 
+import android.content.Intent
+import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,8 +12,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import app.hapi.companion.R
 import app.hapi.companion.feature.chat.LocalChatMedia
+import app.hapi.companion.feature.chat.blocks.generatedFileOutlets
 import app.hapi.protocol.chat.GeneratedImageBlock
 import java.io.File
 import kotlinx.coroutines.*
@@ -23,14 +27,20 @@ internal fun GeneratedMediaCard(block: GeneratedImageBlock, modifier: Modifier =
         val kind = inlineMediaKind(block.mimeType)
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
+        val outlets = remember(block.mimeType, block.fileName) {
+            generatedFileOutlets(block.mimeType?.substringBefore(';'), block.fileName) { extension ->
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            }
+        }
         var localFile by remember { mutableStateOf<File?>(null) }
         var loading by remember { mutableStateOf(false) }
         var failed by remember { mutableStateOf(false) }
         var saving by remember { mutableStateOf(false) }
+        var openedExternally by remember { mutableStateOf(false) }
         var download by remember { mutableStateOf<Job?>(null) }
-        DisposableEffect(Unit) { onDispose { localFile?.delete() } }
+        DisposableEffect(Unit) { onDispose { if (!openedExternally) localFile?.delete() } }
         val save = rememberLauncherForActivityResult(
-            ActivityResultContracts.CreateDocument(block.mimeType?.substringBefore(';') ?: "application/octet-stream"),
+            ActivityResultContracts.CreateDocument(outlets.saveMimeType),
         ) { uri ->
             val source = localFile
             if (uri != null && source != null) scope.launch {
@@ -103,6 +113,19 @@ internal fun GeneratedMediaCard(block: GeneratedImageBlock, modifier: Modifier =
                             Text(mediaFileSize(file.length().toDouble()), style = MaterialTheme.typography.bodySmall)
                             if (kind == InlineMediaKind.Video || kind == InlineMediaKind.Audio) {
                                 InlineMediaPlayer(file, kind == InlineMediaKind.Video)
+                            }
+                            if (kind == InlineMediaKind.File) {
+                                TextButton(onClick = {
+                                    val opened = runCatching {
+                                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", file)
+                                        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
+                                            setDataAndType(uri, outlets.openMimeType)
+                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        })
+                                    }.isSuccess
+                                    if (opened) openedExternally = true
+                                    else Toast.makeText(context, R.string.media_open_failed, Toast.LENGTH_LONG).show()
+                                }) { Text(stringResource(R.string.media_open)) }
                             }
                             TextButton(enabled = !saving, onClick = { save.launch(mediaFileName(block.fileName)) }) {
                                 Text(stringResource(if (saving) R.string.chat_media_saving else R.string.chat_media_save))

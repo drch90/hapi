@@ -56,6 +56,10 @@ fun ToolCallBlockView(
     expandedDetails: Boolean = false,
     onOpenFile: ((String, Int?) -> Unit)? = null,
 ) {
+    if (!expandedDetails && isQuestionDetailsTool(block.tool.name)) {
+        QuestionToolCard(block, modifier)
+        return
+    }
     val tool = block.tool
     val resources = LocalContext.current.resources
     val presentation = remember(tool.name, tool.input, tool.description, basePath, resources) {

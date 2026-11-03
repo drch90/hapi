@@ -135,6 +135,11 @@ export interface SetPermissionModeRequest extends ControlRequest {
     mode: ClaudePermissionMode
 }
 
+export interface ApplyFlagSettingsRequest extends ControlRequest {
+    subtype: 'apply_flag_settings'
+    settings: Record<string, unknown>
+}
+
 export interface CanUseToolRequest extends ControlRequest {
     subtype: 'can_use_tool'
     tool_name: string
@@ -215,6 +220,10 @@ export interface QueryOptions {
     settingsPath?: string
     strictMcpConfig?: boolean
     canCallTool?: CanCallToolCallback
+    /**
+     * Echo every stdin user message back (`isReplay: true`, same uuid) when
+     * Claude starts processing it. Requires a streaming prompt.
+     */
     replayUserMessages?: boolean
     promptFailureCleanupTimeoutMs?: number
 }

@@ -4,6 +4,46 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-03: upstream v0.34.0
+
+Merged [upstream v0.34.0](https://github.com/tiann/hapi/releases/tag/v0.34.0)
+(`1f4518df`) into the local history at `6cd25494`. Both histories are retained,
+including all 88 files added locally since the shared v0.33.5 base.
+
+### Preserved local capabilities
+
+| Area | Integration retained in this merge |
+| --- | --- |
+| [Hermes](./agents.md#hermes-agent) | ACP creation/resume, provider/model discovery, permission controls, commands and live steering across CLI, hub, Web and Android. Original-machine and namespace checks remain in place alongside upstream DSH native resume. |
+| Message delivery | Claude's durable UUID-based steering acknowledges native receipt, keeps uncertain delivery explicit and avoids automatic replay. Local queue isolation and model selection coexist with upstream live effort changes and tool-result images. |
+| Android composer | Native reference chips, selection, copy/paste and focus now use upstream session/file suggestions. Scheduled drafts stay persisted until acceptance; retries retain the original timestamp, and delayed responses cannot clear a newer schedule choice. |
+| Android chat | Status/context details, provider-aware Pi context budgets, transcript scrolling, outline navigation, sharing and file actions remain available alongside upstream usage metadata and question cards. Local media playback, gallery and cancellable downloads gain file-opening support. |
+| Session list and notifications | Global pins, workspace grouping/collapse, search/filter preferences, manual unread, Mark all read and background notifications remain integrated with upstream presence, connection and runner-version indicators. |
+
+### Verification
+
+Checks used **Bun 1.4.4**, matching the repository's pinned version.
+
+| Check | Result for the merged source |
+| --- | --- |
+| Frozen dependency install and `bun typecheck` | Passed for CLI, Web, hub and relay. |
+| Hub, shared and relay suites | 1,637, 397 and 118 passed respectively; 3 optional hub integration tests skipped. |
+| Web suite | 3,997 passed initially. The remaining Hermes launch test needed the upstream QueryClient wrapper; all 79 tests in that file passed after the fix. |
+| CLI suite | 4,009 passed, 22 skipped; 4 difftastic failures caused by the host's older glibc, as in the previous merge. |
+| Runner integration | 25 passed, 1 skipped, using an isolated temporary hub and process registry. |
+| Web browser regressions | 31 passed: attachment picker, composer image preview, preview Back navigation and session-list fork menus. |
+| `bun run gen:fixtures` | 82 chat, 14 SSE and 15 pagination fixtures plus mode data regenerated without drift. |
+| Web and hub builds | Passed, including embedded Web asset generation. |
+| Android static review | XML, resource references, all 798 English/Chinese/Russian string keys and placeholders, duplicate declarations/arguments and Kotlin syntax differences checked. |
+
+Android/iOS compilation, instrumentation and native conformance remain
+unverified: this host has no JDK/Android SDK or Swift/Xcode. Static review does
+not replace those checks. The difftastic executable requires unavailable
+`GLIBC_2.32`, `GLIBC_2.33` and `GLIBC_2.34`; its wrapper and tests are unchanged.
+
+This update covers the local source merge and verification. No remote push,
+release, installation or service restart was performed for v0.34.0.
+
 ## 2026-11-01: upstream v0.33.5
 
 Merged [upstream v0.33.5](https://github.com/tiann/hapi/releases/tag/v0.33.5)
