@@ -49,7 +49,8 @@ export async function runOpencode(opts: {
     }
 
     const initialState: AgentState = {
-        controlledByUser: false
+        controlledByUser: false,
+        steeringActive: false
     };
 
     // Persist only when the user (or runner) explicitly chose a model on launch.
@@ -440,6 +441,7 @@ export async function runOpencode(opts: {
 
     session.onCancelQueuedMessage((localId) => {
         const removedFromQueue = messageQueue.cancelByLocalId(localId);
+        if (typeof removedFromQueue === 'string') return removedFromQueue;
         if (removedFromQueue) {
             if (queuedClearLocalId === localId) {
                 queuedClearLocalId = null;
@@ -483,6 +485,8 @@ export async function runOpencode(opts: {
         logger.debug(`[opencode] cancelByLocalId(${localId}): not found in queue; marked in case it lands in the compact ack race window (best-effort)`);
         return false;
     });
+
+    session.onRetryQueuedMessage((localId) => messageQueue.releaseIndeterminateReservation(localId));
 
     registerSessionConfigRpc<PermissionMode>({
         rpcHandlerManager: session.rpcHandlerManager,

@@ -46,6 +46,8 @@ import {
 import { OpencodePermissionHandler } from './utils/permissionHandler';
 import { getOpencodeNativeToolInstruction, PLAN_MODE_INSTRUCTION } from './utils/systemPrompt';
 import { resolveThoughtLevelEffort } from './thoughtLevelEffort';
+import { OpencodeSteering } from './steering';
+import { supportsOpencodeSteering } from './utils/opencodeSteeringBridge';
 
 type OpencodeRemoteLauncherOptions = {
     onModelRollback?: (model: string | null) => void;
@@ -162,6 +164,10 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     private majorVersion: OpencodeFlavorVersion | null = null;
     /** v2-only REST access discovered after spawn; null unless both port and OPENCODE_PASSWORD were found. */
     private v2RestInfo: { baseUrl: string; password: string } | null = null;
+    private steering: OpencodeSteering | null = null;
+    private steeringSupported = false;
+    private promptInFlight = false;
+    private activePromptModeHash: string | null = null;
 
     constructor(
         session: OpencodeSession,
@@ -185,6 +191,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
     protected async runMainLoop(): Promise<void> {
         const session = this.session;
         const messageBuffer = this.messageBuffer;
+        this.publishSteeringActive(false);
 
         const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client, {
             enableChangeTitle: false,
@@ -305,6 +312,32 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
                 });
             }
         }
+
+        // Compare effective settings: null resets the model, undefined keeps
+        // it, and a failed switch may have rolled the prompt's settings back.
+        const hashSteeringMode = (mode: OpencodeMode) => session.queue.modeHasher({
+            ...mode,
+            model: mode.model === null ? this.defaultBackendModel : mode.model ?? this.currentBackendModel,
+            modelReasoningEffort: mode.modelReasoningEffort ?? this.defaultBackendEffort,
+        });
+        this.steeringSupported = this.v2RestInfo !== null && supportsOpencodeSteering(backend.getAgentVersion());
+        this.steering = new OpencodeSteering(session, () => {
+            if (!this.steeringSupported || !this.v2RestInfo || !this.promptInFlight || this.shouldExit
+                || this.compactAbortController || this.activePromptModeHash === null || !backend.isPromptRequestInFlight()) {
+                return null;
+            }
+            return {
+                ...this.v2RestInfo,
+                sessionId: acpSessionId,
+                generation: backend.getPromptGeneration(),
+                modeHash: this.activePromptModeHash,
+            };
+        }, { hashMode: hashSteeringMode });
+        session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage, (payload: unknown) => {
+            const localId = typeof (payload as { localId?: unknown } | null)?.localId === 'string'
+                ? (payload as { localId: string }).localId : '';
+            return this.steering?.steer(localId) ?? { steered: false, error: 'No active steerable OpenCode turn' };
+        });
 
         // Upstream retries are announced only on the agent's own event
         // stream — not as ACP notifications and not on stderr. Measured
@@ -793,6 +826,9 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             }];
 
             this.stallErrorReportedForPrompt = false;
+            this.activePromptModeHash = hashSteeringMode(batch.mode);
+            this.promptInFlight = true;
+            this.publishSteeringActive(this.steeringSupported);
             session.onThinkingChange(true);
 
             try {
@@ -805,6 +841,12 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
                 logger.warn('[opencode-remote] prompt failed', error);
                 this.reportPromptFailure(error);
             } finally {
+                this.promptInFlight = false;
+                this.activePromptModeHash = null;
+                this.publishSteeringActive(false);
+                // Native admission must settle before another prompt, model
+                // switch, /compact or /clear can use this OpenCode session.
+                await this.steering?.drain();
                 session.onThinkingChange(false);
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
@@ -829,10 +871,15 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
      * comment on RemoteLauncherBase for exactly when this fires.
      */
     protected onLeavingRemote(): void {
+        this.promptInFlight = false;
+        this.steering?.interrupt();
+        this.publishSteeringActive(false);
         this.options.onCompactAvailabilityChange?.(false);
     }
 
     protected async cleanup(): Promise<void> {
+        await this.steering?.drain();
+        this.steering = null;
         // Before anything that can fail: a stream left open would keep
         // reconnecting to a subprocess that is on its way out.
         this.nativeTranscript?.close();
@@ -1374,6 +1421,10 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
         }
     }
 
+    private publishSteeringActive(active: boolean): void {
+        this.session.client.updateAgentState(state => ({ ...state, steeringActive: active }));
+    }
+
     /**
      * `leavingRemote` distinguishes plain Stop (`false`, the default — stays
      * in the same remote session) from switch-to-local/exit (`true` — the
@@ -1389,6 +1440,9 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
      * disconnects the ACP subprocess right after.
      */
     private async handleAbort(leavingRemote = false): Promise<void> {
+        this.promptInFlight = false;
+        this.steering?.interrupt();
+        this.publishSteeringActive(false);
         // A hostile-review sweep found that a plain Stop during an in-flight
         // compact — which deliberately leaves the operation running for real
         // (see compactResultSuppressed's doc comment) — still unconditionally
@@ -1421,7 +1475,7 @@ class OpencodeRemoteLauncher extends RemoteLauncherBase {
             await backend.cancelPrompt(this.session.sessionId);
         }
         await this.permissionHandler?.cancelAll('User aborted');
-        this.session.queue.reset();
+        this.session.queue.reset({ preserveDispatchingReservations: true });
         this.abortController.abort();
         this.abortController = new AbortController();
         // Re-read here (not the snapshot taken above, before the awaits) in

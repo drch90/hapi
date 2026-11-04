@@ -652,6 +652,7 @@ describe('pingPeer delivery modes', () => {
         { flavor: 'pi', piSessionId: 'pi-thread' },
         { flavor: 'claude' },
         { flavor: 'hermes', hermesSessionId: 'hermes-thread' },
+        { flavor: 'opencode', opencodeSessionId: 'opencode-thread' },
         { flavor: 'cursor', cursorSessionProtocol: 'acp' as const }
     ])('steers an ackable message in $flavor using its localId', async (metadata) => {
         const { http, options } = setup({ ...active, metadata })
@@ -677,7 +678,8 @@ describe('pingPeer delivery modes', () => {
         { ...active, thinking: false, agentState: { steeringActive: false } },
         { ...active, metadata: { flavor: 'claude' }, agentState: { steeringActive: false } },
         { ...active, metadata: { flavor: 'hermes' }, agentState: { steeringActive: false } },
-        { ...active, metadata: { flavor: 'opencode' } },
+        { ...active, metadata: { flavor: 'opencode' }, agentState: { steeringActive: false } },
+        { ...active, metadata: { flavor: 'opencode' }, agentState: {} },
         { ...active, metadata: { flavor: 'cursor', cursorSessionProtocol: 'stream-json' as const } },
         { ...active, metadata: { flavor: 'cursor', cursorSessionId: 'legacy' } },
         { ...active, agentState: { controlledByUser: true } }

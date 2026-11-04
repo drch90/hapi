@@ -367,7 +367,7 @@ the prompt is loaded by DSH through its own `skill` tool and catalog.
 - **Codex** (`hapi codex`) — OpenAI's Codex CLI, with terminal/Web control and a dedicated `plan` mode. See [Codex usage and limits](./codex-shared-sessions.md) for resume, terminal-exit behavior, and launch options. [openai/codex](https://github.com/openai/codex)
 - **GitHub Copilot** (`hapi copilot`) — Copilot CLI over ACP (`copilot --acp --stdio`). [GitHub Copilot](https://github.com/features/copilot)
 - **Kimi** (`hapi kimi`) — Moonshot AI's Kimi CLI over ACP (`kimi acp`). [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
-- **OpenCode** (`hapi opencode`) — the open-source OpenCode agent over ACP (`opencode acp`). [opencode.ai](https://opencode.ai)
+- **OpenCode** (`hapi opencode`) — the open-source OpenCode agent over ACP (`opencode acp`). In OpenCode 2.x (2.2.5 or newer) remote sessions, use a queued message's **Steer** action to add guidance during a running turn. The action appears when the native connection is ready. Acceptance confirms that OpenCode received the guidance; the current tool may finish before it takes effect. An unconfirmed delivery stays held for explicit retry or cancellation. [opencode.ai](https://opencode.ai)
 - **Antigravity** (`hapi agy`) — Google's Antigravity CLI (`agy`), driven through
   `agy --input-format stream-json --output-format stream-json`. HAPI starts the
   process on the first prompt and reuses it for subsequent turns with the same

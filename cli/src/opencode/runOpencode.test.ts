@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildCliArgs } from '@/runner/run';
 import { parseRemoteAgentCommandOptions } from '@/commands/agentCommandOptions';
 import { OPENCODE_PERMISSION_MODES } from '@hapi/protocol/modes';
+import type { MessageQueue2 } from '@/utils/MessageQueue2';
+import type { OpencodeMode } from './types';
 
 const mockOpencodeSession = vi.hoisted(() => ({
     setModel: vi.fn(),
@@ -38,6 +40,7 @@ const harness = vi.hoisted(() => ({
         sessionId: 'source-session',
         onUserMessage: vi.fn(),
         onCancelQueuedMessage: vi.fn(),
+        onRetryQueuedMessage: vi.fn(),
         sendAgentMessage: vi.fn(),
         sendSessionEvent: vi.fn(),
         emitMessagesConsumed: vi.fn(),
@@ -159,6 +162,7 @@ describe('runOpencode set-session-config handler', () => {
         mockOpencodeSession.mode = 'local';
         harness.session.onUserMessage.mockReset();
         harness.session.onCancelQueuedMessage.mockReset();
+        harness.session.onRetryQueuedMessage.mockReset();
         harness.session.sendAgentMessage.mockReset();
         harness.session.sendSessionEvent.mockReset();
         harness.session.emitMessagesConsumed.mockReset();
@@ -185,6 +189,32 @@ describe('runOpencode set-session-config handler', () => {
         expect(configHandler).toBeDefined();
         return configHandler![1] as (payload: unknown) => Promise<unknown>;
     }
+
+    it('preserves native steer cancellation outcomes for the hub', async () => {
+        await runOpencode({});
+        const queue = harness.opencodeLoopArgs[0]?.messageQueue as MessageQueue2<OpencodeMode>;
+        const cancel = harness.session.onCancelQueuedMessage.mock.calls[0]![0] as (localId: string) => unknown;
+        queue.push('guidance', { permissionMode: 'default' }, 'guide');
+        const reservation = queue.takeByLocalId('guide')!;
+        queue.beginReservationDispatch(reservation);
+        expect(cancel('guide')).toBe('in-flight');
+        queue.commitReservation(reservation);
+        expect(cancel('guide')).toBe('consumed');
+    });
+
+    it('releases an uncertain native steer only through explicit retry', async () => {
+        await runOpencode({});
+        const queue = harness.opencodeLoopArgs[0]?.messageQueue as MessageQueue2<OpencodeMode>;
+        const retry = harness.session.onRetryQueuedMessage.mock.calls[0]![0] as (localId: string) => unknown;
+        queue.push('guidance', { permissionMode: 'default' }, 'guide');
+        const reservation = queue.takeByLocalId('guide')!;
+        queue.beginReservationDispatch(reservation);
+        expect(retry('guide')).toBe(false);
+        queue.markReservationIndeterminate(reservation);
+        expect(queue.size()).toBe(0);
+        expect(retry('guide')).toBe(true);
+        expect(retry('guide')).toBe(false);
+    });
 
     it('routes reservedSessionId from buildCliArgs into bootstrapSession (adopt, not reopen)', async () => {
         const runnerArgs = buildCliArgs('opencode', {

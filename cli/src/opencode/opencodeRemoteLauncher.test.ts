@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { OpencodeMode, PermissionMode } from './types';
+import type { AgentState } from '@/api/types';
+import type { OpencodeSteerResult, OpencodeSteerTarget } from './utils/opencodeSteeringBridge';
 
 const harness = vi.hoisted(() => ({
     servePid: null as number | null,
@@ -58,6 +60,7 @@ const harness = vi.hoisted(() => ({
     eventStreamCloseCount: 0,
     // v2-compat harness: flavor detection + port/password discovery stubs.
     detectedVersion: null as null | 'v1' | 'v2',
+    nativeVersion: '2.2.5' as string | undefined,
     loopbackListeners: [] as number[],
     discoveredPort: null as null | number,
     discoveredPassword: null as null | string,
@@ -141,6 +144,8 @@ vi.mock('./utils/opencodeBackend', () => ({
         isPromptRequestInFlight: vi.fn(() =>
             harness.events.lastIndexOf('prompt:start') > harness.events.lastIndexOf('prompt:end')
         ),
+        getPromptGeneration: vi.fn(() => harness.promptCount),
+        getAgentVersion: vi.fn(() => harness.nativeVersion),
         cancelPrompt: vi.fn(async (sessionId: string) => {
             await harness.cancelPrompt(sessionId);
             if (harness.cancelPromptImpl) {
@@ -353,6 +358,19 @@ vi.mock('@/ui/logger', () => ({
 
 import { opencodeRemoteLauncher, selectAbortStatusMessage } from './opencodeRemoteLauncher';
 
+const steeringHarness = vi.hoisted(() => ({
+    calls: [] as Array<{ target: OpencodeSteerTarget; localId: string; text: string }>,
+    send: null as null | (() => Promise<OpencodeSteerResult>),
+}));
+
+vi.mock('./utils/opencodeSteeringBridge', async (importOriginal) => ({
+    ...await importOriginal<typeof import('./utils/opencodeSteeringBridge')>(),
+    sendOpencodeSteer: vi.fn(async (target: OpencodeSteerTarget, localId: string, text: string): Promise<OpencodeSteerResult> => {
+        steeringHarness.calls.push({ target, localId, text });
+        return steeringHarness.send ? steeringHarness.send() : { kind: 'accepted' };
+    }),
+}));
+
 function createMode(model?: string): OpencodeMode {
     return {
         permissionMode: 'default' as PermissionMode,
@@ -412,6 +430,7 @@ function createSessionStub(
     const pushKeepAlive = vi.fn();
     const emitMessagesConsumedCalls: Array<{ localIds: string[]; options?: { clearQueuedThinkingGrace?: boolean } }> = [];
     const thinkingChangeCalls: boolean[] = [];
+    const agentStateChanges: AgentState[] = [];
 
     const client = {
         rpcHandlerManager: {
@@ -420,6 +439,11 @@ function createSessionStub(
             }
         },
         sendAgentMessage(message: unknown) { sentAgentMessages.push(message); },
+        updateAgentState(update: (state: AgentState) => AgentState) {
+            agentStateChanges.push(update(agentStateChanges.at(-1) ?? {}));
+        },
+        setSteerDeliveryState: vi.fn(async () => true),
+        emitSteerIndeterminate: vi.fn(),
         sendClaudeSessionMessage(message: unknown) {
             claudeSessionMessages.push(message);
         },
@@ -465,7 +489,7 @@ function createSessionStub(
         sendUserMessage(_text: string) {}
     };
 
-    return { session, sessionEvents, sentAgentMessages, agentMessages: sentAgentMessages, claudeSessionMessages, rpcHandlers, setModel, setModelReasoningEffort, pushKeepAlive, emitMessagesConsumedCalls, thinkingChangeCalls };
+    return { session, sessionEvents, sentAgentMessages, agentMessages: sentAgentMessages, claudeSessionMessages, rpcHandlers, setModel, setModelReasoningEffort, pushKeepAlive, emitMessagesConsumedCalls, thinkingChangeCalls, agentStateChanges };
 }
 
 function createCompactMode(model?: string): OpencodeMode {
@@ -529,6 +553,9 @@ describe('opencodeRemoteLauncher inline model switch', () => {
         harness.eventStreamOptions = [];
         harness.eventStreamCloseCount = 0;
         harness.detectedVersion = null;
+        harness.nativeVersion = '2.2.5';
+        steeringHarness.calls = [];
+        steeringHarness.send = null;
         harness.loopbackListeners = [];
         harness.discoveredPort = null;
         harness.discoveredPassword = null;
@@ -542,6 +569,152 @@ describe('opencodeRemoteLauncher inline model switch', () => {
         for (const name of ['createOpencodeBackend', 'detectOpencodeFlavorVersion', 'discoverOpencodeV2RestPort', 'listLoopbackListeners']) {
             backendModuleFns[name]?.mockClear();
         }
+    });
+
+    it.each([
+        { major: 'v2' as const, version: '2.2.5', port: 48273, password: 'test', supported: true },
+        { major: 'v2' as const, version: '2.2.4', port: 48273, password: 'test', supported: false },
+        { major: 'v2' as const, version: '2.2.5', port: null, password: null, supported: false },
+        { major: 'v1' as const, version: '1.19.5', port: null, password: null, supported: false },
+    ])('advertises OpenCode steering only for an available native inbox: $major/$version/$port', async ({ major, version, port, password, supported }) => {
+        harness.detectedVersion = major;
+        harness.nativeVersion = version;
+        harness.discoveredPort = port;
+        harness.discoveredPassword = password;
+        harness.hangPrompt = true;
+        const mode = createMode();
+        const h = createSessionStub([{ message: 'first', mode }], { keepOpen: true });
+        const launch = opencodeRemoteLauncher(h.session as never);
+        await vi.waitFor(() => expect(harness.promptCount).toBe(1));
+        try {
+            expect(h.agentStateChanges.at(-1)?.steeringActive).toBe(supported);
+            h.session.queue.push('guidance', mode, 'guide');
+            expect(await h.rpcHandlers.get('steer-queued-message')!({ localId: 'guide' })).toMatchObject({ steered: supported });
+            expect(steeringHarness.calls).toHaveLength(supported ? 1 : 0);
+            if (supported) expect(h.emitMessagesConsumedCalls).toContainEqual({ localIds: ['guide'], options: { steered: true } });
+        } finally {
+            h.session.queue.cancelByLocalId('guide');
+            h.session.queue.close();
+            harness.resolvePrompt?.();
+            await launch;
+        }
+        expect(h.agentStateChanges.at(-1)?.steeringActive).toBe(false);
+    });
+
+    it.each(['model', 'effort'] as const)('checks the effective settings after a failed %s switch before steering', async setting => {
+        harness.detectedVersion = 'v2';
+        harness.discoveredPort = 48273;
+        harness.discoveredPassword = 'test';
+        harness.sessionModelsMetadata = { currentModelId: 'ollama/a', availableModels: [] };
+        harness.thoughtLevelOption = { id: 'effort', currentValue: 'low', options: [{ value: 'low' }, { value: 'high' }] };
+        harness.setModelImpl = async () => { throw new Error('Model unavailable'); };
+        harness.setConfigOptionImpl = async () => { throw new Error('Effort unavailable'); };
+        harness.hangPrompt = true;
+        const requested = createModeWithEffort(setting === 'model' ? 'ollama/b' : 'ollama/a', setting === 'effort' ? 'high' : 'low');
+        const h = createSessionStub([{ message: 'first', mode: { ...requested } }], { keepOpen: true });
+        const launch = opencodeRemoteLauncher(h.session as never);
+        await vi.waitFor(() => expect(harness.promptCount).toBe(1));
+        try {
+            h.session.queue.push('requires failed settings', requested, 'different');
+            expect(await h.rpcHandlers.get('steer-queued-message')!({ localId: 'different' })).toMatchObject({ steered: false });
+            expect(h.session.queue.peekByLocalId('different')).not.toBeNull();
+            h.session.queue.push('matches actual settings', createModeWithEffort('ollama/a', 'low'), 'guide');
+            expect(await h.rpcHandlers.get('steer-queued-message')!({ localId: 'guide' })).toEqual({ steered: true });
+            expect(steeringHarness.calls.map(call => call.localId)).toEqual(['guide']);
+        } finally {
+            h.session.queue.cancelByLocalId('different');
+            h.session.queue.cancelByLocalId('guide');
+            h.session.queue.close();
+            harness.resolvePrompt?.();
+            await launch;
+        }
+    });
+
+    it('accepts equivalent default and explicit model selections after resetting the active model', async () => {
+        harness.detectedVersion = 'v2';
+        harness.discoveredPort = 48273;
+        harness.discoveredPassword = 'test';
+        harness.sessionModelsMetadata = { currentModelId: 'ollama/a', availableModels: [] };
+        harness.promptImpl = async () => {
+            if (harness.promptCount === 2) await new Promise<void>(resolve => { harness.resolvePrompt = resolve; });
+        };
+        const h = createSessionStub([
+            { message: 'switch model', mode: createMode('ollama/b') },
+            { message: 'reset model', mode: createResetMode() },
+        ], { keepOpen: true });
+        const launch = opencodeRemoteLauncher(h.session as never);
+        await vi.waitFor(() => expect(harness.promptCount).toBe(2));
+        try {
+            for (const [localId, mode] of [['reset', createResetMode()], ['explicit', createMode('ollama/a')]] as const) {
+                h.session.queue.push('same model', mode, localId);
+                expect(await h.rpcHandlers.get('steer-queued-message')!({ localId })).toEqual({ steered: true });
+            }
+            expect(steeringHarness.calls).toHaveLength(2);
+            expect(harness.setModelArgs.map(call => call.modelId)).toEqual(['ollama/b', 'ollama/a']);
+        } finally {
+            h.session.queue.cancelByLocalId('reset');
+            h.session.queue.cancelByLocalId('explicit');
+            h.session.queue.close();
+            harness.resolvePrompt?.();
+            await launch;
+        }
+    });
+
+    it('waits for native steer admission before the next queued prompt', async () => {
+        harness.detectedVersion = 'v2';
+        harness.discoveredPort = 48273;
+        harness.discoveredPassword = 'test';
+        harness.hangPrompt = true;
+        let admit!: (result: OpencodeSteerResult) => void;
+        steeringHarness.send = () => new Promise(resolve => { admit = resolve; });
+        const mode = createMode();
+        const h = createSessionStub([{ message: 'first', mode }], { keepOpen: true });
+        const launch = opencodeRemoteLauncher(h.session as never);
+        await vi.waitFor(() => expect(harness.promptCount).toBe(1));
+        h.session.queue.push('guidance', mode, 'guide');
+        const steer = h.rpcHandlers.get('steer-queued-message')!({ localId: 'guide' });
+        await vi.waitFor(() => expect(steeringHarness.calls).toHaveLength(1));
+        h.session.queue.push('next turn', mode, 'next');
+        harness.hangPrompt = false;
+        harness.resolvePrompt?.();
+        await vi.waitFor(() => expect(h.agentStateChanges.at(-1)?.steeringActive).toBe(false));
+        expect(harness.promptCount).toBe(1);
+        expect(h.session.thinking).toBe(true);
+        expect(h.emitMessagesConsumedCalls).not.toContainEqual(expect.objectContaining({ localIds: ['guide'] }));
+        admit({ kind: 'accepted' });
+        expect(await steer).toEqual({ steered: true });
+        h.session.queue.close();
+        await launch;
+        expect(harness.promptCount).toBe(2);
+        expect(harness.cancelPrompt).not.toHaveBeenCalled();
+        expect(h.agentStateChanges.at(-1)?.steeringActive).toBe(false);
+    });
+
+    it('disables steering synchronously on Stop while preserving an in-flight native receipt', async () => {
+        harness.detectedVersion = 'v2';
+        harness.discoveredPort = 48273;
+        harness.discoveredPassword = 'test';
+        harness.hangPrompt = true;
+        let admit!: (result: OpencodeSteerResult) => void;
+        steeringHarness.send = () => new Promise(resolve => { admit = resolve; });
+        const mode = createMode();
+        const h = createSessionStub([{ message: 'first', mode }], { keepOpen: true });
+        const launch = opencodeRemoteLauncher(h.session as never);
+        await vi.waitFor(() => expect(harness.promptCount).toBe(1));
+        h.session.queue.push('guidance', mode, 'guide');
+        const steer = h.rpcHandlers.get('steer-queued-message')!({ localId: 'guide' });
+        await vi.waitFor(() => expect(steeringHarness.calls).toHaveLength(1));
+        const abort = h.rpcHandlers.get('abort')!(undefined);
+        expect(h.agentStateChanges.at(-1)?.steeringActive).toBe(false);
+        await abort;
+        expect(h.session.queue.cancelByLocalId('guide')).toBe('in-flight');
+        admit({ kind: 'accepted' });
+        expect(await steer).toEqual({ steered: true });
+        expect(h.emitMessagesConsumedCalls).toContainEqual({ localIds: ['guide'], options: { steered: true } });
+        h.session.queue.close();
+        harness.resolvePrompt?.();
+        await launch;
+        expect(harness.promptCount).toBe(1);
     });
 
     it('reaches /clear only after the earlier prompt settles, without starting another OpenCode turn', async () => {

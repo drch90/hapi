@@ -131,8 +131,8 @@ describe('SyncEngine.steerQueuedMessage', () => {
         const { store, engine } = createEngine()
         try {
             const session = engine.getOrCreateSession(
-                'steer-opencode',
-                { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+                'steer-grok',
+                { path: '/tmp/project', host: 'localhost', flavor: 'grok' },
                 { requests: {}, completedRequests: {} },
                 'default'
             )
@@ -142,11 +142,51 @@ describe('SyncEngine.steerQueuedMessage', () => {
 
             expect(result).toEqual({
                 status: 'failed',
-                error: 'Steering is only supported for Claude, Pi, Codex, Cursor ACP, and Hermes sessions',
+                error: 'Steering is only supported for Claude, Pi, Codex, Cursor ACP, Hermes, and OpenCode sessions',
                 localId: null
             })
         } finally {
             engine.stop()
         }
+    })
+
+    it('routes an available OpenCode steer to the CLI without consuming the row prematurely', async () => {
+        const { store, engine } = createEngine()
+        const steer = spyOn(engine['rpcGateway'], 'steerQueuedMessage').mockResolvedValue({ steered: true })
+        try {
+            const session = engine.getOrCreateSession('steer-opencode',
+                { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+                { steeringActive: true, controlledByUser: false }, 'default')
+            const message = store.messages.addMessage(session.id, { text: 'guidance' }, 'opencode-local')
+            expect(await engine.steerQueuedMessage(session.id, message.id)).toEqual({ status: 'steered', localId: 'opencode-local' })
+            expect(steer).toHaveBeenCalledWith(session.id, 'opencode-local')
+            expect(store.messages.lookupQueuedMessage(session.id, message.id).status).toBe('queued')
+        } finally { steer.mockRestore(); engine.stop() }
+    })
+
+    it.each([undefined, false])('rejects OpenCode without a live steer target (%s)', async (steeringActive) => {
+        const { store, engine } = createEngine()
+        const steer = spyOn(engine['rpcGateway'], 'steerQueuedMessage').mockResolvedValue({ steered: true })
+        try {
+            const session = engine.getOrCreateSession('old-opencode',
+                { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+                { steeringActive }, 'default')
+            const message = store.messages.addMessage(session.id, { text: 'guidance' }, 'opencode-local')
+            expect(await engine.steerQueuedMessage(session.id, message.id)).toMatchObject({ status: 'failed', error: 'No active steerable OpenCode turn' })
+            expect(steer).not.toHaveBeenCalled()
+            expect(store.messages.lookupQueuedMessage(session.id, message.id).status).toBe('queued')
+        } finally { steer.mockRestore(); engine.stop() }
+    })
+
+    it('reconciles consumed OpenCode input after its steer target goes idle', async () => {
+        const { store, engine } = createEngine()
+        try {
+            const session = engine.getOrCreateSession('idle-opencode',
+                { path: '/tmp/project', host: 'localhost', flavor: 'opencode' },
+                { steeringActive: false }, 'default')
+            const message = store.messages.addMessage(session.id, { text: 'guidance' }, 'opencode-local')
+            store.recordMessagesConsumed(session.id, ['opencode-local'], Date.now(), 'default')
+            expect(await engine.steerQueuedMessage(session.id, message.id)).toMatchObject({ status: 'invoked', message: { localId: 'opencode-local' } })
+        } finally { engine.stop() }
     })
 })

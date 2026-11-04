@@ -83,6 +83,7 @@ export function flattenConfigOptionChoices(rawOptions: unknown[]): Array<{ value
 
 type AcpInitializeResult = {
     protocolVersion: number;
+    agentVersion?: string;
     authMethods?: Array<{ id: string; name?: string }>;
     agentCapabilities?: {
         loadSession?: boolean;
@@ -276,6 +277,7 @@ export class AcpSdkBackend implements AgentBackend {
 
         this.initializeResult = {
             protocolVersion: response.protocolVersion,
+            agentVersion: isObject(response.agentInfo) ? asString(response.agentInfo.version) ?? undefined : undefined,
             authMethods: Array.isArray(response.authMethods)
                 ? response.authMethods
                     .filter((entry): entry is Record<string, unknown> => isObject(entry))
@@ -322,6 +324,10 @@ export class AcpSdkBackend implements AgentBackend {
 
     supportsLoadSession(): boolean {
         return this.initializeResult?.agentCapabilities?.loadSession === true;
+    }
+
+    getAgentVersion(): string | undefined {
+        return this.initializeResult?.agentVersion;
     }
 
     /** DSH's current ACP profile exposes `session/resume` under this capability. */

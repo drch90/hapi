@@ -39,6 +39,7 @@ Choose a supported coding agent from your terminal and control its sessions remo
 - `hapi pi` - Start Pi mode (remote-only).
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.
+  OpenCode 2.x (2.2.5 or newer) remote sessions support the queued-message **Steer** action when the local native API is available. Guidance is admitted to OpenCode's inbox for the running turn; ordinary sends remain queued in HAPI.
 - `hapi hermes` - Start a remote Hermes Agent session through `hermes acp`. Supports `--model`, `--permission-mode default|acceptEdits`, and `hapi resume <hapi-session-id>`; input stays in Web/PWA.
 - `hapi dsh` - Start DeepSeek Harness through ACP. See `src/dsh/runDsh.ts`.
   DSH is remote-only and its ACP server must be configured separately.
@@ -57,7 +58,7 @@ Use explicit `queue` for non-urgent updates that can wait. Use `steer` for
 important, time-sensitive findings the peer needs to know now, not after its
 current turn: a correction that invalidates its assumptions, a blocker, or a
 result that changes its next action. State why it matters now and what the peer
-should adjust. Steer requires insertion into an active Claude (remote), Pi, Codex, or Cursor ACP
+should adjust. Steer requires insertion into an active Claude (remote), Pi, Codex, Cursor ACP, Hermes, or OpenCode
 turn; it does not abort that turn or guarantee an immediate response. MCP `ping_peer` accepts
 the same optional `deliveryMode: "auto" | "queue" | "steer"` field. Auto is
 resolved by the peer sender; ordinary web/native chat delivery is unchanged.

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage } from '@/agent/types';
 import { AcpSdkBackend } from './AcpSdkBackend';
 import { AcpMessageHandler } from './AcpMessageHandler';
-import { buildAcpStdioSpawnOptions } from './AcpStdioTransport';
+import { AcpStdioTransport, buildAcpStdioSpawnOptions } from './AcpStdioTransport';
 import { ACP_SESSION_UPDATE_TYPES } from './constants';
 
 function sleep(ms: number): Promise<void> {
@@ -1220,6 +1220,23 @@ describe('AcpSdkBackend', () => {
         await backend.authenticateIfAvailable('cursor_login');
 
         expect(calls).toEqual([]);
+    });
+
+    it('retains the agent version from initialization for OpenCode inbox capability detection', async () => {
+        const backend = new AcpSdkBackend({ command: 'opencode' });
+        const create = vi.spyOn(AcpStdioTransport, 'create').mockResolvedValue({
+            onNotification: vi.fn(),
+            onStderrError: vi.fn(),
+            registerRequestHandler: vi.fn(),
+            sendRequest: vi.fn(async () => ({ protocolVersion: 1, agentInfo: { name: 'OpenCode', version: '2.2.5' } })),
+            close: vi.fn(async () => {}),
+        } as unknown as AcpStdioTransport);
+        try {
+            expect(backend.getAgentVersion()).toBeUndefined();
+            await backend.initialize();
+            expect(backend.getAgentVersion()).toBe('2.2.5');
+            await backend.disconnect();
+        } finally { create.mockRestore(); }
     });
 
     it('supportsLoadSession reflects initialize agentCapabilities', () => {
