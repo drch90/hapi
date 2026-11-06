@@ -875,13 +875,14 @@ export function normalizeAgentRecord(
         // fallback. Empty planner steps (intermediate, no content) are skipped so
         // they don't produce empty chat bubbles.
         if (data.type === 'agy_message') {
-            const text = stripAgyEchoedTaskResult(asString(data.content) ?? '')
+            const streamId = asString(data.id)
+            const text = streamId !== null ? asString(data.content) ?? '' : stripAgyEchoedTaskResult(asString(data.content) ?? '')
             if (!text.trim()) return null
             // Transitional "Inside the task-NNN log…" narration → a compact
             // Send-Message-style chip, not a full agent bubble. The actual task
             // result renders in its own background-task card, so this stays a thin
             // marker of what the agent is doing.
-            const taskLog = text.match(/^Inside the task-(\d+) log\b/)
+            const taskLog = streamId === null ? text.match(/^Inside the task-(\d+) log\b/) : null
             if (taskLog) {
                 const toolCallId = `${messageId}:tasklog`
                 return {
@@ -903,7 +904,7 @@ export function normalizeAgentRecord(
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'text', text, uuid: messageId, parentUUID: null }],
+                content: [{ type: 'text', text, uuid: messageId, ...(streamId !== null ? { streamId } : {}), parentUUID: null }],
                 // Per-turn model (display name from the conversation DB), surfaced
                 // in the message metadata footer like the other flavors.
                 model: asString(data.model) ?? null,

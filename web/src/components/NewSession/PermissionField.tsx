@@ -62,20 +62,20 @@ export function PermissionField(props: PermissionFieldProps) {
 
     if (field.kind === 'select' && usesNativePermissionSelect(props.agent)) {
         const options = getPermissionModesForFlavor(props.agent)
+        const autoUnavailable = props.agent === 'grok' && props.autoPermissionModeSupported === false
         return (
             <div className="flex flex-col gap-1.5 px-3 py-3">
                 <label className="text-xs font-medium text-[var(--app-hint)]">
                     {t('misc.permissionMode')}
                 </label>
                 <SelectControl
-                    value={props.nativeValue}
+                    value={options.includes(props.nativeValue) ? props.nativeValue : options[0]}
                     onChange={(event) => props.onNativeChange(event.target.value as PermissionMode)}
                     disabled={props.isDisabled}
                     className="py-2 pl-3 text-sm rounded-lg border border-[var(--app-divider)] bg-[var(--app-bg)] text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-link)] disabled:opacity-50"
                 >
                     {options.map((mode) => {
-                        const unavailable = mode === 'auto'
-                            && props.autoPermissionModeSupported === false
+                        const unavailable = mode === 'auto' && autoUnavailable
                         return (
                             <option key={mode} value={mode} disabled={unavailable}>
                                 {getPermissionModeLabel(mode)}{unavailable ? ` (${t('newSession.grokAutoUnavailable')})` : ''}
@@ -83,7 +83,7 @@ export function PermissionField(props: PermissionFieldProps) {
                         )
                     })}
                 </SelectControl>
-                {props.autoPermissionModeSupported === false ? (
+                {autoUnavailable ? (
                     <span className="text-xs text-[var(--app-hint)]">
                         {t('newSession.grokAutoUnavailableDesc')}
                     </span>

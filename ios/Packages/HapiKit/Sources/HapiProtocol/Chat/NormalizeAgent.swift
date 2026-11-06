@@ -882,10 +882,11 @@ func normalizeAgentRecord(
 
         // agy (Antigravity) PTY messages.
         if dataType == "agy_message" {
-            let text = stripAgyEchoedTaskResult(asString(data["content"]) ?? "")
+            let streamId = asString(data["id"])
+            let text = streamId != nil ? asString(data["content"]) ?? "" : stripAgyEchoedTaskResult(asString(data["content"]) ?? "")
             if text.jsTrimmed.isEmpty { return nil }
             // Transitional "Inside the task-NNN log…" narration → compact chip.
-            if let taskLog = agyTaskLogRegex.firstMatch(in: text), let taskNumber = taskLog[1] {
+            if streamId == nil, let taskLog = agyTaskLogRegex.firstMatch(in: text), let taskNumber = taskLog[1] {
                 let toolCallId = "\(messageId):tasklog"
                 return NormalizedMessage(
                     id: messageId,
@@ -916,7 +917,7 @@ func normalizeAgentRecord(
                 id: messageId,
                 localId: localId,
                 createdAt: createdAt,
-                content: .agent([.text(.init(text: text, uuid: messageId, parentUUID: nil))]),
+                content: .agent([.text(.init(text: text, uuid: messageId, streamId: streamId, parentUUID: nil))]),
                 isSidechain: false,
                 meta: meta,
                 model: asString(data["model"])

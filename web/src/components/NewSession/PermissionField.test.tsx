@@ -69,10 +69,16 @@ describe('PermissionField', () => {
         expect(onChange).toHaveBeenCalledWith('plan')
     })
 
-    it('renders the YOLO toggle with its native mapping for toggle flavors', () => {
-        renderField({ agent: 'agy' })
-        expect(screen.getByRole('checkbox')).toBeTruthy()
-        expect(screen.getByText(/applies native Always Proceed mode/i)).toBeInTheDocument()
+    it('offers Antigravity review, Auto, Plan and Always Proceed with a valid default', () => {
+        const onChange = vi.fn()
+        renderField({ agent: 'agy', autoPermissionModeSupported: false, onNativeChange: onChange })
+        expect(screen.queryByRole('checkbox')).toBeNull()
+        expect(screen.getByRole('combobox')).toHaveValue('request-review')
+        expect(screen.getAllByRole('option').map(option => (option as HTMLOptionElement).value))
+            .toEqual(['request-review', 'auto', 'plan', 'always-proceed'])
+        expect(screen.getByRole('option', { name: 'Auto' })).not.toBeDisabled()
+        fireEvent.change(screen.getByRole('combobox'), { target: { value: 'plan' } })
+        expect(onChange).toHaveBeenCalledWith('plan')
     })
 
     it('reports Pi permission as managed instead of offering a silent YOLO toggle', () => {

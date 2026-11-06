@@ -35,6 +35,11 @@ export class AgentPtyManager {
         return this._isRunning
     }
 
+    /** The owned child, for callers that must stop its tool subprocesses too. */
+    get pid(): number | null {
+        return this.proc?.pid ?? null
+    }
+
     spawn(opts: AgentPtyOptions): void {
         const bun = getOptionalBun()
         if (!bun || typeof bun.spawn !== 'function') {
@@ -107,11 +112,7 @@ export class AgentPtyManager {
     }
 
     kill(): void {
-        if (!this.proc || !this._isRunning) {
-            return
-        }
-
-        if (!this.proc.killed && this.proc.exitCode === null) {
+        if (this.proc && this._isRunning && !this.proc.killed && this.proc.exitCode === null) {
             try {
                 this.proc.kill()
             } catch (error) {

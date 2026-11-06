@@ -26,7 +26,7 @@ public struct NewSessionForm: Codable, Equatable, Sendable {
     public var modelReasoningEffort: String
     /// Native permission mode for grok + codex-family flavors.
     public var permissionMode: PermissionMode
-    /// HAPI YOLO preference for the remaining flavors (claude/agy/cursor/pi).
+    /// HAPI YOLO preference for flavors without the native permission select.
     public var yolo: Bool
     public var sessionType: SpawnSessionType
     public var worktreeName: String
@@ -58,7 +58,7 @@ public struct NewSessionForm: Codable, Equatable, Sendable {
         self.model = model
         self.effort = effort
         self.modelReasoningEffort = modelReasoningEffort
-        self.permissionMode = permissionMode
+        self.permissionMode = agent == .agy && permissionMode == .default ? .requestReview : permissionMode
         self.yolo = yolo
         self.sessionType = sessionType
         self.worktreeName = worktreeName
@@ -127,7 +127,7 @@ public enum NewSessionLogic {
     /// through the same native select (web `usesNativePermissionSelect`,
     /// `web/src/lib/codexFamilyPermissionAgents.ts`).
     public static func usesNativePermissionSelect(_ flavor: AgentFlavor) -> Bool {
-        flavor == .claude || flavor == .grok || usesCodexFamilyPermissionModes(flavor)
+        flavor == .agy || flavor == .claude || flavor == .grok || usesCodexFamilyPermissionModes(flavor)
     }
 
     /// `resolveHapiYoloPermissionMode` (`shared/src/agentConfig.ts`) — the
@@ -460,7 +460,7 @@ public enum NewSessionLogic {
             worktreeName: draft.worktreeName
         )
         if !base.agent.permissionModes.contains(base.permissionMode) {
-            base.permissionMode = .default
+            base.permissionMode = base.agent.permissionModes.first ?? .default
         }
         return base
     }

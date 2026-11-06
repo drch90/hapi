@@ -15,6 +15,22 @@ function createEngine(store = new Store(':memory:')) {
 }
 
 describe('SyncEngine.steerQueuedMessage', () => {
+    it.each([true, false, undefined])('gates Antigravity steering on its native target (%s)', async steeringActive => {
+        const { store, engine } = createEngine()
+        const steer = spyOn(engine['rpcGateway'], 'steerQueuedMessage').mockResolvedValue({ steered: true })
+        try {
+            const session = engine.getOrCreateSession('agy-steer',
+                { path: '/tmp', host: 'localhost', flavor: 'agy' }, { steeringActive }, 'default')
+            const message = store.messages.addMessage(session.id, { text: 'guide' }, 'agy-guide')
+            const result = await engine.steerQueuedMessage(session.id, message.id)
+            expect(result).toMatchObject(steeringActive
+                ? { status: 'steered', localId: 'agy-guide' }
+                : { status: 'failed', error: 'No active steerable Antigravity turn' })
+            expect(steer).toHaveBeenCalledTimes(steeringActive ? 1 : 0)
+            expect(store.messages.lookupQueuedMessage(session.id, message.id).status).toBe('queued')
+        } finally { steer.mockRestore(); engine.stop() }
+    })
+
     it('reconciles persisted dispatches after the hub restarts', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession('restart-pending', { path: '/tmp/project' }, null, 'default')
@@ -142,7 +158,7 @@ describe('SyncEngine.steerQueuedMessage', () => {
 
             expect(result).toEqual({
                 status: 'failed',
-                error: 'Steering is only supported for Claude, Pi, Codex, Cursor ACP, Hermes, and OpenCode sessions',
+                error: 'Steering is only supported for Antigravity, Claude, Pi, Codex, Cursor ACP, Hermes, and OpenCode sessions',
                 localId: null
             })
         } finally {

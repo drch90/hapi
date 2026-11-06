@@ -55,7 +55,16 @@ jobs:
                   event = os.environ['EVENT_NAME']
                   head = os.environ['HEAD_SHA']
                   base = os.environ['BASE_SHA' if event == 'pull_request' else 'BEFORE_SHA']
-                  if event == 'workflow_dispatch' or not base.strip('0'):
+                  # A push can explicitly defer Android verification with the
+                  # commit trailer "Skip-Android-CI: true". PR/manual checks keep their gates.
+                  skip_requested = event == 'push' and subprocess.check_output(
+                      ['git', 'log', '-1', '--format=%(trailers:key=Skip-Android-CI,valueonly)', head],
+                      text=True,
+                  ).strip().lower() == 'true'
+                  if skip_requested:
+                      changed = False
+                      print('::notice::Android tests and builds skipped by the HEAD commit trailer')
+                  elif event == 'workflow_dispatch' or not base.strip('0'):
                       changed = True
                   else:
                       if event == 'pull_request':
@@ -69,7 +78,7 @@ jobs:
                   value = str(changed).lower()
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                       output.write(f'android={value}\n')
-                  print(f'Android build inputs changed: {value}')
+                  print(f'Run Android tests and builds: {value}')
                   PY
 
     build:

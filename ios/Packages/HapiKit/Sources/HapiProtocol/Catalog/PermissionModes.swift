@@ -102,7 +102,7 @@ extension AgentFlavor {
         case .dsh:
             return []
         case .agy:
-            return [.requestReview, .alwaysProceed]
+            return [.requestReview, .auto, .plan, .alwaysProceed]
         case .cursor:
             return [.default, .plan, .ask, .debug, .autoReview, .yolo]
         case .pi:

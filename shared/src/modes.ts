@@ -19,7 +19,7 @@ export const CREATABLE_AGENT_FLAVORS: readonly AgentFlavor[] = AGENT_FLAVORS.fil
     (flavor) => flavor !== 'gemini'
 )
 
-export const AGY_PERMISSION_MODES = ['request-review', 'always-proceed'] as const
+export const AGY_PERMISSION_MODES = ['request-review', 'auto', 'plan', 'always-proceed'] as const
 export type AgyPermissionMode = typeof AGY_PERMISSION_MODES[number]
 
 export const CLAUDE_PERMISSION_MODES = ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'plan'] as const
@@ -194,6 +194,7 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  *
  * Steer = soft mid-turn delivery (same idea as Cursor GUI default "Send"):
  * - Pi: native steer over the Pi runtime (first-class since #1466)
+ * - Antigravity: native terminal input, acknowledged by durable user receipts.
  * - Codex: app-server `turn/steer` (true mid-turn inject)
  * - Claude: stream-json stdin injection, acknowledged by native user UUID echo;
  *   Claude folds it in at the next tool boundary. Remote mode only.
@@ -205,7 +206,7 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  *
  * Other flavors are not supported. Runtime readiness uses steeringActive.
  */
-export const STEERING_SUPPORTED_FLAVORS = ['claude', 'codex', 'cursor', 'pi', 'hermes', 'opencode'] as const
+export const STEERING_SUPPORTED_FLAVORS = ['agy', 'claude', 'codex', 'cursor', 'pi', 'hermes', 'opencode'] as const
 
 export function isSteeringSupportedForFlavor(flavor?: string | null): boolean {
     return (STEERING_SUPPORTED_FLAVORS as readonly string[]).includes(flavor ?? '')
@@ -224,7 +225,7 @@ export function isSteeringSupportedForSession(metadata?: {
     cursorSessionId?: string | null
     cursorSessionProtocol?: 'acp' | 'stream-json' | null
 } | null): boolean {
-    if (metadata?.flavor === 'claude' || metadata?.flavor === 'codex' || metadata?.flavor === 'pi' || metadata?.flavor === 'hermes' || metadata?.flavor === 'opencode') {
+    if (metadata?.flavor === 'agy' || metadata?.flavor === 'claude' || metadata?.flavor === 'codex' || metadata?.flavor === 'pi' || metadata?.flavor === 'hermes' || metadata?.flavor === 'opencode') {
         return true
     }
     if (metadata?.flavor !== 'cursor') {

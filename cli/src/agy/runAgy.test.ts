@@ -65,6 +65,8 @@ describe('runAgy model and effort config', () => {
             session: {
                 onUserMessage: mocks.onUserMessage,
                 onCancelQueuedMessage: vi.fn(),
+                onRetryQueuedMessage: vi.fn(),
+                sendSessionEvent: vi.fn(),
                 rpcHandlerManager: { registerHandler: mocks.registerHandler },
             },
         }
@@ -174,5 +176,19 @@ describe('runAgy model and effort config', () => {
                 .toMatchObject({ model: 'gemini-4-argon', effort: 'medium' })
         })
         await runAgy({ model: 'gemini-4-argon-medium', workingDirectory: '/tmp' })
+    })
+
+    it('honors explicit steer intent and formats attachments while ordinary sends stay queued', async () => {
+        const steer = vi.fn(async () => ({ steered: true }))
+        mocks.loop.mockImplementation(async ({ messageQueue, onSessionReady }) => {
+            onSessionReady({ setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), pushKeepAlive: vi.fn(), steerQueuedMessage: steer })
+            const send = mocks.onUserMessage.mock.calls[0]![0]
+            send({ content: { text: 'ordinary' }, meta: { deliveryMode: 'queue' } }, 'queued')
+            send({ content: { text: 'follow this', attachments: [{ path: '/tmp/input.txt' }] }, meta: { deliveryMode: 'steer' } }, 'guide')
+            expect(steer).toHaveBeenCalledExactlyOnceWith('guide')
+            expect(messageQueue.peekByLocalId('guide')?.message).toBe('@/tmp/input.txt\n\nfollow this')
+            expect(messageQueue.peekByLocalId('queued')?.message).toBe('ordinary')
+        })
+        await runAgy({ workingDirectory: '/tmp' })
     })
 })

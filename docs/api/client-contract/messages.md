@@ -173,9 +173,19 @@ Despite the name, these arrive through the agent path (tool results and system-i
 
 ### agy (Antigravity) — also in the `'output'` family
 
+Current native sessions use `agy_message` for streamed prose and its model attribution.
+Tool lifecycle and reasoning updates use the common `'codex'` message family.
+Historical `agy_tool_action` rows retain the rendering below.
+
+For `agy_message` with `data.id`, normalize the ID as the text `streamId` and
+replace earlier snapshots of that stream. Preserve `data.model` and render the
+text verbatim. Native permission reply IDs are unique per request and carry
+`toolCallId` to associate them with the real native tool; send decisions using
+the reply ID. Historical prose without `data.id` retains the transformations below.
+
 | `data.type` | Renders as |
 |---|---|
-| `agy_message` | Agent text (`data.content`, per-turn `data.model?`). Empty ⇒ skip. Text starting `Inside the task-NNN log` ⇒ compact `AgyTaskLog` chip (synthetic completed tool pair). Echoed raw task results (`[Message] timestamp=…` trailer) are stripped from the prose. |
+| `agy_message` | Agent text (`data.content`, per-turn `data.model?`, optional snapshot `data.id`). Empty ⇒ skip. Without `data.id`, text starting `Inside the task-NNN log` ⇒ compact `AgyTaskLog` chip (synthetic completed tool pair), and echoed raw task results (`[Message] timestamp=…` trailer) are stripped. |
 | `agy_tool_action` | Synthetic **completed** tool pair (tool-call + tool-result, same id — prefer `data.toolUseId`, falling back to the message id). `name === 'SYSTEM_MESSAGE'` ⇒ `AgyAsyncTask` background-task card; `name === 'ERROR_MESSAGE'` ⇒ `AgyError` card (`is_error: true`); otherwise map agy tool names to canonical ones (`run_command`→Bash, `view_file`→Read, `write_to_file`→Write, `replace_file_content`→Edit, `grep_search`→Grep, `list_dir`→LS) and translate arg keys (`CommandLine`→`command`, `TargetFile`→`file_path`, …), stripping agy's result preambles/trailers. See `normalizeAgent.ts` for the exact strip rules. |
 
 ### Unknown `'output'` types

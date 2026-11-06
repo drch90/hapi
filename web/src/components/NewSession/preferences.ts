@@ -143,7 +143,7 @@ export function loadPreferredLaunchSettings(
         const permissionMode = typeof parsed.permissionMode === 'string'
             ? getPermissionModesForFlavor(agent).includes(parsed.permissionMode as PermissionMode)
                 ? parsed.permissionMode as PermissionMode
-                : 'default'
+                : getPermissionModesForFlavor(agent)[0] ?? 'default'
             : undefined
         return {
             model: parsed.model,
@@ -219,6 +219,7 @@ export function resolvePreferredLaunchSettings(
         : (preferred?.modelReasoningEffort ?? 'default')
     const usesSharedPermissionMode = usesSharedPermissionModeState(agent)
     const availablePermissionModes = getPermissionModesForFlavor(agent)
+    const defaultPermissionMode = availablePermissionModes[0] ?? 'default'
     const preferredPermissionMode = preferred?.permissionMode
     // Migrate a saved HAPI YOLO toggle into the native select (true → yolo-equivalent,
     // false → Default). Absent key leaves hub/stock defaults in place.
@@ -244,10 +245,10 @@ export function resolvePreferredLaunchSettings(
             : preferredPermissionMode !== undefined
                 // Explicit saved mode that left the launch catalog → Default,
                 // never hub yolo (would upgrade sandboxed → unrestricted).
-                ? 'default'
+                ? defaultPermissionMode
                 : legacyYoloBridgeMode && availablePermissionModes.includes(legacyYoloBridgeMode)
                     ? legacyYoloBridgeMode
-                    : hubMode ?? 'default'
+                    : hubMode ?? defaultPermissionMode
         : undefined
 
     return {

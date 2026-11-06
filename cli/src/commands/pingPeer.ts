@@ -43,8 +43,8 @@ ${chalk.bold('Notes:')}
   Use queue for non-urgent updates that can wait. Use steer for important findings
   the peer needs to know now to adjust its current work, not after its current turn.
   State why the finding matters now and what the peer should adjust.
-  Explicit steer requires an active turn in Pi, Codex,
-  or Cursor ACP; it neither resumes inactive targets nor sends to idle targets.
+  Explicit steer requires an active turn in Antigravity, Claude, Pi, Codex,
+  Cursor ACP, Hermes, or OpenCode; it neither resumes inactive targets nor sends to idle targets.
   Steer uses the existing queued-message action. If it fails after send, inspect the
   target before retrying: the accepted message may still be queued or consumed.
   When a user cites [title](/sessions/<id>) or Copy-reference

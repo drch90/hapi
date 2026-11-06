@@ -35,7 +35,9 @@ Choose a supported coding agent from your terminal and control its sessions remo
 - `hapi grok` - Start Grok Build mode. See `src/grok/runGrok.ts`.
 - `hapi copilot` - Start GitHub Copilot mode.
 - `hapi kimi` - Start Kimi mode.
-- `hapi agy` - Start Antigravity mode (remote-only).
+- `hapi agy` - Start Antigravity through its native interactive terminal (agy 1.5.2+, remote-only). Supports queued-message Steer and explicit Send & steer; ordinary sends remain queued.
+  Choose `request-review`, native intelligent `auto`, `plan`, or `always-proceed` at launch or in session settings. Unresolved native permissions appear in HAPI's approval UI.
+  HAPI prewarms and reuses the process, streams replies, and confirms input from the native conversation database. Model/effort or bypass changes restart the same conversation; ordinary mode changes use native mode cycling.
 - `hapi pi` - Start Pi mode (remote-only).
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.
@@ -58,7 +60,7 @@ Use explicit `queue` for non-urgent updates that can wait. Use `steer` for
 important, time-sensitive findings the peer needs to know now, not after its
 current turn: a correction that invalidates its assumptions, a blocker, or a
 result that changes its next action. State why it matters now and what the peer
-should adjust. Steer requires insertion into an active Claude (remote), Pi, Codex, Cursor ACP, Hermes, or OpenCode
+should adjust. Steer requires insertion into an active Antigravity, Claude (remote), Pi, Codex, Cursor ACP, Hermes, or OpenCode
 turn; it does not abort that turn or guarantee an immediate response. MCP `ping_peer` accepts
 the same optional `deliveryMode: "auto" | "queue" | "steer"` field. Auto is
 resolved by the peer sender; ordinary web/native chat delivery is unchanged.

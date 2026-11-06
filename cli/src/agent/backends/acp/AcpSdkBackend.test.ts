@@ -52,6 +52,33 @@ afterEach(() => {
 });
 
 describe('AcpSdkBackend', () => {
+    it('flushes preceding output before native user receipts and suppresses replay receipts', async () => {
+        const backend = new AcpSdkBackend({ command: 'agy', flavor: 'agy' });
+        const ordered: string[] = [];
+        const internal = backend as unknown as {
+            messageHandler: AcpMessageHandler | null;
+            activeSessionId: string;
+            handleSessionUpdate: (params: unknown) => void;
+            sessionUpdateQueue: Promise<void>;
+        };
+        internal.activeSessionId = 'native';
+        internal.messageHandler = new AcpMessageHandler(message => {
+            if (message.type === 'text') ordered.push(message.text);
+        });
+        backend.setUserMessageListener((_id, text) => ordered.push(`receipt:${text}`));
+        const update = (sessionUpdate: string, text: string, sessionId = 'native') => internal.handleSessionUpdate({
+            sessionId, update: { sessionUpdate, content: { type: 'text', text } },
+        });
+        update('agent_message_chunk', 'before');
+        update('user_message_chunk', 'guidance');
+        await internal.sessionUpdateQueue;
+        expect(ordered).toEqual(['before', 'receipt:guidance']);
+        update('user_message_chunk', 'another session', 'other');
+        await backend.suppressUpdatesDuring(async () => { update('user_message_chunk', 'old history'); });
+        await internal.sessionUpdateQueue;
+        expect(ordered).toEqual(['before', 'receipt:guidance']);
+    });
+
     it('forwards ACP session_info_update titles without requiring an active prompt', () => {
         const backend = new AcpSdkBackend({ command: 'agent' });
         const updates: Array<{ sessionId: string | null; title: string | null }> = [];

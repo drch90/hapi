@@ -601,7 +601,7 @@ final class NewSessionModel {
         form.model = "auto"
         form.effort = "auto"
         form.modelReasoningEffort = "default"
-        form.permissionMode = .default
+        form.permissionMode = agent.permissionModes.first ?? .default
         form.serviceTier = .standard
         form.collaborationMode = .default
         form.copilotAgentMode = .interactive

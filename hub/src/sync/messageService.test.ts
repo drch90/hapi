@@ -1275,7 +1275,7 @@ describe('MessageService.sendMessage deliveryMode', () => {
         expect(gateChecks).toBe(0)
     })
 
-    it.each(['pi', 'claude'])('preserves live %s steer but downgrades every deferred delivery to queue', async (flavor) => {
+    it.each(['pi', 'claude', 'agy'])('preserves live %s steer but downgrades every deferred delivery to queue', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-pi',
@@ -1332,7 +1332,7 @@ describe('MessageService.sendMessage deliveryMode', () => {
         })
     })
 
-    it.each(['pi', 'claude'])('delivers duplicate %s localIds as queue even when the stored row retains steer', async (flavor) => {
+    it.each(['pi', 'claude', 'agy'])('delivers duplicate %s localIds as queue even when the stored row retains steer', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-duplicate-pi',
@@ -1479,7 +1479,7 @@ describe('MessageService.sendMessage deliveryMode', () => {
         })).toEqual(['queue', 'queue'])
     })
 
-    it.each(['pi', 'claude'])('normalizes direct scheduled %s steer requests to queue', async (flavor) => {
+    it.each(['pi', 'claude', 'agy'])('normalizes direct scheduled %s steer requests to queue', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-pi-scheduled',

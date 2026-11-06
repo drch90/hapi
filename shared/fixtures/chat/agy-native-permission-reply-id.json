@@ -1,0 +1,100 @@
+{
+    "description": "Native Antigravity uses a one-time approval reply ID linked to the real tool call, including after a previous reply was canceled.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "native-call-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "native-call-1",
+                    "input": {
+                        "command": "python3 script.py"
+                    },
+                    "name": "Bash",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "running"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "native-call-1",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "native-call-1",
+                    "input": {
+                        "command": "python3 script.py"
+                    },
+                    "name": "Bash",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "running"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "completedRequests": {
+                "agy-permission-old": {
+                    "arguments": {
+                        "command": "python3 script.py"
+                    },
+                    "completedAt": 1755000000001,
+                    "createdAt": 1755000000000,
+                    "decision": "abort",
+                    "status": "canceled",
+                    "tool": "Bash",
+                    "toolCallId": "native-call-1"
+                }
+            },
+            "requests": {
+                "agy-permission-new": {
+                    "arguments": {
+                        "command": "python3 script.py"
+                    },
+                    "createdAt": 1755000000002,
+                    "tool": "Bash",
+                    "toolCallId": "native-call-1"
+                }
+            }
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "native-call-1",
+                            "input": {
+                                "command": "python3 script.py"
+                            },
+                            "name": "Bash",
+                            "status": "pending",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-native-tool",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-native-permission-reply-id"
+}

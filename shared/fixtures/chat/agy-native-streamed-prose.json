@@ -1,0 +1,138 @@
+{
+    "description": "Native Antigravity prose snapshots replace the same text stream and preserve the response model; thinking settles separately.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-think-1",
+                "kind": "agent-reasoning",
+                "localId": null,
+                "text": "Consider the plan and request review."
+            },
+            {
+                "createdAt": 1755000000001,
+                "id": "agy-text-1",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "First, prepare the plan. Second, request review."
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-think-1",
+                "kind": "agent-reasoning",
+                "localId": null,
+                "text": "Consider the plan and request review."
+            },
+            {
+                "createdAt": 1755000000001,
+                "id": "agy-text-1",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "First, prepare the plan. Second, request review."
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "id": "agy-think-1",
+                            "live": true,
+                            "message": "Consider the plan",
+                            "type": "reasoning"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-thinking-live",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "content": "First",
+                            "id": "agy-text-1",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "agy_message"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000001,
+                "id": "agy-text-live-1",
+                "localId": null,
+                "seq": 2
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "content": "First, prepare the plan.",
+                            "id": "agy-text-1",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "agy_message"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000002,
+                "id": "agy-text-live-2",
+                "localId": null,
+                "seq": 3
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "id": "agy-think-1",
+                            "message": "Consider the plan and request review.",
+                            "type": "reasoning"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000003,
+                "id": "agy-thinking-final",
+                "localId": null,
+                "seq": 4
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "content": "First, prepare the plan. Second, request review.",
+                            "id": "agy-text-1",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "agy_message"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000004,
+                "id": "agy-text-final",
+                "localId": null,
+                "seq": 5
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-native-streamed-prose"
+}

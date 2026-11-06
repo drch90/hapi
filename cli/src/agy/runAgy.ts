@@ -16,6 +16,7 @@ import type { SessionEffort, SessionModel } from '@/api/types';
 import { splitAgyModelSelection } from '@hapi/protocol';
 import { listAgyModels } from '@/modules/common/agyModels';
 import { normalizeAgyModelSelection } from './utils/agyModelSelection';
+import type { AgySession } from './session';
 
 export async function runAgy(opts: {
     startedBy?: 'runner' | 'terminal';
@@ -34,13 +35,13 @@ export async function runAgy(opts: {
 
     logger.debug(`[agy] Starting with options: startedBy=${startedBy}, startingMode=${opts.startingMode}`);
 
-    // agy is headless-only: the web is the primary surface, so sessions always
-    // start in remote mode (no PTY, no local TUI mode).
+    // HAPI owns the native PTY; the web is the user-facing control surface.
     const startingMode: 'local' | 'remote' = opts.startingMode ?? 'remote';
 
     const initialState: AgentState = {
         controlledByUser: false,
-        startingMode
+        startingMode,
+        steeringActive: false,
     };
 
     const initialModel = opts.model ?? null;
@@ -74,7 +75,7 @@ export async function runAgy(opts: {
     let sessionModel: SessionModel = initialModel;
     let sessionEffort: SessionEffort = opts.effort ?? null;
 
-    const sessionWrapperRef: { current: any | null } = { current: null };
+    const sessionWrapperRef: { current: AgySession | null } = { current: null };
 
     const lifecycle = createRunnerLifecycle({
         session,
@@ -114,17 +115,11 @@ export async function runAgy(opts: {
         };
 
         session.onCancelQueuedMessage((localId) => {
-            // A batch held in the driver's retry backoff is outside MessageQueue2;
-            // the driver-owned cancel handles it (returns true when removed).
-            const retryRemoved = sessionWrapperRef.current?.cancelRetryDelivery?.(localId) ?? false;
-            if (retryRemoved) {
-                logger.debug(`[agy] cancelByLocalId(${localId}): removed from retry backoff`);
-                return true;
-            }
             const removed = messageQueue.cancelByLocalId(localId);
             logger.debug(`[agy] cancelByLocalId(${localId}): ${removed ? 'removed' : 'not found'}`);
             return removed;
         });
+        session.onRetryQueuedMessage(localId => messageQueue.releaseIndeterminateReservation(localId));
 
         registerSessionConfigRpc<PermissionMode>({
             rpcHandlerManager: session.rpcHandlerManager,
@@ -146,9 +141,10 @@ export async function runAgy(opts: {
                             : sessionEffort;
                     selection = normalizeAgyModelSelection(model, effort, models.availableModels ?? []);
                 }
-                if (config.permissionMode !== undefined) {
-                    currentPermissionMode = config.permissionMode;
-                }
+                const nextMode: AgyMode = { permissionMode: config.permissionMode ?? currentPermissionMode,
+                    model: selection ? selection.model : sessionModel, effort: selection ? selection.effort : sessionEffort };
+                await sessionWrapperRef.current?.applyConfig?.(nextMode);
+                currentPermissionMode = nextMode.permissionMode;
                 if (selection) {
                     sessionModel = selection.model;
                     sessionEffort = selection.effort;
@@ -170,6 +166,13 @@ export async function runAgy(opts: {
                 effort: sessionEffort,
             };
             messageQueue.push(formattedText, mode, localId);
+            if (message.meta?.deliveryMode === 'steer' && localId) {
+                void sessionWrapperRef.current?.steerQueuedMessage?.(localId).then(result => {
+                    if (!result.steered && result.error) {
+                        session.sendSessionEvent({ type: 'message', message: `Antigravity steer: ${result.error}` });
+                    }
+                });
+            }
         });
 
         await agyLoop({

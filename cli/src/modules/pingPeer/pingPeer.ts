@@ -561,7 +561,7 @@ function getSteeringUnavailableReason(session: PingPeerSessionSummary): string |
         return 'Steering requires an active turn; target is inactive, no message sent. Use queue to resume it'
     }
     if (!isSteeringSupportedForSession(session.metadata)) {
-        return 'Steering is only supported for Claude, Pi, Codex, Cursor ACP, Hermes, and OpenCode sessions; no message sent'
+        return 'Steering is only supported for Antigravity, Claude, Pi, Codex, Cursor ACP, Hermes, and OpenCode sessions; no message sent'
     }
     if (session.agentState?.controlledByUser && !session.metadata?.capabilities?.concurrentClients) {
         return 'Steering is only available for remote sessions; no message sent'

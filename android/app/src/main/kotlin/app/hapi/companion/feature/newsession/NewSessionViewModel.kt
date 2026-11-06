@@ -94,7 +94,7 @@ sealed interface PermissionUi {
      */
     data class NativeSelect(val options: List<OptionItem>) : PermissionUi
 
-    /** HAPI YOLO toggle (agy/cursor) with the native mode it maps to. */
+    /** HAPI YOLO toggle with the native mode it maps to. */
     data class YoloToggle(val nativeModeLabel: String?) : PermissionUi
 
     /** Pi: the agent manages its own permissions. */
@@ -411,7 +411,7 @@ class NewSessionViewModel(
                 model = "auto",
                 effort = "auto",
                 modelReasoningEffort = "default",
-                permissionMode = "default",
+                permissionMode = PermissionModes.forFlavor(agent).firstOrNull()?.wireId ?: "default",
                 serviceTier = "standard",
                 collaborationMode = "default",
                 copilotAgentMode = "interactive",
@@ -577,7 +577,7 @@ class NewSessionViewModel(
                 effort = resolved.effort,
                 modelReasoningEffort = resolved.modelReasoningEffort,
                 permissionMode = if (usesSharedPermissionModeState(agent)) {
-                    resolved.permissionMode ?: "default"
+                    resolved.permissionMode ?: PermissionModes.forFlavor(agent).firstOrNull()?.wireId ?: "default"
                 } else {
                     current.permissionMode
                 },

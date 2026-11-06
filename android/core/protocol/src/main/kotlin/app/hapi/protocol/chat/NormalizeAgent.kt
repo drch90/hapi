@@ -694,9 +694,10 @@ fun normalizeAgentRecord(
         }
 
         if (dataType == "agy_message") {
-            val text = stripAgyEchoedTaskResult(asString(data["content"]) ?: "")
+            val streamId = asString(data["id"])
+            val text = if (streamId != null) asString(data["content"]) ?: "" else stripAgyEchoedTaskResult(asString(data["content"]) ?: "")
             if (text.isBlank()) return null
-            val taskLog = Regex("^Inside the task-(\\d+) log\\b").find(text)
+            val taskLog = if (streamId == null) Regex("^Inside the task-(\\d+) log\\b").find(text) else null
             if (taskLog != null) {
                 val toolCallId = "$messageId:tasklog"
                 return NormalizedMessage.Agent(
@@ -729,7 +730,7 @@ fun normalizeAgentRecord(
                 localId = localId,
                 createdAt = createdAt,
                 isSidechain = false,
-                content = listOf(NormalizedAgentContent.Text(text = text, uuid = messageId, parentUUID = null)),
+                content = listOf(NormalizedAgentContent.Text(text = text, uuid = messageId, streamId = streamId, parentUUID = null)),
                 model = asString(data["model"]),
                 meta = meta,
             )

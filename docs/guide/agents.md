@@ -21,7 +21,7 @@ agent's integration; their supported syntax varies by agent.
 | OpenCode | `hapi opencode` | ACP (`opencode acp`) | ✓ | ✓ | `default` `plan` `yolo` | ✓ |
 | Hermes Agent | `hapi hermes` | ACP (`hermes acp`) | — | ✓ | `default` `acceptEdits` | ✓ |
 | DeepSeek Harness | `hapi dsh` | ACP (`dsh --profile acp` or configured server) | — | ✓ | Managed by DSH ACP composition | ✓* |
-| Antigravity (agy) | `hapi agy` | Persistent headless NDJSON over stdio | — | ✓ | `request-review` `always-proceed` | ✓ |
+| Antigravity (agy) | `hapi agy` | Native interactive terminal (1.5.2+) | — | ✓ | `request-review` `auto` `plan` `always-proceed` | ✓ |
 | Pi | `hapi pi` | `pi --mode rpc` (JSON-line RPC over stdio) | — | ✓ | none (always auto-approve) | ✓ |
 | Gemini CLI | — | **Removed** — Google sunset the consumer Gemini CLI (2026-06-18) | — | — | — | — |
 
@@ -368,35 +368,54 @@ the prompt is loaded by DSH through its own `skill` tool and catalog.
 - **GitHub Copilot** (`hapi copilot`) — Copilot CLI over ACP (`copilot --acp --stdio`). [GitHub Copilot](https://github.com/features/copilot)
 - **Kimi** (`hapi kimi`) — Moonshot AI's Kimi CLI over ACP (`kimi acp`). [MoonshotAI/kimi-cli](https://github.com/MoonshotAI/kimi-cli)
 - **OpenCode** (`hapi opencode`) — the open-source OpenCode agent over ACP (`opencode acp`). In OpenCode 2.x (2.2.5 or newer) remote sessions, use a queued message's **Steer** action to add guidance during a running turn. The action appears when the native connection is ready. Acceptance confirms that OpenCode received the guidance; the current tool may finish before it takes effect. An unconfirmed delivery stays held for explicit retry or cancellation. [opencode.ai](https://opencode.ai)
-- **Antigravity** (`hapi agy`) — Google's Antigravity CLI (`agy`), driven through
-  `agy --input-format stream-json --output-format stream-json`. HAPI starts the
-  process on the first prompt and reuses it for subsequent turns with the same
-  model, effort, and permission settings. Each prompt is sent through stdin;
-  the next turn starts after HAPI finishes handling the current `result` and
-  chat output.
-  Changing settings restarts the process with `--conversation <uuid>`. Stop
-  terminates the process and its tools; the next send resumes the conversation.
-  A process failure also causes the next turn to start a fresh process, without
-  automatically replaying a prompt the agent already accepted.
+- **Antigravity** (`hapi agy`) — Google's Antigravity CLI, driven through
+  its native interactive terminal. Requires **agy 1.5.2 or newer**. HAPI prewarms
+  the process when the session opens and reuses it for subsequent turns. Normal
+  mode changes use native mode cycling; model, effort, and Always Proceed changes
+  restart the same conversation. Stop terminates the process and its tools; the
+  next send resumes the conversation. Input stays in HAPI's remote interface.
 
-  Requires an agy CLI with `--input-format stream-json` support. Native CLI
-  commands such as `/model` and `/usage` cannot run inside this stream; use
-  HAPI's model and effort controls to change settings. Remote-only — there is
-  no local terminal input path or PTY/TUI wrapper.
+  Use a queued message's **Steer** action, or **Send & steer** in supported
+  clients, to supply guidance during a running turn. HAPI sends ordinary text
+  through the native terminal with immediate delivery enabled. Antigravity
+  consumes it at a tool boundary; a background command can continue running.
+  Normal sends remain queued. Only
+  one guidance message can await a native receipt at a time. A delivery without
+  a confirmed receipt stays held for explicit retry or cancellation after failure;
+  HAPI never automatically replays it. Steered guidance uses the running turn's
+  settings, including when its queued settings differ.
 
-  Permission handling uses agy's `settings.json` allow/deny rules
-  (`request-review`) or `--dangerously-skip-permissions` (`always-proceed`),
-  without a hook-based approval bridge. Tools without an allow-rule are
-  auto-denied and shown as a chat hint. MCP servers are loaded natively from
-  `~/.gemini/config/mcp_config.json` or workspace `.agents/mcp_config.json`;
-  HAPI does not inject its own MCP server. [Google Antigravity](https://antigravity.google)
+  In the default `request-review` mode, agy's native allow/deny rules
+  apply first. Remaining permission requests appear in HAPI with **Allow** and
+  **Deny** actions. **Allow for session** remembers only the exact requested
+  operation for the current process; it does not write a permanent native rule.
+  Stop, process failure, and native withdrawal clear pending approvals.
+  `always-proceed` uses `--dangerously-skip-permissions`.
 
-  In the web model picker, models with multiple effort variants appear once,
-  with a separate effort selector showing the levels in the machine's catalog.
-  For example, choose **Gemini 4 Argon** and **High**, or launch with
-  `hapi agy --model gemini-4-argon --effort high`. Models with only one listed
-  variant keep their original name and have no effort selector. Model and effort
-  changes apply to subsequently sent messages; queued messages keep their settings.
+  **Auto** uses Antigravity's native intelligent permission policy and requires
+  native account eligibility. Operations that still need a person appear in
+  HAPI's approval UI. **Plan** uses native planning behavior, including plan
+  artifacts and review requests; switch mode when ready to implement. Choose
+  these modes in New Session or session settings, or launch with
+  `hapi agy --permission-mode auto` / `hapi agy --permission-mode plan`.
+  Mode settings apply only to this process and do not rewrite global settings.
+
+  MCP servers are loaded natively from `~/.gemini/config/mcp_config.json` or
+  workspace `.agents/mcp_config.json`; HAPI does not inject its own MCP server.
+  [Google Antigravity](https://antigravity.google)
+
+  Use HAPI's model and effort controls to change settings. In the web model
+  picker, models with multiple effort variants appear once, with a separate
+  effort selector showing the levels in the machine's catalog. For example,
+  launch with `hapi agy --model gemini-4-argon --effort high`. Models with only
+  one listed variant keep their original name and have no effort selector.
+  Model and effort changes apply to subsequently sent messages; queued messages
+  keep their settings. Replies and thinking stream incrementally, with model
+  attribution and native tool IDs. Prewarming and process reuse reduce HAPI's
+  dispatch delay; model inference and native tool-boundary waits still apply.
+  Use HAPI controls for modes and models; native terminal slash commands and
+  unsupported native dialogs require continuing the conversation directly in
+  `agy`. Usage totals are not reported.
 
 - **Pi** (`hapi pi`) — the Pi coding agent running as `pi --mode rpc` (JSON-line RPC over piped stdio); remote-control only, no local TUI input path. [earendil-works/pi](https://github.com/earendil-works/pi)
 

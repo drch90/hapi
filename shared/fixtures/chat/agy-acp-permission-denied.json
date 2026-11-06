@@ -1,0 +1,104 @@
+{
+    "description": "Antigravity ACP denied approval attaches to its canonical tool card with the exact native call id.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-approval-call",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-approval-call",
+                    "input": {
+                        "CommandLine": "python3 script.py",
+                        "Cwd": "/repo",
+                        "command": "python3 script.py",
+                        "cwd": "/repo"
+                    },
+                    "name": "Bash",
+                    "permission": {
+                        "decision": "denied",
+                        "status": "denied"
+                    },
+                    "state": "error"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-approval-call",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-approval-call",
+                    "input": {
+                        "CommandLine": "python3 script.py",
+                        "Cwd": "/repo",
+                        "command": "python3 script.py",
+                        "cwd": "/repo"
+                    },
+                    "name": "Bash",
+                    "permission": {
+                        "decision": "denied",
+                        "status": "denied"
+                    },
+                    "state": "error"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "completedRequests": {
+                "agy-approval-call": {
+                    "arguments": {
+                        "CommandLine": "python3 script.py",
+                        "Cwd": "/repo",
+                        "command": "python3 script.py",
+                        "cwd": "/repo"
+                    },
+                    "completedAt": 1755000001000,
+                    "createdAt": 1755000000000,
+                    "decision": "denied",
+                    "status": "denied",
+                    "tool": "Bash"
+                }
+            },
+            "requests": {}
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-approval-call",
+                            "input": {
+                                "CommandLine": "python3 script.py",
+                                "Cwd": "/repo",
+                                "command": "python3 script.py",
+                                "cwd": "/repo"
+                            },
+                            "name": "Bash",
+                            "status": "pending",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-approval-tool",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-permission-denied"
+}

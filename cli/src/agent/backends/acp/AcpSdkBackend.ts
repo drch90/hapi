@@ -112,6 +112,8 @@ export class AcpSdkBackend implements AgentBackend {
     private setModeSupported: boolean | undefined = undefined;
     private isProcessingMessage = false;
     private promptRequestInFlight = false;
+    /** Native soft requests exclude the output-drain period after their response. */
+    private softPromptRequestsInFlight = 0;
     /** Concurrent session/prompt requests (main prompt + soft steers). */
     private activePromptRequests = 0;
     /** Foreground prompt only; soft steers are excluded after Abort. */
@@ -126,6 +128,7 @@ export class AcpSdkBackend implements AgentBackend {
     private promptUsageCallback: ((msg: AgentMessage) => void) | null = null;
     private usageUpdateListener: ((msg: AgentMessage) => void) | null = null;
     private sessionInfoUpdateListener: ((update: AcpSessionInfoUpdate) => void) | null = null;
+    private userMessageListener: ((sessionId: string, text: string) => void) | null = null;
     /** Fired on foreground ACP state / permission so launchers can bump hub thinking (#1470). */
     private agentActivityListener: ((thinking: boolean) => void) | null = null;
     /** Debounce timer for state_update running → thinking (#1502 chatter). */
@@ -648,6 +651,11 @@ export class AcpSdkBackend implements AgentBackend {
         this.sessionInfoUpdateListener = listener;
     }
 
+    /** Native user echoes confirm input admission, including concurrent ACP prompts. */
+    setUserMessageListener(listener: ((sessionId: string, text: string) => void) | null): void {
+        this.userMessageListener = listener;
+    }
+
     /**
      * Called when ACP reports foreground state / permission for harness wake (#1470 / #1502).
      * `true` = sustained `running` (debounced), `requires_action`, or permission.
@@ -856,12 +864,14 @@ export class AcpSdkBackend implements AgentBackend {
         }
 
         const promptRequestEpoch = this.beginPromptRequest();
+        this.softPromptRequestsInFlight++;
         try {
             await this.transport.sendRequest('session/prompt', {
                 sessionId,
                 prompt: content
             }, { timeoutMs: Infinity });
         } finally {
+            this.softPromptRequestsInFlight = Math.max(0, this.softPromptRequestsInFlight - 1);
             this.finishPromptRequest(promptRequestEpoch);
         }
     }
@@ -889,11 +899,13 @@ export class AcpSdkBackend implements AgentBackend {
             sessionId,
             prompt: content
         }, { timeoutMs: Infinity, dispatchTimeoutMs: 20_000 });
+        this.softPromptRequestsInFlight++;
         const completed = (async () => {
             try {
                 const response = await request.completed;
                 return isObject(response) ? asString(response.stopReason) : null;
             } finally {
+                this.softPromptRequestsInFlight = Math.max(0, this.softPromptRequestsInFlight - 1);
                 try {
                     await this.waitForSessionUpdateQuiet(
                         AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
@@ -1023,6 +1035,11 @@ export class AcpSdkBackend implements AgentBackend {
         return this.promptRequestInFlight;
     }
 
+    /** True until the native response, excluding buffered output finalization. */
+    hasActivePromptRequest(): boolean {
+        return this.promptRequestInFlight || this.softPromptRequestsInFlight > 0;
+    }
+
     getPromptGeneration(): number {
         return this.promptGeneration;
     }
@@ -1069,6 +1086,8 @@ export class AcpSdkBackend implements AgentBackend {
         this.messageHandler = null;
         this.activeSessionId = null;
         this.activePromptRequests = 0;
+        this.softPromptRequestsInFlight = 0;
+        this.promptRequestInFlight = false;
         this.foregroundPromptRequests = 0;
         this.isProcessingMessage = false;
         this.sessionModelsMetadata.clear();
@@ -1221,8 +1240,18 @@ export class AcpSdkBackend implements AgentBackend {
         // update into the restored handler if earlier async image work kept
         // the queue busy past restore.
         const handler = this.messageHandler;
+        // Capture suppression with the handler: history replay during session/load
+        // must never acknowledge a newly queued message with the same text.
+        const userMessageListener = handler ? this.userMessageListener : null;
         this.sessionUpdateQueue = this.sessionUpdateQueue
             .then(async () => {
+                if (sessionId && userMessageListener && isObject(update)
+                    && update.sessionUpdate === 'user_message_chunk'
+                    && isObject(update.content) && update.content.type === 'text'
+                    && typeof update.content.text === 'string') {
+                    handler?.drainBuffers();
+                    userMessageListener(sessionId, update.content.text);
+                }
                 await handler?.handleUpdate(update);
             })
             .catch((error) => {

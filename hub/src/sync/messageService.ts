@@ -133,7 +133,7 @@ function getNormalizedDeliveryMode(
         return 'queue'
     }
 
-    return isObject(metadata) && (metadata.flavor === 'pi' || metadata.flavor === 'claude') ? 'steer' : 'queue'
+    return isObject(metadata) && (metadata.flavor === 'pi' || metadata.flavor === 'claude' || metadata.flavor === 'agy') ? 'steer' : 'queue'
 }
 
 /**

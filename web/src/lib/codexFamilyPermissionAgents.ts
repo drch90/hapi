@@ -28,6 +28,7 @@ export function usesCodexFamilyPermissionModes(
  */
 export function usesNativePermissionSelect(flavor: string | null | undefined): boolean {
     return flavor === 'hermes'
+        || flavor === 'agy'
         || flavor === 'claude'
         || flavor === 'grok'
         || flavor === 'cursor'

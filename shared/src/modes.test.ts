@@ -31,6 +31,12 @@ describe('Gemini CLI sunset (read-only, not creatable)', () => {
 })
 
 describe('getPermissionModesForFlavor', () => {
+    test('offers native Antigravity Auto and Plan alongside review and bypass', () => {
+        expect(getPermissionModesForFlavor('agy')).toEqual(['request-review', 'auto', 'plan', 'always-proceed'])
+        expect(isPermissionModeAllowedForFlavor('auto', 'agy')).toBe(true)
+        expect(isPermissionModeAllowedForFlavor('plan', 'agy')).toBe(true)
+        expect(isPermissionModeAllowedForFlavor('default', 'agy')).toBe(false)
+    })
     test("returns the conservative Grok modes", () => {
         expect(getPermissionModesForFlavor('grok')).toEqual([
             'default',
@@ -145,6 +151,10 @@ describe('claude auto permission mode', () => {
 })
 
 describe('isSteeringSupportedForFlavor', () => {
+    it('supports Antigravity native steering', () => {
+        expect(isSteeringSupportedForFlavor('agy')).toBe(true)
+        expect(isSteeringSupportedForSession({ flavor: 'agy' })).toBe(true)
+    })
     it('supports Claude, Codex, Cursor, Pi, Hermes and OpenCode', () => {
         expect(isSteeringSupportedForFlavor('codex')).toBe(true)
         expect(isSteeringSupportedForFlavor('cursor')).toBe(true)

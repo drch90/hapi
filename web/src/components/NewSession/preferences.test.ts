@@ -20,6 +20,17 @@ describe('NewSession preferences', () => {
         expect(loadPreferredYoloMode()).toBe(true)
     })
 
+    it('uses Antigravity review by default and remembers Auto and Plan selections', () => {
+        expect(resolvePreferredLaunchSettings('agy', null).permissionMode).toBe('request-review')
+        for (const permissionMode of ['auto', 'plan'] as const) {
+            savePreferredLaunchSettings('machine-1', 'agy', { model: 'auto', cursorSelectedBase: 'auto', effort: 'auto',
+                modelReasoningEffort: 'default', permissionMode })
+            const saved = loadPreferredLaunchSettings('machine-1', 'agy')
+            expect(saved?.permissionMode).toBe(permissionMode)
+            expect(resolvePreferredLaunchSettings('agy', saved).permissionMode).toBe(permissionMode)
+        }
+    })
+
     it('loads saved values from storage', () => {
         localStorage.setItem('hapi:newSession:agent', 'codex')
         localStorage.setItem('hapi:newSession:yolo', 'true')

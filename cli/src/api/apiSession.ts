@@ -1049,7 +1049,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     sendAgySessionMessage(
-        entry: { type: string; content?: string; tool_calls?: { name: string; args: Record<string, unknown> }[]; step_index?: number; model?: string },
+        entry: { type: string; id?: string; content?: string; tool_calls?: { name: string; args: Record<string, unknown> }[]; step_index?: number; model?: string },
         conversationId?: string,
         // The tool CALL (name + args) that produced this action entry, paired by
         // the launcher from the preceding PLANNER_RESPONSE. agy splits the
@@ -1108,15 +1108,18 @@ export class ApiSessionClient extends EventEmitter {
         } else {
             // Tag the agent response with the model that produced it (per-turn),
             // enriched by the scanner from the conversation DB.
-            data = { type: 'agy_message', content: entry.content ?? '', model: entry.model }
+            data = { type: 'agy_message', content: entry.content ?? '', model: entry.model,
+                ...(entry.id ? { id: entry.id } : {}) }
         }
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: {
-                role: 'agent',
-                content: { type: 'output', data },
-                meta: { sentFrom: 'cli' }
-            }
+        this.emitOrQueue(() => {
+            this.socket.emit('message', {
+                sid: this.sessionId,
+                message: {
+                    role: 'agent',
+                    content: { type: 'output', data },
+                    meta: { sentFrom: 'cli' }
+                }
+            })
         })
     }
 

@@ -1,0 +1,121 @@
+{
+    "description": "Antigravity ACP combines canonical tool lifecycle records with model-attributed agy prose after a steered turn.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-acp-call",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-acp-call",
+                    "input": {
+                        "command": "git status"
+                    },
+                    "name": "Bash",
+                    "result": "Working tree clean.",
+                    "state": "completed"
+                }
+            },
+            {
+                "createdAt": 1755000000002,
+                "id": "agy-acp-prose:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "I applied your updated instructions."
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-acp-call",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-acp-call",
+                    "input": {
+                        "command": "git status"
+                    },
+                    "name": "Bash",
+                    "result": "Working tree clean.",
+                    "state": "completed"
+                }
+            },
+            {
+                "createdAt": 1755000000002,
+                "id": "agy-acp-prose:0",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "I applied your updated instructions."
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-acp-call",
+                            "input": {
+                                "command": "git status"
+                            },
+                            "name": "Bash",
+                            "status": "in_progress",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-acp-tool",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-acp-call",
+                            "is_error": false,
+                            "output": "Working tree clean.",
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000001,
+                "id": "agy-acp-result",
+                "localId": null,
+                "seq": 2
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "content": "I applied your updated instructions.",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "agy_message"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000002,
+                "id": "agy-acp-prose",
+                "localId": null,
+                "seq": 3
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-tools-and-prose"
+}
