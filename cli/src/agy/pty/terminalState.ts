@@ -208,7 +208,7 @@ function displayWidth(text: string): number {
 export type AgyNativeMode = 'default' | 'accept-edits' | 'auto' | 'plan';
 
 export type AgyTerminalState = {
-    kind: 'prompt' | 'permission' | 'trust' | 'login' | 'other';
+    kind: 'prompt' | 'command' | 'permission' | 'trust' | 'login' | 'other';
     busy: boolean;
     mode: AgyNativeMode | null;
     editor: string | null;
@@ -263,6 +263,15 @@ export function readAgyTerminalState(screen: AgyTerminalScreen): AgyTerminalStat
     const permission = readPermission(lines);
     if (permission) return { ...base, kind: 'permission', busy: true, permission };
     if (screen.alternate) return { ...base, kind: /Signing in|Select login method|not signed in/.test(text) ? 'login' : 'other' };
+    // Native slash completion inserts a menu between the editor and footer.
+    // Only this exact menu may confirm a command paste before Enter.
+    if (lines.some(line => /↑\/↓ Navigate.*enter Select.*tab Complete/.test(line))) {
+        for (let row = lines.length - 2; row >= 1; row--) {
+            if (/^> \/[^\s]+/.test(lines[row]!) && /^─{10,}\s*$/.test(lines[row - 1]!) && /^─{10,}\s*$/.test(lines[row + 1] ?? '')) {
+                return { ...base, kind: 'command', editor: lines[row]!.slice(2).trimEnd() };
+            }
+        }
+    }
     for (let i = lines.length - 1; i >= 2; i--) {
         const footer = lines[i]!;
         const hints = /^(?:\? for shortcuts|esc to cancel|press ctrl\+d again to exit|Press up to edit queued messages)/.test(footer);
@@ -276,7 +285,11 @@ export function readAgyTerminalState(screen: AgyTerminalScreen): AgyTerminalStat
         if (!hints && (!editor || screen.cursor.row <= top || screen.cursor.row >= i - 1)) continue;
         // A mode-change hint is painted as an editor placeholder. Its cursor
         // stays at the empty input position; it is not text waiting to be sent.
-        if (screen.cursor.row === top + 1 && screen.cursor.col === 2
+        // The empty-compaction notice keeps the idle shortcut footer but does
+        // not restore the VT cursor to the editor. Actual pasted text hides
+        // that footer, so it must remain intact even when its words match.
+        if (editor === 'Nothing to compact yet.' && footer.startsWith('? for shortcuts')) editor = '';
+        else if (screen.cursor.row === top + 1 && screen.cursor.col === 2
             && /^(?:Plan mode:|Auto mode:|Accept-edits mode:|Default mode:)/.test(editor)
             && editor.includes('shift+tab to cycle')) editor = '';
         return { kind: 'prompt', busy: /^(?:esc to cancel|Press up to edit queued messages)/.test(footer), mode: nativeMode ?? 'default',

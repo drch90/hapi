@@ -413,9 +413,22 @@ the prompt is loaded by DSH through its own `skill` tool and catalog.
   keep their settings. Replies and thinking stream incrementally, with model
   attribution and native tool IDs. Prewarming and process reuse reduce HAPI's
   dispatch delay; model inference and native tool-boundary waits still apply.
-  Use HAPI controls for modes and models; native terminal slash commands and
-  unsupported native dialogs require continuing the conversation directly in
-  `agy`. Usage totals are not reported.
+  Common commands also work from chat:
+
+  | Commands | Behavior |
+  | --- | --- |
+  | `/usage`, `/quota` | Show model quota remaining and reset times. |
+  | `/context` | Show current context tokens and the model's window size. The context indicator updates automatically after resume and replies. |
+  | `/compact` | Run native conversation compaction and show its result. |
+  | `/clear`, `/new` | Start fresh native context while keeping HAPI chat history. |
+  | `/model`, `/effort` | Inspect or change the session's model and reasoning effort; use `default` to reset a selection. |
+  | `/plan [task]`, `/plan off`, `/auto`, `/default`, `/permissions` | Change session modes using the same settings as the UI. |
+  | `/help`, `/status` | List supported commands or inspect session settings. |
+
+  Queries and native operations are processed separately from ordinary prompts.
+  Other native dialogs and terminal-only commands require continuing directly in
+  `agy`. Context snapshots do not add to billable usage; per-request token and
+  cost totals are not reported.
 
 - **Pi** (`hapi pi`) — the Pi coding agent running as `pi --mode rpc` (JSON-line RPC over piped stdio); remote-control only, no local TUI input path. [earendil-works/pi](https://github.com/earendil-works/pi)
 

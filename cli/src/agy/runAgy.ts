@@ -16,6 +16,7 @@ import type { SessionEffort, SessionModel } from '@/api/types';
 import { splitAgyModelSelection } from '@hapi/protocol';
 import { listAgyModels } from '@/modules/common/agyModels';
 import { normalizeAgyModelSelection } from './utils/agyModelSelection';
+import { formatAgyConfig, resolveAgyCommand } from './commands';
 import type { AgySession } from './session';
 
 export async function runAgy(opts: {
@@ -76,6 +77,8 @@ export async function runAgy(opts: {
     let sessionEffort: SessionEffort = opts.effort ?? null;
 
     const sessionWrapperRef: { current: AgySession | null } = { current: null };
+    const pendingInput = new Set<string>();
+    const cancelledInput = new Set<string>();
 
     const lifecycle = createRunnerLifecycle({
         session,
@@ -115,18 +118,16 @@ export async function runAgy(opts: {
         };
 
         session.onCancelQueuedMessage((localId) => {
-            const removed = messageQueue.cancelByLocalId(localId);
+            const removed = messageQueue.cancelByLocalId(localId) || pendingInput.has(localId);
+            if (pendingInput.has(localId)) cancelledInput.add(localId);
             logger.debug(`[agy] cancelByLocalId(${localId}): ${removed ? 'removed' : 'not found'}`);
             return removed;
         });
         session.onRetryQueuedMessage(localId => messageQueue.releaseIndeterminateReservation(localId));
 
-        registerSessionConfigRpc<PermissionMode>({
-            rpcHandlerManager: session.rpcHandlerManager,
-            flavor: 'agy',
-            modelMode: 'nullable',
-            effortMode: 'nullable',
-            onApply: async (config) => {
+        let configSerial: Promise<unknown> = Promise.resolve();
+        const applyConfig = (config: Partial<AgyMode>) => {
+            const result = configSerial.then(async () => {
                 // A config request received during startup must apply after the
                 // initial selection, rather than be overwritten when probing ends.
                 await initialized;
@@ -149,30 +150,79 @@ export async function runAgy(opts: {
                     sessionModel = selection.model;
                     sessionEffort = selection.effort;
                 }
+                syncSessionMode();
                 return selection;
-            },
-            onAfterApply: syncSessionMode
+            });
+            configSerial = result.catch(() => {});
+            return result;
+        };
+        registerSessionConfigRpc<PermissionMode>({
+            rpcHandlerManager: session.rpcHandlerManager,
+            flavor: 'agy',
+            modelMode: 'nullable',
+            effortMode: 'nullable',
+            onApply: applyConfig,
         });
 
         await initialized;
 
+        // A configuration command is a barrier for later input: a following
+        // prompt snapshots the new selection, while earlier queued work keeps
+        // its original selection. Native operations still occupy their FIFO slot.
+        let inputSerial = Promise.resolve();
+        let pendingConfigCommands = 0;
+        let pendingInputs = 0;
         session.onUserMessage((message, localId) => {
-            const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
-            // Snapshot config when buffered/new messages enter the queue, so a
-            // later model or effort switch cannot change an already queued turn.
-            const mode: AgyMode = {
-                permissionMode: currentPermissionMode,
-                model: sessionModel,
-                effort: sessionEffort,
+            const command = resolveAgyCommand(message.content.text);
+            const receivedText = command ? message.content.text : formatMessageWithAttachments(message.content.text, message.content.attachments);
+            const afterConfigCommand = pendingConfigCommands > 0;
+            const receivedMode: AgyMode = { permissionMode: currentPermissionMode, model: sessionModel, effort: sessionEffort };
+            const enqueue = (text: string, mode: AgyMode) => {
+                if (command) messageQueue.pushIsolated(text, mode, localId);
+                else messageQueue.push(text, mode, localId);
+                if (!command && message.meta?.deliveryMode === 'steer' && localId) {
+                    void sessionWrapperRef.current?.steerQueuedMessage?.(localId).then(result => {
+                        if (!result.steered && result.error) session.sendSessionEvent({ type: 'message', message: `Antigravity steer: ${result.error}` });
+                    });
+                }
             };
-            messageQueue.push(formattedText, mode, localId);
-            if (message.meta?.deliveryMode === 'steer' && localId) {
-                void sessionWrapperRef.current?.steerQueuedMessage?.(localId).then(result => {
-                    if (!result.steered && result.error) {
-                        session.sendSessionEvent({ type: 'message', message: `Antigravity steer: ${result.error}` });
-                    }
-                });
+            // Keep ordinary sends and live Steer synchronous when no earlier
+            // configuration command is waiting on its native/catalog result.
+            if (command?.kind !== 'config' && pendingInputs === 0) {
+                enqueue(receivedText, receivedMode);
+                return;
             }
+            if (command?.kind === 'config') pendingConfigCommands++;
+            pendingInputs++;
+            if (localId) pendingInput.add(localId);
+            inputSerial = inputSerial.then(async () => {
+                if (localId && cancelledInput.has(localId)) return;
+                // Once execution starts, cancellation must not claim that a
+                // native configuration change was removed from the queue.
+                if (localId) pendingInput.delete(localId);
+                let text = receivedText;
+                if (command?.kind === 'config') {
+                    await applyConfig(command.updates);
+                    if (!command.prompt) {
+                        if (localId) session.emitMessagesConsumed([localId], { clearQueuedThinkingGrace: true });
+                        session.sendAgentMessage({ type: 'message', message: formatAgyConfig({ permissionMode: currentPermissionMode, model: sessionModel, effort: sessionEffort }) });
+                        return;
+                    }
+                    text = formatMessageWithAttachments(command.prompt, message.content.attachments);
+                }
+                const mode: AgyMode = afterConfigCommand || command?.kind === 'config'
+                    ? { permissionMode: currentPermissionMode, model: sessionModel, effort: sessionEffort }
+                    : receivedMode;
+                if (localId && cancelledInput.has(localId)) return;
+                enqueue(text, mode);
+            }).catch(error => {
+                if (localId) session.emitMessagesConsumed([localId], { clearQueuedThinkingGrace: true });
+                session.sendSessionEvent({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+            }).finally(() => {
+                if (command?.kind === 'config') pendingConfigCommands--;
+                pendingInputs--;
+                if (localId) { pendingInput.delete(localId); cancelledInput.delete(localId); }
+            });
         });
 
         await agyLoop({
@@ -192,6 +242,7 @@ export async function runAgy(opts: {
                 syncSessionMode();
             }
         });
+        await inputSerial;
     } catch (error) {
         crashed = true;
         lifecycle.markCrash(error);

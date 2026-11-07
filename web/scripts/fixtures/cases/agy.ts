@@ -10,6 +10,24 @@ import { T0, wireMessage } from './support'
  * sessions combine that prose with common codex-family tool lifecycle records.
  */
 export const agyCases: FixtureCase[] = [
+    ...([
+        { name: 'positive', contexts: [10_034], description: 'Native Antigravity context snapshots carry positive occupancy and the native window with zero billable tokens, without adding chat rows.' },
+        { name: 'compacted', contexts: [10_034, 1_000], description: 'Native Antigravity context occupancy decreases after compaction; the latest snapshot replaces the previous size.' },
+        { name: 'cleared', contexts: [10_034, 1_000, 0], description: 'Native Antigravity explicitly reports an empty context; zero clears the previous occupancy while preserving the native window.' },
+    ] as const).map(({ name, contexts, description }): FixtureCase => ({
+        name: `agy-native-context-${name}`,
+        description,
+        messages: [
+            wireMessage({ id: 'agy-context-prose', seq: 1, createdAt: T0, content: { role: 'agent',
+                content: { type: 'output', data: { type: 'agy_message', id: 'agy-context-answer', content: 'The answer is ready.', model: 'Gemini 3.8 Flash (High)' } } } }),
+            ...contexts.map((contextTokens, index) => wireMessage({ id: `agy-context-${index}`, seq: index + 2, createdAt: T0 + index + 1,
+                content: { role: 'agent', content: { type: 'codex', data: {
+                    type: 'token_count', model: 'Gemini 3.8 Flash (High)',
+                    usageSchema: 'hapi.usage.v1', inputTokenSemantics: 'includes-cache',
+                    info: { total: { inputTokens: 0, outputTokens: 0 }, contextTokens, modelContextWindow: 1_048_576 },
+                } } } })),
+        ],
+    })),
     {
         name: 'agy-native-permission-reply-id',
         description: 'Native Antigravity uses a one-time approval reply ID linked to the real tool call, including after a previous reply was canceled.',

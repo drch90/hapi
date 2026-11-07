@@ -13,6 +13,8 @@ import { AgyIndeterminateDeliveryError, normalizeAgyInput } from './delivery';
 import { createAgyProcess, type AgyProcess } from './nativeProcess';
 import { AgyTranscript, AgyTranscriptCursor, matchesAgyReceipt, type AgyNativeStep, type AgyTranscriptSource } from './transcript';
 import { AgyPtyPermissionHandler } from './permissionHandler';
+import { listAgyModels } from '@/modules/common/agyModels';
+import { formatAgyConfig, formatAgyContext, formatAgyHelp, formatAgyModels, formatAgyUsage, resolveAgyCommand, type AgyCommand } from '../commands';
 
 function deferred() {
     let resolve!: () => void;
@@ -31,6 +33,7 @@ type Owner = {
     transcript: AgyTranscriptSource | null;
     permissions: AgyPtyPermissionHandler | null;
     failure: Error | null;
+    monitor?: Promise<void>;
 };
 type Delivery = {
     text: string;
@@ -74,6 +77,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
     private turn: Turn | null = null;
     private activeTurn: Promise<void> | null = null;
     private preparation: Promise<unknown> = Promise.resolve();
+    private lastContext: string | null = null;
 
     constructor(private readonly session: AgySession, private readonly processFactory = createAgyProcess,
         private readonly transcriptFactory: (id: string) => AgyTranscriptSource = id => new AgyTranscript(id)) {
@@ -107,6 +111,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             await owner.process.close();
             await owner.setup.catch(() => {});
             await owner.process.close();
+            await owner.monitor;
             // An active turn drains final durable rows before closing its DB.
             if (this.turn?.owner !== owner) owner.transcript?.close();
         })();
@@ -157,9 +162,36 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             // Resume has an ID already. A fresh idle TUI creates one only when
             // it receives the first message, so it can prewarm without a DB.
             await this.bindTranscript(owner);
+            this.emitContext(owner);
+            owner.monitor = this.monitorContext(owner);
         })();
         try { await owner.setup; } catch (error) { owner.failure = error instanceof Error ? error : new Error(String(error)); throw error; }
         return owner;
+    }
+
+    private emitContext(owner: Owner): void {
+        if (this.owner !== owner || owner.retiring || owner.failure || owner.process.failure) return;
+        const context = owner.process.nativeStatus?.context;
+        if (!context) return;
+        const key = JSON.stringify([owner.process.sessionId, context.tokens, context.window]);
+        if (key === this.lastContext) return;
+        this.lastContext = key;
+        // This is current context occupancy, not another billable request.
+        // Existing clients display it; the hub ignores the zero token totals.
+        this.session.client.sendAgentMessage(convertAgentMessage({ type: 'usage', inputTokens: 0, outputTokens: 0,
+            contextTokens: context.tokens, contextWindow: context.window }, owner.process.model));
+    }
+
+    private async monitorContext(owner: Owner): Promise<void> {
+        // Native status trails its terminal paint by up to the 300ms hook
+        // throttle. Keep reading while idle so short/final replies also update.
+        while (this.owner === owner && !owner.retiring && !owner.failure && !owner.process.failure && !this.shouldExit) {
+            await owner.process.waitForChange(500);
+            if (this.owner !== owner || owner.retiring || this.shouldExit) return;
+            if (this.turn?.owner === owner) continue;
+            try { await owner.process.refreshStatus(); this.emitContext(owner); }
+            catch (error) { owner.failure = error instanceof Error ? error : new Error(String(error)); return; }
+        }
     }
 
     private acknowledge(turn: Turn): void {
@@ -258,6 +290,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
 
     private async refresh(turn: Turn, all = false): Promise<void> {
         await turn.owner!.process.refreshStatus();
+        this.emitContext(turn.owner!);
         await turn.cursor!.refresh(all);
         for (const step of turn.cursor!.steps.values()) {
             this.receive(turn, step);
@@ -324,7 +357,57 @@ export class AgyPtyDriver extends RemoteLauncherBase {
         this.session.client.sendSessionEvent({ type: 'abort-restore', text: turn.prompt });
     }
 
+    private async executeCommand(turn: Turn, command: AgyCommand): Promise<void> {
+        this.acknowledge(turn);
+        let message: string;
+        if (command.kind === 'error') throw new Error(command.message);
+        if (command.kind === 'config') throw new Error('Send configuration commands through the HAPI message input.');
+        if (command.kind === 'query' && command.name === 'help') message = formatAgyHelp();
+        else {
+            if (command.kind === 'clear') {
+                await this.retire(this.owner);
+                this.session.sessionId = null;
+                this.lastContext = null;
+                this.session.client.updateMetadata(metadata => {
+                    const { agySessionId: _previous, ...rest } = metadata;
+                    return rest;
+                });
+            }
+            const owner = await this.prepare(command.kind === 'query' ? this.currentMode() : turn.mode);
+            if (turn.stopped || this.shouldExit) return;
+            turn.owner = owner;
+            await owner.process.refreshStatus();
+            if (command.kind === 'clear') message = 'Started fresh Antigravity context. HAPI chat history is preserved.';
+            else if (command.kind === 'compact') {
+                message = await owner.process.compact();
+                await owner.process.refreshStatus();
+            } else {
+                const status = owner.process.nativeStatus;
+                switch (command.name) {
+                    case 'usage': message = formatAgyUsage(status); break;
+                    case 'context': message = formatAgyContext(status); break;
+                    case 'model': message = formatAgyModels(this.currentMode(), (await listAgyModels()).availableModels ?? [], owner.process.model); break;
+                    case 'effort': message = `Antigravity reasoning effort: ${status?.effort ?? this.currentMode().effort ?? 'default'}. Use /effort <level|default> to change it.`; break;
+                    case 'permissions': message = `Antigravity permission mode: ${this.currentMode().permissionMode}. Use /permissions <request-review|auto|plan|always-proceed> to change it.`; break;
+                    case 'status': message = ['**Antigravity status**', '',
+                        formatAgyConfig(this.currentMode()),
+                        `Native model: ${owner.process.model ?? 'initializing'}`,
+                        `Conversation: ${owner.process.sessionId ?? 'new'}`,
+                        ...(status?.version ? [`Version: ${status.version}`] : []),
+                        '', formatAgyContext(status),
+                    ].join('\n'); break;
+                    case 'help': message = formatAgyHelp(); break;
+                }
+            }
+            this.emitContext(owner);
+        }
+        if (turn.stopped || this.shouldExit) return;
+        turn.finished = true;
+        this.session.client.sendAgentMessage(convertAgentMessage({ type: 'text', text: message }));
+    }
+
     private async runTurn(prompt: string, localIds: string[], mode: AgyMode): Promise<void> {
+        const command = resolveAgyCommand(prompt);
         const turn: Turn = { prompt, input: prompt, localIds, mode, owner: null, target: null, cursor: null, baseline: -1, submitted: false,
             acknowledged: false, stopped: false, finished: false, sawBusy: false, idleSince: null, pending: null,
             receipts: new Set(), emitted: new Map(), startedAt: Date.now(), dispatchedAt: null, firstOutput: false };
@@ -333,37 +416,40 @@ export class AgyPtyDriver extends RemoteLauncherBase {
         this.messageBuffer.addMessage(prompt, 'user');
         try {
             turn.input = normalizeAgyInput(prompt);
-            if (/^\s*\/[a-z][-a-z]*(?:\s|$)/i.test(turn.input)) throw new Error('Use HAPI session controls for modes and models; native terminal slash commands require agy in a terminal');
-            const owner = await this.prepare(mode);
-            if (turn.stopped || this.shouldExit) return;
-            turn.owner = owner;
-            turn.target = { isActive: () => this.canSteer(turn), send: text => this.beginSteer(turn, text) };
-            await owner.process.submit(turn.input, false, async () => {
-                turn.baseline = owner.transcript ? await owner.transcript.maxIndex() : -1;
-                if (owner.transcript) turn.cursor = new AgyTranscriptCursor(owner.transcript, turn.baseline + 1);
-            });
-            turn.submitted = true;
-            turn.dispatchedAt = Date.now();
-            logger.debug('[agy] Native submit', { preparationMs: turn.dispatchedAt - turn.startedAt });
-            while (!owner.transcript && !turn.stopped && !this.shouldExit) {
-                if (owner.retiring || owner.failure || owner.process.failure) throw owner.failure ?? owner.process.failure ?? new Error('Antigravity stopped');
-                await owner.process.refreshStatus();
-                if (await this.bindTranscript(owner)) break;
-                if (Date.now() - turn.dispatchedAt > 30_000) throw new AgyIndeterminateDeliveryError('Antigravity did not confirm the new conversation after submission');
-                await owner.process.waitForChange();
+            if (command) await this.executeCommand(turn, command);
+            else {
+                const owner = await this.prepare(mode);
+                if (turn.stopped || this.shouldExit) return;
+                turn.owner = owner;
+                turn.target = { isActive: () => this.canSteer(turn), send: text => this.beginSteer(turn, text) };
+                await owner.process.submit(turn.input, false, async () => {
+                    turn.baseline = owner.transcript ? await owner.transcript.maxIndex() : -1;
+                    if (owner.transcript) turn.cursor = new AgyTranscriptCursor(owner.transcript, turn.baseline + 1);
+                });
+                turn.submitted = true;
+                turn.dispatchedAt = Date.now();
+                logger.debug('[agy] Native submit', { preparationMs: turn.dispatchedAt - turn.startedAt });
+                while (!owner.transcript && !turn.stopped && !this.shouldExit) {
+                    if (owner.retiring || owner.failure || owner.process.failure) throw owner.failure ?? owner.process.failure ?? new Error('Antigravity stopped');
+                    await owner.process.refreshStatus();
+                    if (await this.bindTranscript(owner)) break;
+                    if (Date.now() - turn.dispatchedAt > 30_000) throw new AgyIndeterminateDeliveryError('Antigravity did not confirm the new conversation after submission');
+                    await owner.process.waitForChange();
+                }
+                if (turn.stopped || this.shouldExit) return;
+                turn.cursor ??= new AgyTranscriptCursor(owner.transcript!, turn.baseline + 1);
+                await this.follow(turn);
             }
-            if (turn.stopped || this.shouldExit) return;
-            turn.cursor ??= new AgyTranscriptCursor(owner.transcript!, turn.baseline + 1);
-            await this.follow(turn);
         } catch (error) {
             if (!turn.stopped) {
+                if (command) this.acknowledge(turn);
                 this.session.client.sendSessionEvent({ type: 'error', message: error instanceof Error ? error.message : String(error) });
                 if (!turn.acknowledged) {
                     if (turn.submitted || error instanceof AgyIndeterminateDeliveryError) this.session.client.emitSteerIndeterminate(turn.localIds);
                     else this.restore(turn);
                 }
             }
-            await this.retire(this.owner);
+            if (!command || this.owner?.failure || this.owner?.process.failure) await this.retire(this.owner);
         } finally {
             this.steering.setTarget(null);
             turn.pending?.receipt.reject(new AgyIndeterminateDeliveryError('Antigravity turn ended before confirming guidance'));

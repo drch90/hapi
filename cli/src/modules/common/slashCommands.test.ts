@@ -79,6 +79,15 @@ describe('listSlashCommands', () => {
         expect(command?.description).toBe('Global only')
     })
 
+    it('offers supported Antigravity commands without inheriting Claude commands', async () => {
+        await writeFile(join(claudeConfigDir, 'commands', 'claude-only.md'), 'Claude command')
+        const names = (await listSlashCommands('agy', projectDir)).map(command => command.name)
+        expect(names).toEqual(expect.arrayContaining(['help', 'usage', 'context', 'compact', 'clear', 'model', 'effort', 'plan', 'permissions']))
+        expect(names).not.toContain('claude-only')
+        expect(names).not.toContain('doctor')
+        expect(names).not.toContain('stats')
+    })
+
     it('loads project-level commands when projectDir is provided', async () => {
         await writeFile(
             join(projectDir, '.claude', 'commands', 'project-only.md'),

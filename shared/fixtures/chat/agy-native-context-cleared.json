@@ -1,0 +1,136 @@
+{
+    "description": "Native Antigravity explicitly reports an empty context; zero clears the previous occupancy while preserving the native window.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-context-answer",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "The answer is ready."
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": {
+            "contextSize": 0,
+            "contextWindow": 1048576,
+            "inputTokens": 0,
+            "outputTokens": 0
+        },
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-context-answer",
+                "kind": "agent-text",
+                "localId": null,
+                "text": "The answer is ready."
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "content": "The answer is ready.",
+                            "id": "agy-context-answer",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "agy_message"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-context-prose",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "info": {
+                                "contextTokens": 10034,
+                                "modelContextWindow": 1048576,
+                                "total": {
+                                    "inputTokens": 0,
+                                    "outputTokens": 0
+                                }
+                            },
+                            "inputTokenSemantics": "includes-cache",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "token_count",
+                            "usageSchema": "hapi.usage.v1"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000001,
+                "id": "agy-context-0",
+                "localId": null,
+                "seq": 2
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "info": {
+                                "contextTokens": 1000,
+                                "modelContextWindow": 1048576,
+                                "total": {
+                                    "inputTokens": 0,
+                                    "outputTokens": 0
+                                }
+                            },
+                            "inputTokenSemantics": "includes-cache",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "token_count",
+                            "usageSchema": "hapi.usage.v1"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000002,
+                "id": "agy-context-1",
+                "localId": null,
+                "seq": 3
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "info": {
+                                "contextTokens": 0,
+                                "modelContextWindow": 1048576,
+                                "total": {
+                                    "inputTokens": 0,
+                                    "outputTokens": 0
+                                }
+                            },
+                            "inputTokenSemantics": "includes-cache",
+                            "model": "Gemini 3.8 Flash (High)",
+                            "type": "token_count",
+                            "usageSchema": "hapi.usage.v1"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000003,
+                "id": "agy-context-2",
+                "localId": null,
+                "seq": 4
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-native-context-cleared"
+}

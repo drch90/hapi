@@ -1,6 +1,20 @@
 import type { SlashCommand } from './apiTypes'
 
 export const BUILTIN_SLASH_COMMANDS = {
+    agy: [
+        { name: 'help', description: 'Show supported Antigravity commands', source: 'builtin' },
+        { name: 'usage', description: 'Show model quota and reset times', source: 'builtin' },
+        { name: 'context', description: 'Show current context usage and window size', source: 'builtin' },
+        { name: 'compact', description: 'Summarize the native conversation to compact context', source: 'builtin' },
+        { name: 'clear', description: 'Start fresh Antigravity context; keep HAPI chat history', source: 'builtin' },
+        { name: 'status', description: 'Show Antigravity session, model, and permission settings', source: 'builtin' },
+        { name: 'model', description: 'List or change models: /model <model ID|default>', source: 'builtin' },
+        { name: 'effort', description: 'Show or change reasoning effort: /effort <level|default>', source: 'builtin' },
+        { name: 'plan', description: 'Enable Plan: /plan [task]; /plan off to return to review mode', source: 'builtin' },
+        { name: 'auto', description: 'Enable native intelligent Auto mode', source: 'builtin' },
+        { name: 'default', description: 'Return to request-review mode', source: 'builtin' },
+        { name: 'permissions', description: 'Show or change permission mode for this session', source: 'builtin' },
+    ],
     hermes: [
         { name: 'help', description: 'Show supported Hermes commands', source: 'builtin' },
         { name: 'model', description: 'Show or change model and provider: /model <model ID>', source: 'builtin' },

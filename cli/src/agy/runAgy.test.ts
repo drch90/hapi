@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
     registerHandler: vi.fn(),
     onUserMessage: vi.fn(),
     receiveUserMessage: vi.fn(),
+    consumed: vi.fn(),
+    sendAgentMessage: vi.fn(),
+    onCancelQueuedMessage: vi.fn(),
     cleanup: vi.fn(),
     markCrash: vi.fn(),
 }))
@@ -64,9 +67,11 @@ describe('runAgy model and effort config', () => {
             api: {},
             session: {
                 onUserMessage: mocks.onUserMessage,
-                onCancelQueuedMessage: vi.fn(),
+                onCancelQueuedMessage: mocks.onCancelQueuedMessage,
                 onRetryQueuedMessage: vi.fn(),
                 sendSessionEvent: vi.fn(),
+                sendAgentMessage: mocks.sendAgentMessage,
+                emitMessagesConsumed: mocks.consumed,
                 rpcHandlerManager: { registerHandler: mocks.registerHandler },
             },
         }
@@ -190,5 +195,71 @@ describe('runAgy model and effort config', () => {
             expect(messageQueue.peekByLocalId('queued')?.message).toBe('ordinary')
         })
         await runAgy({ workingDirectory: '/tmp' })
+    })
+
+    it('isolates commands from neighboring prompts and never steers a command into an active turn', async () => {
+        const steer = vi.fn(async () => ({ steered: true }))
+        mocks.loop.mockImplementation(async ({ messageQueue, onSessionReady }) => {
+            onSessionReady({ setPermissionMode: vi.fn(), setModel: vi.fn(), setEffort: vi.fn(), pushKeepAlive: vi.fn(), steerQueuedMessage: steer })
+            const send = mocks.onUserMessage.mock.calls[0]![0]
+            send({ content: { text: 'before' } }, 'before')
+            send({ content: { text: '/usage', attachments: [{ path: '/tmp/input.txt' }] }, meta: { deliveryMode: 'steer' } }, 'usage')
+            send({ content: { text: 'after' } }, 'after')
+            expect((await messageQueue.waitForMessagesAndGetAsString())?.message).toBe('before')
+            expect(await messageQueue.waitForMessagesAndGetAsString()).toMatchObject({ message: '/usage', isolate: true })
+            expect((await messageQueue.waitForMessagesAndGetAsString())?.message).toBe('after')
+            expect(steer).not.toHaveBeenCalled()
+        })
+        await runAgy({ workingDirectory: '/tmp' })
+    })
+
+    it('applies a configuration command before later input while preserving earlier snapshots', async () => {
+        mocks.loop.mockImplementation(async ({ messageQueue }) => {
+            const send = mocks.onUserMessage.mock.calls[0]![0]
+            send({ content: { text: 'before' } }, 'before')
+            send({ content: { text: '/effort max' } }, 'effort')
+            send({ content: { text: 'after' } }, 'after')
+            expect(await messageQueue.waitForMessagesAndGetAsString()).toMatchObject({ message: 'before', mode: { effort: 'medium' } })
+            expect(await messageQueue.waitForMessagesAndGetAsString()).toMatchObject({ message: 'after', mode: { effort: 'max' } })
+            expect(mocks.consumed).toHaveBeenCalledWith(['effort'], { clearQueuedThinkingGrace: true })
+            expect(mocks.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('effort: max') }))
+        })
+        await runAgy({ model: 'gemini-4-argon-medium', workingDirectory: '/tmp' })
+    })
+
+    it('sends /plan task as an isolated native Plan prompt', async () => {
+        mocks.loop.mockImplementation(async ({ messageQueue }) => {
+            mocks.onUserMessage.mock.calls[0]![0]({ content: { text: '/plan research the API' } }, 'plan')
+            expect(await messageQueue.waitForMessagesAndGetAsString()).toMatchObject({ message: 'research the API', isolate: true, mode: { permissionMode: 'plan' } })
+            expect(mocks.consumed).not.toHaveBeenCalled()
+        })
+        await runAgy({ workingDirectory: '/tmp' })
+    })
+
+    it('keeps slash-prefixed Plan tasks out of both HAPI and native command dispatch', async () => {
+        mocks.loop.mockImplementation(async ({ messageQueue }) => {
+            mocks.onUserMessage.mock.calls[0]![0]({ content: { text: '/plan /clear' } }, 'plan')
+            const batch = await messageQueue.waitForMessagesAndGetAsString()
+            expect(batch?.mode.permissionMode).toBe('plan')
+            expect(batch?.message).toContain('/clear')
+            expect(batch?.message).not.toMatch(/^\s*\//)
+        })
+        await runAgy({ workingDirectory: '/tmp' })
+    })
+
+    it('allows cancelling input waiting behind a slow config command', async () => {
+        let release!: () => void
+        const blocked = new Promise<void>(resolve => { release = resolve })
+        mocks.loop.mockImplementation(async ({ messageQueue }) => {
+            mocks.listModels.mockImplementationOnce(async () => { await blocked; return { success: true, availableModels: catalog } })
+            const send = mocks.onUserMessage.mock.calls[0]![0]
+            send({ content: { text: '/effort max' } }, 'effort')
+            send({ content: { text: 'cancel this' } }, 'later')
+            expect(mocks.onCancelQueuedMessage.mock.calls[0]![0]('later')).toBe(true)
+            release()
+            await vi.waitFor(() => expect(mocks.consumed).toHaveBeenCalledWith(['effort'], { clearQueuedThinkingGrace: true }))
+            expect(messageQueue.size()).toBe(0)
+        })
+        await runAgy({ model: 'gemini-4-argon-medium', workingDirectory: '/tmp' })
     })
 })

@@ -17,10 +17,12 @@ export interface AgyProcess {
     readonly state: AgyTerminalState;
     readonly failure: Error | null;
     readonly revision: number;
+    readonly nativeStatus: AgyNativeStatus | null;
     start(): Promise<void>;
     refreshStatus(): Promise<void>;
     setMode(mode: PermissionMode): Promise<void>;
     submit(text: string, steer: boolean, beforeSubmit: () => Promise<void>): Promise<void>;
+    compact(): Promise<string>;
     respond(menu: AgyTerminalPermission, approved: boolean, revalidate: () => Promise<boolean>): Promise<void>;
     waitForChange(timeoutMs?: number): Promise<void>;
     close(): Promise<void>;
@@ -88,6 +90,7 @@ export class NativeAgyProcess implements AgyProcess {
     }
 
     get revision(): number { return this.screen.revision; }
+    get nativeStatus(): AgyNativeStatus | null { return this.status; }
 
     get permissionPending(): boolean {
         return this.sessionId !== null && this.status?.conversationId === this.sessionId && this.status.permissionPending;
@@ -243,33 +246,76 @@ export class NativeAgyProcess implements AgyProcess {
     }
 
     submit(text: string, steer: boolean, beforeSubmit: () => Promise<void>): Promise<void> {
+        return this.exclusive(() => this.pasteAndSubmit(text, steer, beforeSubmit));
+    }
+
+    private async pasteAndSubmit(text: string, steer: boolean, beforeSubmit: () => Promise<void>, command = false): Promise<void> {
+        const input = normalizeAgyInput(text);
+        const ready = () => this.state.kind === 'prompt' && this.state.busy === steer && this.state.editor === '';
+        if (!ready()) throw new Error(steer ? 'Antigravity cannot accept guidance while another native dialog owns input' : 'Antigravity input is not ready');
+        // Capture the durable receipt baseline under the same input lock.
+        await beforeSubmit();
+        if (!ready()) throw new Error('Antigravity input changed before submission');
+        const before = this.revision;
+        let entered = false;
+        try {
+            this.write(`\x1b[200~${input}\x1b[201~`);
+            await this.until(() => this.revision > before && (this.state.kind === 'prompt' || command && this.state.kind === 'command')
+                && this.state.editor !== null && this.state.editor !== '', 5_000,
+            'Antigravity did not accept the pasted message');
+            if (!(this.state.kind === 'prompt' || command && this.state.kind === 'command') || this.state.busy !== steer
+                || command && this.state.editor !== input) throw new Error('Antigravity input changed while pasting');
+            // Enter is deliberately a separate write after the editor paint.
+            // That paint confirms the paste, not durable message delivery.
+            entered = true;
+            this.write('\r');
+        } catch (error) {
+            // Never retry the paste: if Enter is uncertain, the caller holds
+            // the queue row for explicit user resolution. Closing also clears
+            // an unsubmitted editor so a later key cannot send it by accident.
+            this.failure = entered ? new AgyIndeterminateDeliveryError(String(error)) : error instanceof Error ? error : new Error(String(error));
+            this.changed();
+            throw this.failure;
+        }
+    }
+
+    compact(): Promise<string> {
         return this.exclusive(async () => {
-            const input = normalizeAgyInput(text);
-            const ready = () => this.state.kind === 'prompt' && this.state.busy === steer && this.state.editor === '';
-            if (!ready()) throw new Error(steer ? 'Antigravity cannot accept guidance while another native dialog owns input' : 'Antigravity input is not ready');
-            // Capture the durable receipt baseline under the same input lock.
-            await beforeSubmit();
-            if (!ready()) throw new Error('Antigravity input changed before submission');
-            const before = this.revision;
-            let entered = false;
-            try {
-                this.write(`\x1b[200~${input}\x1b[201~`);
-                await this.until(() => this.revision > before && this.state.kind === 'prompt'
-                    && this.state.editor !== null && this.state.editor !== '', 5_000,
-                'Antigravity did not accept the pasted message');
-                if (this.state.kind !== 'prompt' || this.state.busy !== steer) throw new Error('Antigravity input changed while pasting');
-                // Enter is deliberately a separate write after the editor paint.
-                // That paint confirms the paste, not durable message delivery.
-                entered = true;
-                this.write('\r');
-            } catch (error) {
-                // Never retry the paste: if Enter is uncertain, the caller holds
-                // the queue row for explicit user resolution. Closing also clears
-                // an unsubmitted editor so a later key cannot send it by accident.
-                this.failure = entered ? new AgyIndeterminateDeliveryError(String(error)) : error instanceof Error ? error : new Error(String(error));
-                this.changed();
-                throw this.failure;
+            if (this.state.kind !== 'prompt' || this.state.busy || this.state.editor !== '') throw new Error('Antigravity must be idle before compacting');
+            // A prewarmed terminal has no native conversation until its first
+            // prompt. Its dynamic /compact command may not be registered yet.
+            // A zero usage snapshot alone cannot make this decision: it can
+            // trail a real completed turn while the status hook catches up.
+            if (!this.sessionId) return 'Nothing to compact yet.';
+            const previous = readCompactResult(this.state);
+            await this.pasteAndSubmit('/compact', false, async () => {}, true);
+            const enteredAt = Date.now();
+            let sawBusy = false;
+            let idleSince: number | null = null;
+            while (Date.now() - enteredAt < 180_000) {
+                this.check();
+                const state = this.state;
+                if (state.lines.some((line, index) => /^> Unknown command: \/compact\s*$/.test(line)
+                    && /^─{10,}\s*$/.test(state.lines[index - 1] ?? '') && /^─{10,}\s*$/.test(state.lines[index + 1] ?? ''))) {
+                    this.failure = new Error('Antigravity does not expose /compact for this conversation.');
+                    throw this.failure;
+                }
+                sawBusy ||= state.kind === 'prompt' && state.busy && state.lines.some(line => /Compacting conversation[….]/.test(line));
+                const result = readCompactResult(state);
+                const idle = state.kind === 'prompt' && !state.busy && state.editor === '';
+                if (result && (sawBusy || result !== previous || result === 'Nothing to compact yet.') && idle) return result;
+                if (sawBusy && idle) {
+                    idleSince ??= Date.now();
+                    if (Date.now() - idleSince >= 750) throw new Error('Antigravity stopped compacting without reporting a completion result. Check /context before retrying.');
+                } else idleSince = null;
+                if (state.kind === 'permission' || state.kind === 'login' || state.kind === 'trust') {
+                    this.failure = new Error('Antigravity compaction requires an unexpected native interaction');
+                    throw this.failure;
+                }
+                await this.waitForChange();
             }
+            this.failure = new Error('Antigravity did not confirm compaction within 3 minutes');
+            throw this.failure;
         });
     }
 
@@ -323,6 +369,20 @@ export class NativeAgyProcess implements AgyProcess {
         })();
         return this.closing;
     }
+}
+
+function readCompactResult(state: AgyTerminalState): string | null {
+    const lines = state.lines;
+    const footer = state.footer ? lines.lastIndexOf(state.footer) : -1;
+    if (state.kind === 'prompt' && state.editor === '' && footer >= 2
+        && /^> Nothing to compact yet\.\s*$/.test(lines[footer - 2]!)) return 'Nothing to compact yet.';
+    let start = lines.length - 1;
+    while (start >= 0 && !/^> \/compact\s*$/.test(lines[start]!)) start--;
+    if (start < 0) return null;
+    const result = lines.slice(start + 1);
+    const completed = result.findIndex(line => /^─+ Conversation compacted ─+\s*$/.test(line));
+    if (completed >= 0) return ['Conversation compacted.', result[completed + 1]?.trim()].filter(Boolean).join('\n\n');
+    return null;
 }
 
 export function createAgyProcess(path: string, mode: AgyMode, sessionId: string | null): AgyProcess {

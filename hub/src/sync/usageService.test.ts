@@ -311,6 +311,69 @@ describe('usage service', () => {
         store.close()
     })
 
+    it('does not count Antigravity context snapshots as billable usage or requests', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession(
+            'agy-context-usage-test',
+            { path: '/tmp', host: 'test', flavor: 'agy' },
+            null,
+            'default'
+        )
+        const snapshots = () => {
+            for (const contextTokens of [10_034, 10_034, 1_000, 0]) {
+                addAgentMessage(store, session.id, {
+                    type: 'codex',
+                    data: {
+                        type: 'token_count',
+                        model: 'Gemini 3.8 Flash (High)',
+                        usageSchema: 'hapi.usage.v1',
+                        inputTokenSemantics: 'includes-cache',
+                        info: {
+                            total: { inputTokens: 0, outputTokens: 0 },
+                            contextTokens,
+                            modelContextWindow: 1_048_576
+                        }
+                    }
+                })
+            }
+        }
+        try {
+            snapshots()
+            const empty = getUsageSummary(store, 'default', 'all')
+            expect(empty.totals).toEqual({
+                inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0,
+                totalTokens: 0, uncachedTokens: 0, requests: 0, sessions: 0
+            })
+            expect(empty.byAgent).toEqual([])
+            expect(empty.byModel).toEqual([])
+            expect(empty.daily).toEqual([])
+
+            addAgentMessage(store, session.id, {
+                type: 'codex',
+                data: {
+                    type: 'token_count',
+                    model: 'Gemini 3.8 Flash (High)',
+                    usageSchema: 'hapi.usage.v1',
+                    inputTokenSemantics: 'includes-cache',
+                    info: { total: { inputTokens: 150, outputTokens: 20, cachedInputTokens: 40 } }
+                }
+            })
+            const billed = getUsageSummary(store, 'default', 'all')
+            expect(billed.totals).toEqual({
+                inputTokens: 150, outputTokens: 20, cacheReadTokens: 40, cacheCreationTokens: 0,
+                totalTokens: 170, uncachedTokens: 130, requests: 1, sessions: 1
+            })
+            snapshots()
+            const after = getUsageSummary(store, 'default', 'all')
+            expect(after.totals).toEqual(billed.totals)
+            expect(after.byAgent).toEqual(billed.byAgent)
+            expect(after.byModel).toEqual(billed.byModel)
+            expect(after.daily).toEqual(billed.daily)
+        } finally {
+            store.close()
+        }
+    })
+
     it('normalizes cumulative total and last snapshots with the same declared semantics', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession(

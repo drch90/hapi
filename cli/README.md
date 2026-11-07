@@ -38,6 +38,8 @@ Choose a supported coding agent from your terminal and control its sessions remo
 - `hapi agy` - Start Antigravity through its native interactive terminal (agy 1.5.2+, remote-only). Supports queued-message Steer and explicit Send & steer; ordinary sends remain queued.
   Choose `request-review`, native intelligent `auto`, `plan`, or `always-proceed` at launch or in session settings. Unresolved native permissions appear in HAPI's approval UI.
   HAPI prewarms and reuses the process, streams replies, and confirms input from the native conversation database. Model/effort or bypass changes restart the same conversation; ordinary mode changes use native mode cycling.
+  Use `/help`, `/usage` (`/quota`), `/context`, `/compact`, `/clear` (`/new`), `/status`, `/model`, `/effort`, `/plan`, `/auto`, `/default`, and `/permissions`. `/clear` starts new native context while retaining HAPI chat history. Configuration commands use the same session settings as the UI; `/plan <task>` submits that task in Plan mode.
+  Context occupancy and model quotas come from native status snapshots. Context snapshots update after resume and after replies, including delayed final updates, and do not count as additional billable tokens. Other terminal-only commands return an explicit unsupported-command response.
 - `hapi pi` - Start Pi mode (remote-only).
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.

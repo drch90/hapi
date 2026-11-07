@@ -41,6 +41,20 @@ describe('Antigravity native terminal state', () => {
         expect(readAgyTerminalState(screen)).toMatchObject({ kind: 'prompt', editor: 'Run exactly the requested command.', editing: true });
     });
 
+    it('recognizes slash completion separately from model work or permission input', () => {
+        const screen = paint([separator, '> /compact', separator, '> /compact  Compact the conversation', '',
+            '  ↑/↓ Navigate · enter Select · tab Complete', 'esc to cancel  Model'], { row: 1, col: 10 });
+        expect(readAgyTerminalState(screen)).toMatchObject({ kind: 'command', editor: '/compact', busy: false });
+        expect(readAgyTerminalState(paint(['> /compact', '↑/↓ Navigate · enter Select · tab Complete'])).kind).toBe('other');
+    });
+
+    it('recognizes the native empty-compaction notice with its cursor in the footer, keeping identical pasted user text', () => {
+        const lines = [separator, '> Nothing to compact yet.', separator, '? for shortcuts  Model'];
+        expect(readAgyTerminalState(paint(lines, { row: 3, col: 15 })).editor).toBe('');
+        const pasted = [...lines.slice(0, 3), '                                             Model'];
+        expect(readAgyTerminalState(paint(pasted, { row: 1, col: 24 })).editor).toBe('Nothing to compact yet.');
+    });
+
     it('does not let prose mentioning shortcuts or modes become a prompt', () => {
         const screen = paint(['The answer includes esc to cancel and auto · Model', '> quoted user input']);
         expect(readAgyTerminalState(screen).kind).toBe('other');

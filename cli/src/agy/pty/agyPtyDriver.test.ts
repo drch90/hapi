@@ -9,6 +9,7 @@ import type { AgyProcess } from './nativeProcess';
 import type { AgyNativeStep } from './transcript';
 import type { AgyTerminalState } from './terminalState';
 import { AgyIndeterminateDeliveryError } from './delivery';
+import { parseAgyNativeStatus } from './nativeStatus';
 
 const MODE: AgyMode = { permissionMode: 'request-review' };
 const ID = '42c2e6b6-efca-4b44-85bb-746e6ef993ad';
@@ -34,10 +35,12 @@ class FakeProcess implements AgyProcess {
     model: string | null = 'Native model';
     failure: Error | null = null;
     revision = 1;
+    nativeStatus = parseAgyNativeStatus('{"agent_state":"idle"}');
     state: AgyTerminalState = { kind: 'prompt', busy: false, mode: 'default', editor: '', footer: '? for shortcuts', lines: [] };
     readonly inputs: Array<{ text: string; steer: boolean }> = [];
     readonly start = vi.fn(async () => {});
     readonly refreshStatus = vi.fn(async () => {});
+    readonly compact = vi.fn(async () => 'Conversation compacted.');
     readonly close = vi.fn(async () => { this.failure = new Error('Native stopped'); });
     readonly waitForChange = async () => sleep();
     readonly setMode = vi.fn(async (mode: AgyMode['permissionMode']) => { this.state.mode = mode === 'auto' || mode === 'plan' ? mode : 'default'; });
@@ -86,6 +89,91 @@ function harness(options: { fresh?: boolean; configure?: (native: FakeProcess) =
 afterEach(async () => { for (const stop of cleanup.splice(0)) await stop(); });
 
 describe('Antigravity native driver', () => {
+    it('answers usage queries without model input, durable prompt receipts, or terminal replacement', async () => {
+        const h = harness({ configure: native => {
+            native.nativeStatus = parseAgyNativeStatus(JSON.stringify({ agent_state: 'idle', quota: {
+                'gemini-5h': { remaining_fraction: 0.5, reset_time: '2026-11-07T10:00:00Z' },
+            } }));
+        } });
+        h.queue.pushIsolated('/usage', MODE, 'usage');
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.client.emitMessagesConsumed).toHaveBeenCalledExactlyOnceWith(['usage']);
+        expect(h.natives[0]!.submit).not.toHaveBeenCalled();
+        expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'message', message: expect.stringContaining('50.00%') }));
+        expect(h.factory).toHaveBeenCalledOnce();
+        expect(h.natives[0]!.close).not.toHaveBeenCalled();
+    });
+
+    it('keeps a healthy terminal usable after an unsupported command', async () => {
+        const h = harness();
+        h.queue.pushIsolated('/logout', MODE, 'unsupported');
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.client.sendSessionEvent).toHaveBeenCalledWith({ type: 'error', message: expect.stringContaining('/help') });
+        expect(h.natives[0]!.close).not.toHaveBeenCalled();
+        expect(h.client.sendSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'abort-restore' }));
+        h.queue.push('continue', MODE, 'continue');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(1));
+        h.acknowledge('continue'); h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(2));
+        expect(h.factory).toHaveBeenCalledOnce();
+    });
+
+    it('compacts after earlier work and then delivers the following prompt on the same native conversation', async () => {
+        const h = harness();
+        h.queue.push('first', MODE, 'first');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(1));
+        h.acknowledge('first');
+        h.queue.pushIsolated('/compact', MODE, 'compact');
+        h.queue.push('next', MODE, 'next');
+        expect(h.natives[0]!.compact).not.toHaveBeenCalled();
+        h.finish();
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(2));
+        expect(h.natives[0]!.compact).toHaveBeenCalledOnce();
+        expect(h.natives[0]!.inputs[1]!.text).toBe('next');
+        expect(h.client.emitMessagesConsumed).toHaveBeenCalledWith(['compact']);
+        expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'message', message: 'Conversation compacted.' }));
+        h.acknowledge('next'); h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.factory).toHaveBeenCalledOnce();
+    });
+
+    it('clears the native context without deleting or replaying HAPI history', async () => {
+        const h = harness();
+        await waitFor(() => expect(h.client.emitSessionReady).toHaveBeenCalledOnce());
+        h.queue.pushIsolated('/clear', MODE, 'clear');
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.natives[0]!.close).toHaveBeenCalled();
+        expect(h.transcript.close).toHaveBeenCalledOnce();
+        expect(h.factory).toHaveBeenLastCalledWith('/tmp', MODE, null);
+        expect(h.session.sessionId).toBeNull();
+        const clearMetadata = h.client.updateMetadata.mock.calls.at(-1)![0];
+        expect(clearMetadata({ agySessionId: ID, path: '/tmp', name: 'Keep history' })).toEqual({ path: '/tmp', name: 'Keep history' });
+        expect(h.client.sendAgySessionMessage).not.toHaveBeenCalled();
+        expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'message', message: expect.stringContaining('history is preserved') }));
+    });
+
+    it('publishes resumed and trailing idle context snapshots once with zero billable tokens', async () => {
+        const snapshot = (tokens: number) => parseAgyNativeStatus(JSON.stringify({ agent_state: 'idle',
+            context_window: { context_window_size: 100_000, used_percentage: tokens / 1000 } }));
+        const h = harness({ configure: native => { native.nativeStatus = snapshot(50_000); } });
+        const usage = () => h.client.sendAgentMessage.mock.calls.map(([message]) => message).filter(message => message?.type === 'token_count');
+        await waitFor(() => expect(usage()).toHaveLength(1));
+        expect(usage()[0]).toMatchObject({ info: { total: { inputTokens: 0, outputTokens: 0 }, contextTokens: 50_000, modelContextWindow: 100_000 } });
+        h.queue.push('short reply', MODE, 'short');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(1));
+        h.acknowledge('short reply'); h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        // The hook can arrive after the driver's final 150ms idle drain.
+        h.natives[0]!.nativeStatus = snapshot(12_000);
+        await waitFor(() => expect(usage()).toHaveLength(2));
+        expect(usage()[1].info.contextTokens).toBe(12_000);
+        await sleep(10);
+        expect(usage()).toHaveLength(2);
+        h.natives[0]!.nativeStatus = snapshot(0);
+        await waitFor(() => expect(usage()).toHaveLength(3));
+        expect(usage()[2].info.contextTokens).toBe(0);
+    });
+
     it('prewarms a fresh terminal before its first message creates the native UUID', async () => {
         const h = harness({ fresh: true });
         await waitFor(() => expect(h.natives).toHaveLength(1));
