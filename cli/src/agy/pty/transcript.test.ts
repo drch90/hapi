@@ -50,6 +50,31 @@ describe('native Antigravity trajectory', () => {
         expect(matchesAgyReceipt({ ...step, invalidated: true }, 'hello', 'plan')).toBe(false);
     });
 
+    it.each([
+        { input: 'hello\n', receipt: 'hello', mode: 'auto' },
+        { input: '\n  hello\n    world\n\n', receipt: 'hello\n    world', mode: 'default' },
+        { input: '  hello\r\n    world\r\n', receipt: 'hello\n    world', mode: 'auto' },
+        { input: 'hello\n    world', receipt: '\nhello\r\n    world\n', mode: 'default' },
+        { input: '\n  hello\n    world\n\n', receipt: '/plan hello\n    world', mode: 'plan' },
+        { input: '\n  hello\n    world\n\n', receipt: '/plan \n  hello\n    world', mode: 'plan' },
+        { input: `  ${'line\n'.repeat(20)}\n`, receipt: `  ${'line\n'.repeat(20).trimEnd()}`, mode: 'auto' },
+    ])('matches native boundary whitespace normalization: $mode, $input', ({ input, receipt, mode }) => {
+        const step = decode(number(1, 14), number(4, 3), message(19, string(2, receipt)));
+        expect(matchesAgyReceipt(step, input, mode)).toBe(true);
+    });
+
+    it.each([
+        { input: 'hello world', receipt: 'hello  world', mode: 'auto' },
+        { input: 'hello\n    world', receipt: 'hello\nworld', mode: 'auto' },
+        { input: 'hello\nworld', receipt: 'hello world', mode: 'auto' },
+        { input: 'hello\nworld\n', receipt: 'hello', mode: 'auto' },
+        { input: 'hello\n', receipt: '/plan hello', mode: 'auto' },
+        { input: ' \n', receipt: '', mode: 'auto' },
+    ])('rejects receipts with changed or empty content: $input, $receipt', ({ input, receipt, mode }) => {
+        const step = decode(number(1, 14), number(4, 3), message(19, string(2, receipt)));
+        expect(matchesAgyReceipt(step, input, mode)).toBe(false);
+    });
+
     it('keeps unknown interactions unsupported and handles failed tools without output', () => {
         expect(decode(message(56, message(23))).permission).toMatchObject({ kind: 'unsupported', variant: 23 });
         expect(decode(number(4, 7), message(31, string(1, 'permission denied')))).toMatchObject({ terminal: true, failed: true, error: 'permission denied' });

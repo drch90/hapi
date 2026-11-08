@@ -145,8 +145,19 @@ export function decodeAgyStep(row: AgyNativeRow): AgyNativeStep {
     };
 }
 
+function normalizeReceiptText(text: string): string {
+    // The native editor normalizes CRLF/CR, removes trailing pasted newlines,
+    // and trims input before expanding large-paste placeholders. Compare the
+    // full content with boundary whitespace normalized, preserving its body.
+    return text.replace(/\r\n?/g, '\n').trim();
+}
+
 export function matchesAgyReceipt(step: AgyNativeStep, text: string, mode: string): boolean {
-    return step.type === 14 && !step.invalidated && (step.userText === text || mode === 'plan' && step.userText === `/plan ${text}`);
+    if (step.type !== 14 || step.invalidated) return false;
+    const expected = normalizeReceiptText(text);
+    const received = normalizeReceiptText(step.userText);
+    return expected !== '' && (received === expected || mode === 'plan' && received.startsWith('/plan ')
+        && normalizeReceiptText(received.slice('/plan '.length)) === expected);
 }
 
 export interface AgyTranscriptSource {

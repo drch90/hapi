@@ -86,7 +86,10 @@ function harness(options: { fresh?: boolean; configure?: (native: FakeProcess) =
     cleanup.push(async () => { await driver.kill(); queue.close(); session.stopKeepAlive(); await launched; });
     return { driver, client, session, queue, transcript, natives, factory, handlers, readyCount, acknowledge, finish, state: () => state };
 }
-afterEach(async () => { for (const stop of cleanup.splice(0)) await stop(); });
+afterEach(async () => {
+    try { for (const stop of cleanup.splice(0)) await stop(); }
+    finally { vi.restoreAllMocks(); }
+});
 
 describe('Antigravity native driver', () => {
     it('answers usage queries without model input, durable prompt receipts, or terminal replacement', async () => {
@@ -210,6 +213,32 @@ describe('Antigravity native driver', () => {
         expect(h.client.emitMessagesConsumed).toHaveBeenLastCalledWith(['two']);
     });
 
+    it('keeps following a thinking turn past the receipt deadline after native paste normalization', async () => {
+        const h = harness();
+        const prompt = '\n  Check the receipt\n    and preserve indentation\n\n';
+        h.queue.push(prompt, MODE, 'one');
+        await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
+        h.acknowledge(prompt.trim());
+        const index = h.transcript.append({ type: 15, status: 8, terminal: false, thinking: 'Checking the request' });
+        await waitFor(() => expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'reasoning', message: 'Checking the request' })));
+        expect(h.client.emitMessagesConsumed).toHaveBeenCalledExactlyOnceWith(['one']);
+
+        const reads = h.transcript.read.mock.calls.length;
+        const now = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 31_000);
+        await waitFor(() => expect(h.transcript.read.mock.calls.length).toBeGreaterThan(reads));
+        expect(h.natives[0]!.close).not.toHaveBeenCalled();
+        expect(h.client.emitSteerIndeterminate).not.toHaveBeenCalled();
+        expect(h.client.sendSessionEvent).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+        clock.mockRestore();
+
+        h.transcript.update(index, { status: 3, terminal: true });
+        h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.client.emitMessagesConsumed).toHaveBeenCalledOnce();
+        expect(h.factory).toHaveBeenCalledOnce();
+    });
+
     it('keeps a running command and later queue intact while native Steer receives guidance', async () => {
         const h = harness();
         h.queue.push('original', { permissionMode: 'auto' }, 'one');
@@ -218,10 +247,11 @@ describe('Antigravity native driver', () => {
         const toolIndex = h.transcript.append({ type: 132, status: 2, terminal: false,
             tool: { id: 'real-call', name: 'run_command', input: { CommandLine: 'sleep 15' }, summary: '', output: '' } });
         await waitFor(() => expect(h.state().steeringActive).toBe(true));
-        h.queue.push('say STEERED_DONE', MODE, 'guide');
+        const guidance = '\n  say STEERED_DONE\n\n';
+        h.queue.push(guidance, MODE, 'guide');
         h.queue.push('later', MODE, 'later');
         expect(await h.session.steerQueuedMessage!('guide')).toEqual({ steered: true });
-        expect(h.natives[0]!.inputs[1]).toEqual({ text: 'say STEERED_DONE', steer: true });
+        expect(h.natives[0]!.inputs[1]).toEqual({ text: guidance, steer: true });
         expect(h.client.emitMessagesConsumed).not.toHaveBeenCalledWith(['guide'], expect.anything());
         h.acknowledge('say STEERED_DONE');
         await waitFor(() => expect(h.client.emitMessagesConsumed).toHaveBeenCalledWith(['guide'], { steered: true }));
