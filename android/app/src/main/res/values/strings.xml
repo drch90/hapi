@@ -85,6 +85,7 @@
     <string name="new_session_agent">Agent</string>
     <string name="new_session_agent_availability_loading">Checking installed Agents…</string>
     <string name="new_session_retry">Retry</string>
+    <string name="new_session_refresh_models">Refresh models</string>
     <string name="new_session_model">Model</string>
     <string name="new_session_effort">Effort</string>
     <string name="new_session_reasoning_effort">Reasoning effort</string>

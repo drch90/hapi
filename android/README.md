@@ -92,6 +92,13 @@ differences, pairing and features currently available through the web.
   creation also accepts a manual model ID or the configured default. Settings
   changes are idle-only and wait for server confirmation. Native command
   suggestions and live steering use the same chat and durable queue controls.
+- **Antigravity:** creation and session settings group the machine's native
+  model variants and offer only their supported reasoning efforts. Model changes
+  preserve a compatible effort or clear it in the same request. Request Review,
+  Auto, Plan and Always Proceed are available at creation and in chat. Steering
+  follows native readiness; slash commands come from the runner. Streamed reply
+  snapshots update one response, and native context snapshots replace occupancy,
+  including after compaction or clearing.
 - **Incoming shares:** Android Share → HAPI accepts single/multiple files,
   captions, text and links. Choose a session on the current or another paired
   hub; stopped sessions require explicit restore before upload. Content is
@@ -119,8 +126,9 @@ only a JDK.
 
 ```sh
 cd android
-./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest
-./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --continue --console=plain
+./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug --continue --console=plain
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
 ./gradlew :app:installDebug                  # connected device
 ./gradlew :app:connectedDebugAndroidTest     # emulator/device instrumentation
 ```
@@ -385,9 +393,10 @@ Dependency direction: `:app` → `:core:data` → `:core:protocol`.
 
 ## Internationalization
 
-The app ships English (default) and Simplified Chinese
-(`app/src/main/res/values-zh-rCN/strings.xml`). App UI strings
-live in resources; both files carry the **same key set** (lint
+The app ships English (default), Simplified Chinese
+(`app/src/main/res/values-zh-rCN/strings.xml`) and Russian
+(`app/src/main/res/values-ru/strings.xml`). App UI strings
+live in resources; all three files carry the **same key set** (lint
 `MissingTranslation` is the gate).
 
 **Adding a string**
@@ -398,7 +407,8 @@ live in resources; both files carry the **same key set** (lint
    `tool_` for tool-card titles). Dynamic values use positional format args
    (`%1$s`, `%2$d`); count-dependent copy uses explicit `_one`/`_many` keys
    (the deliberate house style — no `<plurals>`).
-2. Add the zh-CN twin to `values-zh-rCN/strings.xml`. **Terminology source of
+2. Add matching translations to `values-zh-rCN/strings.xml` and
+   `values-ru/strings.xml`. **Chinese terminology source of
    truth is the web corpus** `web/src/lib/locales/zh-CN.ts` — reuse its
    product terms (会话 session, 机器 machine, 权限模式 permission mode,
    工作树 worktree, 草稿夹 scratchlist, 语音输入 dictation, 用量 usage,

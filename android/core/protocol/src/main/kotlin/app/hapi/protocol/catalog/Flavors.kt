@@ -62,7 +62,7 @@ enum class FlavorCapability {
 
 object Flavors {
     private val CAPS: Map<String, Set<FlavorCapability>> = mapOf(
-        "agy" to setOf(FlavorCapability.ModelChange),
+        "agy" to setOf(FlavorCapability.ModelChange, FlavorCapability.Effort),
         "claude" to setOf(FlavorCapability.ModelChange, FlavorCapability.Effort),
         "gemini" to setOf(FlavorCapability.ModelChange),
         "kimi" to setOf(FlavorCapability.ModelChange),

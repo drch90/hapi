@@ -118,6 +118,7 @@ fun NewSessionScreen(
             onServiceTierSelected = viewModel::setServiceTier,
             onCreate = viewModel::create,
             onRefreshHermesModels = viewModel::refreshHermesModels,
+            onRefreshAgyModels = viewModel::refreshAgyModels,
         )
     }
     if (directoryBrowser.open) {
@@ -158,6 +159,7 @@ internal fun NewSessionContent(
     onServiceTierSelected: (String) -> Unit,
     onCreate: () -> Unit,
     onRefreshHermesModels: () -> Unit = {},
+    onRefreshAgyModels: () -> Unit = {},
 ) {
     val form = state.form
     Column(
@@ -194,12 +196,20 @@ internal fun NewSessionContent(
                 onSelect = onModelSelected,
             )
         }
+        if (form.agent == "agy") {
+            state.modelsWarning?.let { warning ->
+                Text(warning, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            TextButton(onClick = onRefreshAgyModels, enabled = !state.isSpawning && !state.modelsLoading) {
+                Text(stringResource(R.string.new_session_refresh_models))
+            }
+        }
         state.effortOptions?.let { options ->
             OptionDropdown(
                 label = stringResource(R.string.new_session_effort),
                 options = options,
                 selected = form.effort,
-                enabled = !state.isSpawning,
+                enabled = !state.isSpawning && (form.agent != "agy" || !state.modelsLoading && state.modelsError == null),
                 onSelect = onEffortSelected,
             )
         }

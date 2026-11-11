@@ -414,6 +414,17 @@ class HapiApi internal constructor(
         setModelElement(sessionId, model?.let(::JsonPrimitive) ?: JsonNull)
     }
 
+    override suspend fun setModelWithEffort(sessionId: String, model: String?, effort: String?) {
+        request<Unit>(
+            "POST",
+            url("api", "sessions", sessionId, "model").build(),
+            jsonBody(buildJsonObject {
+                put("model", model?.let(::JsonPrimitive) ?: JsonNull)
+                put("effort", effort?.let(::JsonPrimitive) ?: JsonNull)
+            }),
+        )
+    }
+
     /** `POST /api/sessions/:id/model` — `{provider, modelId}` variant (pi). */
     override suspend fun setProviderModel(sessionId: String, provider: String, modelId: String) = setModel(sessionId, provider, modelId)
 
@@ -448,7 +459,7 @@ class HapiApi internal constructor(
         )
     }
 
-    /** `POST /api/sessions/:id/effort` (claude, grok, pi) — null clears. */
+    /** `POST /api/sessions/:id/effort` (agy, claude, grok, pi) — null clears. */
     override suspend fun setEffort(sessionId: String, effort: String?) {
         request<Unit>(
             "POST",
@@ -490,15 +501,20 @@ class HapiApi internal constructor(
      */
     override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean): app.hapi.protocol.wire.AgentModelDirectory {
         require(flavor in setOf("pi", "opencode", "grok", "copilot", "cursor", "agy"))
-        val target = if (flavor == "agy") url("api", "machines", requireNotNull(machineId), "agy-models")
-            else url("api", "sessions", sessionId, "$flavor-models")
-        if (refresh && flavor == "agy") target.addQueryParameter("refresh", "true")
+        if (flavor == "agy") return getMachineAgyModels(requireNotNull(machineId), refresh)
+        val target = url("api", "sessions", sessionId, "$flavor-models")
         val response: app.hapi.protocol.wire.AgentModelDirectory = request("GET", target.build())
         if (flavor != "cursor" || machineId == null || !response.success) return response
         val machine: app.hapi.protocol.wire.AgentModelDirectory? = try {
             request("GET", url("api", "machines", machineId, "cursor-models").build())
         } catch (cancel: kotlinx.coroutines.CancellationException) { throw cancel } catch (_: Exception) { null }
         return response.copy(cliModelSkus = (response.cliModelSkus + machine?.cliModelSkus.orEmpty() + machine?.availableModels.orEmpty()).distinctBy { it.modelId })
+    }
+
+    suspend fun getMachineAgyModels(machineId: String, refresh: Boolean = false): app.hapi.protocol.wire.AgentModelDirectory {
+        val target = url("api", "machines", machineId, "agy-models")
+        if (refresh) target.addQueryParameter("refresh", "true")
+        return request("GET", target.build())
     }
 
     override suspend fun getAgentEffortDirectory(sessionId: String, flavor: String): app.hapi.protocol.wire.AgentEffortDirectory {

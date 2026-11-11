@@ -33,6 +33,36 @@ import okio.Buffer
 
 /** Request/response shapes of [HapiApi] against MockWebServer. */
 class HapiApiTest {
+    @Test
+    fun `Antigravity model and effort change atomically including explicit clearing`() = runBlocking {
+        for (effort in listOf("high", null)) {
+            server.enqueue(ok("{}"))
+            session.api.setModelWithEffort("s1", "gemini-4-argon", effort)
+            val request = server.takeRequest()
+            assertEquals("/api/sessions/s1/model", request.path)
+            assertEquals("POST", request.method)
+            val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+            assertEquals(setOf("model", "effort"), body.keys)
+            assertEquals("gemini-4-argon", body["model"]?.jsonPrimitive?.content)
+            assertEquals(effort?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: JsonNull, body["effort"])
+        }
+        server.enqueue(ok("{}"))
+        session.api.setModelWithEffort("s1", null, null)
+        assertEquals(buildJsonObject {
+            put("model", JsonNull)
+            put("effort", JsonNull)
+        }, lastRequestBody())
+    }
+
+    @Test
+    fun `Antigravity creation discovers machine models and preserves stale catalog warnings`() = runBlocking {
+        server.enqueue(ok("""{"success":true,"availableModels":[{"modelId":"gemini-4-argon-high","name":"Gemini 4 Argon (High)"}],"error":"Sign in again"}"""))
+        val catalog = session.api.getMachineAgyModels("m1")
+        assertEquals("/api/machines/m1/agy-models", server.takeRequest().path)
+        assertEquals("gemini-4-argon-high", catalog.availableModels.single().modelId)
+        assertEquals("Sign in again", catalog.error)
+    }
+
     @Test fun `agent directories and mode controls use the native client contract`() = runBlocking {
         for (flavor in listOf("pi", "opencode", "grok", "copilot")) {
             server.enqueue(ok("""{"success":true,"availableModels":[{"modelId":"custom"}]}"""))

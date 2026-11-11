@@ -4,6 +4,7 @@ import app.hapi.data.api.HapiApi
 import app.hapi.protocol.wire.CodexModelsResponse
 import app.hapi.protocol.wire.HermesModelsResponse
 import app.hapi.protocol.wire.AgentAvailabilityResponse
+import app.hapi.protocol.wire.AgentModelDirectory
 import app.hapi.protocol.wire.GrokModelsResponse
 import app.hapi.protocol.wire.MachineListDirectoryResponse
 import app.hapi.protocol.wire.MachinePathsExistsResponse
@@ -33,6 +34,7 @@ interface NewSessionGateway {
 
     /** `GET /api/machines/:id/codex-models` (RPC-wrapped; 503 `rpc_target_missing` = hide picker). */
     suspend fun codexModels(machineId: String): CodexModelsResponse
+    suspend fun agyModels(machineId: String, refresh: Boolean = false): AgentModelDirectory
     suspend fun hermesModels(machineId: String, cwd: String, refresh: Boolean = false): HermesModelsResponse
 
     /** `GET /api/machines/:id/grok-models?cwd=` (RPC-wrapped) — Auto-mode capability probe. */
@@ -61,6 +63,9 @@ class ApiNewSessionGateway(private val api: HapiApi) : NewSessionGateway {
 
     override suspend fun codexModels(machineId: String): CodexModelsResponse =
         api.getMachineCodexModels(machineId)
+
+    override suspend fun agyModels(machineId: String, refresh: Boolean): AgentModelDirectory =
+        api.getMachineAgyModels(machineId, refresh)
 
     override suspend fun grokModels(machineId: String, cwd: String): GrokModelsResponse =
         api.getMachineGrokModelsForCwd(machineId, cwd)

@@ -7,6 +7,8 @@ import app.hapi.data.store.MachineListStore
 import app.hapi.protocol.catalog.AgentFlavor
 import app.hapi.protocol.wire.AgentAvailabilityEntry
 import app.hapi.protocol.wire.AgentAvailabilityResponse
+import app.hapi.protocol.wire.AgentModelDirectory
+import app.hapi.protocol.wire.AgentModelEntry
 import app.hapi.protocol.wire.CodexModelSummary
 import app.hapi.protocol.wire.CodexModelsResponse
 import app.hapi.protocol.wire.GrokModelsResponse
@@ -57,6 +59,9 @@ private class FakeGateway : NewSessionGateway {
     var spawnResult: SpawnResponse = SpawnResponse(type = "success", sessionId = "s-new")
     var codexResult: CodexModelsResponse = CodexModelsResponse(success = true, models = emptyList())
     var codexThrows: Exception? = null
+    var agyResult = AgentModelDirectory(success = true)
+    val agyCalls = mutableListOf<Pair<String, Boolean>>()
+    var agyHandler: (suspend (String, Boolean) -> AgentModelDirectory)? = null
     var grokResult = GrokModelsResponse(success = true)
     var grokThrows: Exception? = null
     var availabilityResult = AgentAvailabilityResponse(
@@ -100,6 +105,11 @@ private class FakeGateway : NewSessionGateway {
         codexCalls.add(machineId)
         codexThrows?.let { throw it }
         return codexResult
+    }
+
+    override suspend fun agyModels(machineId: String, refresh: Boolean): AgentModelDirectory {
+        agyCalls.add(machineId to refresh)
+        return agyHandler?.invoke(machineId, refresh) ?: agyResult
     }
     var hermesResult = app.hapi.protocol.wire.HermesModelsResponse(success = true, availableModels = emptyList())
     val hermesCalls = mutableListOf<Pair<String, String>>()
@@ -178,6 +188,24 @@ private fun encode(request: SpawnSessionRequest): JsonObject =
 // ---------------------------------------------------- spawn body exactness --
 
 class SpawnBodyTest {
+    @Test
+    fun `Antigravity sends native model effort and permission choices without yolo`() {
+        for (mode in listOf("request-review", "auto", "plan", "always-proceed")) {
+            val form = NewSessionForm(directory = "/repo", agent = "agy", model = "gemini-4-argon",
+                effort = "high", permissionMode = mode, yolo = true)
+            val body = encode(NewSessionLogic.buildSpawnRequest(form, false))
+            assertEquals(setOf("directory", "agent", "model", "effort", "permissionMode", "sessionType"), body.keys)
+            assertEquals("gemini-4-argon", body["model"]!!.jsonPrimitive.content)
+            assertEquals("high", body["effort"]!!.jsonPrimitive.content)
+            assertEquals(mode, body["permissionMode"]!!.jsonPrimitive.content)
+            val saved = NewSessionLogic.resolvePreferredLaunchSettings("agy", NewSessionLogic.launchPreferenceFrom(form))
+            assertEquals(mode, saved.permissionMode)
+        }
+        assertEquals("request-review", NewSessionLogic.resolvePreferredLaunchSettings("agy", null).permissionMode)
+        val defaults = encode(NewSessionLogic.buildSpawnRequest(NewSessionForm(directory = "/repo", agent = "agy", effort = "high"), false))
+        assertNull(defaults["model"])
+        assertNull(defaults["effort"])
+    }
 
     @Test
     fun `Hermes preserves provider-qualified model and native permission without yolo`() {
@@ -547,6 +575,109 @@ class NewSessionLogicTest {
 // ---------------------------------------------------------- view model flow --
 
 class NewSessionViewModelTest {
+    private val agyCatalog = AgentModelDirectory(success = true, availableModels = listOf(
+        AgentModelEntry("gemini-4-argon-high", "Gemini 4 Argon (High)"),
+        AgentModelEntry("gemini-4-argon-low", "Gemini 4 Argon (Low)"),
+        AgentModelEntry("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+    ))
+
+    @Test
+    fun `Antigravity restores native variants and clears effort when changing to a fixed model`() = runTest {
+        val gateway = FakeGateway().apply { agyResult = agyCatalog }
+        val prefs = FakePrefs(draft = NewSessionForm(machineId = "m1", directory = "/repo", agent = "agy",
+            model = "gemini-4-argon-high", permissionMode = "plan"))
+        val vm = buildViewModel(gateway, FakeMachineStore(listOf(machine("m1"))), prefs)
+        advanceUntilIdle()
+        val state = vm.uiState.value
+        assertEquals(listOf("m1" to false), gateway.agyCalls)
+        assertEquals(listOf("auto", "gemini-4-argon", "gpt-oss-120b-medium"), state.modelOptions?.map { it.value })
+        assertEquals(listOf("auto", "low", "high"), state.effortOptions?.map { it.value })
+        assertEquals("gemini-4-argon", state.form.model)
+        assertEquals("high", state.form.effort)
+        assertEquals("plan", state.form.permissionMode)
+        assertEquals(listOf("request-review", "auto", "plan", "always-proceed"),
+            (state.permission as PermissionUi.NativeSelect).options.map { it.value })
+
+        vm.setModel("gpt-oss-120b-medium")
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.effortOptions)
+        assertEquals("auto", vm.uiState.value.form.effort)
+        vm.create()
+        advanceUntilIdle()
+        val request = gateway.spawnCalls.single().second
+        assertEquals("gpt-oss-120b-medium", request.model)
+        assertNull(request.effort)
+        assertEquals("plan", request.permissionMode)
+        assertNull(request.yolo)
+    }
+
+    @Test
+    fun `Antigravity waits for saved selection validation then drops a removed model`() = runTest {
+        val ready = kotlinx.coroutines.CompletableDeferred<AgentModelDirectory>()
+        val gateway = FakeGateway().apply { agyHandler = { _, _ -> ready.await() } }
+        val vm = buildViewModel(gateway, FakeMachineStore(listOf(machine("m1"))),
+            FakePrefs(draft = NewSessionForm(machineId = "m1", directory = "/repo", agent = "agy", model = "removed", effort = "high")))
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.modelsLoading)
+        assertFalse(vm.uiState.value.canCreate)
+        vm.create()
+        advanceUntilIdle()
+        assertTrue(gateway.spawnCalls.isEmpty())
+        ready.complete(agyCatalog)
+        advanceUntilIdle()
+        assertEquals("auto", vm.uiState.value.form.model)
+        assertEquals("auto", vm.uiState.value.form.effort)
+        assertTrue(vm.uiState.value.canCreate)
+    }
+
+    @Test
+    fun `Antigravity refresh keeps cached warnings and explicit selections scoped to the machine`() = runTest {
+        val gateway = FakeGateway().apply { agyResult = agyCatalog }
+        val vm = buildViewModel(gateway, FakeMachineStore(listOf(machine("m1"), machine("m2"))), FakePrefs())
+        advanceUntilIdle()
+        vm.setAgent("agy")
+        advanceUntilIdle()
+        vm.setModel("gemini-4-argon")
+        vm.setEffort("high")
+        gateway.agyResult = AgentModelDirectory(success = true,
+            availableModels = listOf(AgentModelEntry("custom-new", "New model")), error = "Sign in again")
+        vm.refreshAgyModels()
+        advanceUntilIdle()
+        assertEquals("gemini-4-argon", vm.uiState.value.form.model)
+        assertEquals("high", vm.uiState.value.form.effort)
+        assertEquals("Sign in again", vm.uiState.value.modelsWarning)
+        assertNull(vm.uiState.value.modelsError)
+        assertTrue(vm.uiState.value.modelOptions.orEmpty().any { it.value == "gemini-4-argon" })
+        vm.setMachine("m2")
+        advanceUntilIdle()
+        assertEquals(listOf("m1" to false, "m1" to true, "m2" to false), gateway.agyCalls)
+        assertEquals("auto", vm.uiState.value.form.model)
+        assertFalse(vm.uiState.value.modelOptions.orEmpty().any { it.value == "gemini-4-argon" })
+    }
+
+    @Test
+    fun `Antigravity discovery discards an old machine reply and offers retry after failure`() = runTest {
+        val oldReply = kotlinx.coroutines.CompletableDeferred<AgentModelDirectory>()
+        val gateway = FakeGateway().apply {
+            agyHandler = { id, _ -> if (id == "m1") oldReply.await() else AgentModelDirectory(false, error = "Sign in required") }
+        }
+        val vm = buildViewModel(gateway, FakeMachineStore(listOf(machine("m1"), machine("m2"))),
+            FakePrefs(draft = NewSessionForm(machineId = "m1", directory = "/repo", agent = "agy")))
+        advanceUntilIdle()
+        vm.setMachine("m2")
+        advanceUntilIdle()
+        oldReply.complete(agyCatalog)
+        advanceUntilIdle()
+        assertEquals("Sign in required", vm.uiState.value.modelsError)
+        assertEquals(listOf("auto"), vm.uiState.value.modelOptions?.map { it.value })
+        gateway.agyHandler = { _, _ -> agyCatalog }
+        vm.refreshAgyModels()
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.modelsError)
+        assertEquals("m2" to true, gateway.agyCalls.last())
+        assertTrue(vm.uiState.value.modelOptions.orEmpty().any { it.value == "gemini-4-argon" })
+    }
+
     @Test fun `explicit directory overrides saved worktree without changing target machine`() = runTest {
         val gateway = FakeGateway()
         val prefs = FakePrefs(draft = NewSessionForm(machineId = "m1", directory = "/old",

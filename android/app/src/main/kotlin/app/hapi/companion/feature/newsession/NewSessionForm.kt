@@ -1,7 +1,9 @@
 package app.hapi.companion.feature.newsession
 
 import app.hapi.protocol.catalog.AgentFlavor
+import app.hapi.protocol.catalog.AgyModels
 import app.hapi.protocol.catalog.PermissionModes
+import app.hapi.protocol.wire.AgentModelEntry
 import app.hapi.protocol.wire.CodexModelSummary
 import app.hapi.protocol.wire.SpawnSessionRequest
 import kotlinx.serialization.Serializable
@@ -20,11 +22,11 @@ data class NewSessionForm(
     val agent: String = "claude",
     /** `'auto'` = no explicit model (claude presets / codex catalog ids). */
     val model: String = "auto",
-    /** Claude launch effort; `'auto'` = omit. */
+    /** Claude/Antigravity launch effort; `'auto'` = omit. */
     val effort: String = "auto",
     /** Codex reasoning effort; `'default'` = omit. */
     val modelReasoningEffort: String = "default",
-    /** Native permission mode for grok + codex-family flavors. */
+    /** Native permission mode for flavors with a permission select. */
     val permissionMode: String = "default",
     /** HAPI YOLO preference for flavors without the native permission select. */
     val yolo: Boolean = false,
@@ -142,8 +144,7 @@ object NewSessionLogic {
     /**
      * Exact spawn body (`POST /api/machines/:id/spawn`), field-for-field port
      * of the web `handleCreate` mapping:
-     * - `model`/`effort` only for flavors whose picker exists in this v1
-     *   (claude static list, codex machine catalog; others send no model);
+     * - `model`/`effort` only for flavors whose picker is available;
      * - `yolo` only for flavors still on the YOLO toggle (not
      *   `usesNativePermissionSelect`) — **including `false`**;
      * - `permissionMode` for every `usesNativePermissionSelect` flavor —
@@ -162,17 +163,14 @@ object NewSessionLogic {
     fun buildSpawnRequest(form: NewSessionForm, codexFastTierVisible: Boolean): SpawnSessionRequest {
         val agent = form.agent
         val resolvedModel = when {
-            // v1 model pickers: claude (static presets) and codex (machine
-            // catalog). Other flavors' discovery endpoints are TODO(M3d+),
-            // so their model is never sent.
-            (agent == "claude" || agent == "codex" || agent == "hermes") && form.model != "auto" -> form.model.trim().takeIf { it.isNotEmpty() }
+            agent in listOf("agy", "claude", "codex", "hermes") && form.model != "auto" -> form.model.trim().takeIf { it.isNotEmpty() }
             else -> null
         }
         return SpawnSessionRequest(
             directory = form.trimmedDirectory,
             agent = agent,
             model = resolvedModel,
-            effort = if (agent == "claude" && form.effort != "auto") form.effort else null,
+            effort = if ((agent == "claude" || agent == "agy" && resolvedModel != null) && form.effort != "auto") form.effort else null,
             modelReasoningEffort = if (agent == "codex" && form.modelReasoningEffort != "default") {
                 form.modelReasoningEffort
             } else {
@@ -195,6 +193,23 @@ object NewSessionLogic {
             copilotAgentMode = if (agent == "copilot") form.copilotAgentMode else null,
             startingMode = null,
         )
+    }
+
+    /** Validate native variants after discovery without discarding an explicit user selection on refresh. */
+    fun reconcileAgySelections(
+        form: NewSessionForm,
+        models: List<AgentModelEntry>,
+        preserveUnlistedModel: Boolean = false,
+    ): NewSessionForm {
+        if (form.agent != "agy") return form
+        val selection = AgyModels.splitSelection(form.model)
+        if (selection.model == null) return form.copy(model = "auto", effort = "auto")
+        val choices = AgyModels.choices(models)
+        if (choices.isEmpty()) return form
+        val choice = AgyModels.selectedChoice(choices, form.model)
+            ?: return if (preserveUnlistedModel) form else form.copy(model = "auto", effort = "auto")
+        val effort = if (form.effort == "auto" && choice.modelId != form.model) selection.effort else form.effort
+        return form.copy(model = choice.modelId, effort = effort?.takeIf { it in choice.supportedEfforts } ?: "auto")
     }
 
     // ------------------------------------------------------- autocomplete --

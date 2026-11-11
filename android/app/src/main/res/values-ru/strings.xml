@@ -85,6 +85,7 @@
     <string name="new_session_agent">Агент</string>
     <string name="new_session_agent_availability_loading">Проверка установленных агентов…</string>
     <string name="new_session_retry">Повторить</string>
+    <string name="new_session_refresh_models">Обновить модели</string>
     <string name="new_session_model">Модель</string>
     <string name="new_session_effort">Усилие</string>
     <string name="new_session_reasoning_effort">Усилие рассуждений</string>

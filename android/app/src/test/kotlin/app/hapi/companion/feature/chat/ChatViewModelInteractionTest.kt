@@ -278,6 +278,11 @@ private class RecordingChatApi : ChatSessionApi {
         configFailure?.let { throw it }
     }
 
+    override suspend fun setModelWithEffort(sessionId: String, model: String?, effort: String?) {
+        configCalls.value = configCalls.value + "model:$model:effort:$effort"
+        configFailure?.let { throw it }
+    }
+
     override suspend fun setEffort(sessionId: String, effort: String?) {
         configCalls.value = configCalls.value + "effort:$effort"
         configFailure?.let { throw it }
@@ -1494,6 +1499,32 @@ class ChatViewModelInteractionTest {
     }
 
     @Test
+    fun `Antigravity steer requires a live native target and rechecks before sending`() = runTest {
+        val session = detail(flavor = "agy", thinking = true, agentState = AgentState(steeringActive = true))
+        val harness = InteractionHarness(this, session)
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { !it.isInitialLoading }
+        harness.window().ingestSseMessages(listOf(queuedServerRow("server", "local", "guidance").asWindowMessage()))
+        harness.viewModel.queuedRows.first { it.singleOrNull()?.canSteer == true }
+        harness.viewModel.setComposerText("More guidance")
+        for (state in listOf(null, AgentState(), AgentState(steeringActive = false))) {
+            harness.sessionStore.setDetail(session.copy(agentState = state))
+            harness.viewModel.sendMessage(steer = true)
+            harness.viewModel.steerQueuedMessage("server")
+            testScheduler.runCurrent()
+            assertFalse(harness.viewModel.composer.value.canSteer)
+            assertTrue(harness.viewModel.composer.value.canStop)
+            assertFalse(harness.viewModel.queuedRows.value.single().canSteer)
+            assertTrue(harness.api.sendCalls.value.isEmpty())
+            assertTrue(harness.api.steerCalls.value.isEmpty())
+            assertEquals("More guidance", harness.viewModel.composer.value.text)
+        }
+        harness.sessionStore.setDetail(session)
+        harness.viewModel.steerQueuedMessage("server")
+        assertEquals(listOf("server"), harness.api.steerCalls.first { it.isNotEmpty() })
+    }
+
+    @Test
     fun `edit cancels and prefills the composer`() = runTest {
         val harness = InteractionHarness(this)
         harness.viewModel.start()
@@ -2123,6 +2154,46 @@ class ChatViewModelInteractionTest {
         assertEquals(listOf(null, "low", "medium", "high"), config.effortOptions?.map { it.value })
     }
 
+    @Test
+    fun `Antigravity exposes native effort and switches model and compatible effort atomically`() = runTest {
+        val session = detail(flavor = "agy", model = "gemini-4-argon-high")
+        val harness = InteractionHarness(this, session)
+        harness.api.modelDirectory = app.hapi.protocol.wire.AgentModelDirectory(true, availableModels = listOf(
+            app.hapi.protocol.wire.AgentModelEntry("gemini-4-argon-low", "Gemini 4 Argon (Low)"),
+            app.hapi.protocol.wire.AgentModelEntry("gemini-4-argon-high", "Gemini 4 Argon (High)"),
+            app.hapi.protocol.wire.AgentModelEntry("claude-opus-5-5-high", "Claude Opus 5.5 (High)"),
+            app.hapi.protocol.wire.AgentModelEntry("claude-opus-5-5-max", "Claude Opus 5.5 (Max)"),
+            app.hapi.protocol.wire.AgentModelEntry("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+        ))
+        harness.viewModel.start()
+        harness.viewModel.loadModelOptions()
+        val config = harness.viewModel.config.first { it.effortOptions?.size == 3 && !it.modelDisabled }
+        assertEquals("gemini-4-argon", config.model)
+        assertEquals("high", config.effort)
+        assertEquals(listOf(null, "low", "high"), config.effortOptions?.map { it.value })
+        assertEquals(listOf(null, "gemini-4-argon", "claude-opus-5-5", "gpt-oss-120b-medium"), config.modelOptions?.map { it.value })
+        harness.viewModel.setEffort("max")
+        testScheduler.runCurrent()
+        assertTrue(harness.api.configCalls.value.isEmpty())
+        harness.viewModel.setEffort("low")
+        harness.api.configCalls.first { "effort:low" in it }
+        testScheduler.runCurrent()
+        harness.viewModel.setModel("claude-opus-5-5")
+        harness.api.configCalls.first { "model:claude-opus-5-5:effort:high" in it }
+        testScheduler.runCurrent()
+        harness.viewModel.setModel("gpt-oss-120b-medium")
+        harness.api.configCalls.first { "model:gpt-oss-120b-medium:effort:null" in it }
+        testScheduler.runCurrent()
+        assertEquals("gemini-4-argon-high", harness.sessionStore.currentDetail(IX_SESSION)?.model)
+        assertEquals(listOf("effort:low", "model:claude-opus-5-5:effort:high", "model:gpt-oss-120b-medium:effort:null"), harness.api.configCalls.value)
+
+        harness.sessionStore.setDetail(session.copy(active = false))
+        harness.viewModel.setEffort("low")
+        harness.viewModel.setModel("claude-opus-5-5")
+        testScheduler.runCurrent()
+        assertEquals(3, harness.api.configCalls.value.size)
+    }
+
     // --------------------------------------------------------------- misc --
 
     @Test
@@ -2291,6 +2362,21 @@ class ChatViewModelInteractionTest {
     }
 
     // ------------------------------------------------------ slash commands --
+
+    @Test
+    fun `Antigravity builtins appear from discovery and retain their native command text`() = runTest {
+        val harness = InteractionHarness(this, detail(flavor = "agy"))
+        val commands = listOf("help", "usage", "context", "compact", "clear", "status", "model", "effort", "plan", "auto", "default", "permissions")
+        harness.api.slashCommandsResult = SlashCommandsResponse(success = true,
+            commands = commands.map { app.hapi.protocol.wire.SlashCommand(it, source = "builtin") })
+        harness.viewModel.start()
+        harness.viewModel.setComposerText("/")
+        val suggestions = harness.viewModel.slashSuggestions.first { it.size == commands.size }
+        assertEquals(commands, suggestions.map { it.name })
+        harness.viewModel.setComposerText("/context")
+        harness.viewModel.sendMessage()
+        assertEquals("/context", harness.api.sendCalls.first { it.isNotEmpty() }.single().second.text)
+    }
 
     @Test
     fun `slash mode merges metadata names with the RPC list and filters while typing`() = runTest {

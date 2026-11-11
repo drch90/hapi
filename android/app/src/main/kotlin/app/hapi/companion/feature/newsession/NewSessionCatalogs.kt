@@ -46,5 +46,5 @@ object NewSessionCatalogs {
 
     /** Capitalized label for a server-advertised effort id (`high` → `High`). */
     fun effortLabel(value: String): String =
-        value.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        if (value == "xhigh") "XHigh" else value.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }

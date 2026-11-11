@@ -92,6 +92,7 @@
     <string name="new_session_agent">代理</string>
     <string name="new_session_agent_availability_loading">正在检查已安装的代理…</string>
     <string name="new_session_retry">重试</string>
+    <string name="new_session_refresh_models">刷新模型</string>
     <string name="new_session_model">模型</string>
     <string name="new_session_effort">思考强度</string>
     <string name="new_session_reasoning_effort">推理强度</string>

@@ -46,6 +46,7 @@ import app.hapi.data.store.SessionScratchlist
 import app.hapi.protocol.catalog.CatalogOption
 import app.hapi.protocol.catalog.Flavors
 import app.hapi.protocol.catalog.ModelCatalog
+import app.hapi.protocol.catalog.AgyModels
 import app.hapi.protocol.catalog.PermissionMode
 import app.hapi.protocol.catalog.PermissionModes
 import app.hapi.protocol.chat.ChatBlock
@@ -2181,7 +2182,11 @@ class ChatViewModel(
             optimistic = { it.copy(model = model) },
             call = {
                 if (provider != null && providerModel != null) api.setProviderModel(sessionId, provider, providerModel.modelId)
-                else {
+                else if (flavor == "agy") {
+                    val choice = AgyModels.selectedChoice(AgyModels.choices(dynamicModels.value.directory?.availableModels.orEmpty()), model)
+                    val effort = liveConfig.effort?.takeIf { it in choice?.supportedEfforts.orEmpty() }
+                    api.setModelWithEffort(sessionId, model, effort)
+                } else {
                     val previousEffort = currentDetail()?.modelReasoningEffort
                     if (flavor == "opencode" && previousEffort != null) api.setModelReasoningEffort(sessionId, null)
                     try { api.setModel(sessionId, model) }
@@ -2195,11 +2200,13 @@ class ChatViewModel(
     }
 
     /**
-     * Effort switch, flavor-routed: claude → `POST /effort`; codex/opencode →
+     * Effort switch, flavor-routed: agy/claude/grok/pi → `POST /effort`; codex/opencode →
      * `POST /model-reasoning-effort`. Null clears.
      */
     fun setEffort(effort: String?) {
-        if (currentConfig().effortDisabled) return
+        val config = currentConfig()
+        if (config.effortDisabled) return
+        if (currentFlavor() == "agy" && config.effortOptions?.none { it.value == effort } != false) return
         val usesReasoningEffort = currentFlavor() == "codex" || currentFlavor() == "opencode"
         runConfigChange(
             optimistic = {
@@ -2344,6 +2351,7 @@ class ChatViewModel(
         val dynamic = dynamicModels.value
         val selectedProvider = detail?.metadata?.piSelectedModel
         val model = if (flavor == "pi" && selectedProvider != null) HapiJson.encodeToString(ProviderModel.serializer(), selectedProvider) else detail?.model
+        var displayedModel = model
         val modelOptions: List<CatalogOption>?
         var modelOptionsLoading = false
         var effort: String? = null
@@ -2385,7 +2393,27 @@ class ChatViewModel(
                     else -> modelOptions = emptyList()
                 }
             }
-            "pi", "opencode", "cursor", "grok", "copilot", "agy" -> {
+            "agy" -> {
+                val choices = AgyModels.choices(dynamic.directory?.availableModels.orEmpty())
+                val selected = AgyModels.selectedChoice(choices, model)
+                val selection = AgyModels.splitSelection(model)
+                val agyModel = selected?.modelId ?: model
+                displayedModel = agyModel
+                modelOptions = buildList {
+                    add(CatalogOption(null, "Default"))
+                    choices.forEach { add(CatalogOption(it.modelId, it.name)) }
+                    if (agyModel != null && none { it.value == agyModel }) add(CatalogOption(agyModel, agyModel))
+                }
+                modelOptionsLoading = dynamic.loading
+                val efforts = selected?.supportedEfforts.orEmpty()
+                if (efforts.isNotEmpty()) {
+                    effort = detail?.effort ?: selection.effort
+                    effortOptions = listOf(CatalogOption(null, "Default")) + efforts.map {
+                        CatalogOption(it, if (it == "xhigh") "XHigh" else it.replaceFirstChar(Char::uppercaseChar))
+                    }
+                }
+            }
+            "pi", "opencode", "cursor", "grok", "copilot" -> {
                 val directory = dynamic.directory
                 var entries = directory?.availableModels.orEmpty()
                 if (flavor == "pi" && entries.isEmpty()) entries = detail?.metadata?.piAvailableModels.orEmpty()
@@ -2437,7 +2465,9 @@ class ChatViewModel(
                 (flavor in listOf("pi", "opencode", "cursor", "grok", "agy") && dynamic.error != null),
             effortDisabled = configOpPending.value || (detail?.agentState?.controlledByUser == true && detail.metadata?.capabilities?.concurrentClients != true) ||
                 (flavor in listOf("codex", "opencode", "grok", "pi") && detail?.active != true) ||
-                (flavor in listOf("opencode", "grok") && dynamic.effort?.success != true),
+                (flavor in listOf("opencode", "grok") && dynamic.effort?.success != true) ||
+                (flavor == "agy" && (detail?.active != true || dynamic.loading || dynamic.error != null ||
+                    dynamic.directory?.success != true || effortOptions.isNullOrEmpty())),
             collaborationMode = detail?.collaborationMode,
             copilotAgentMode = detail?.copilotAgentMode,
             serviceTier = detail?.serviceTier ?: (models as? CodexModels.Loaded)?.models?.firstOrNull { it.id == detail?.model || (detail?.model == null && it.isDefault) }?.defaultServiceTier,
@@ -2451,7 +2481,7 @@ class ChatViewModel(
                 (detail?.metadata?.capabilities?.concurrentClients != true || it != PermissionMode.SafeYolo) &&
                     (flavor != "grok" || it.wireId != "auto" || dynamic.directory?.autoPermissionModeSupported == true)
             },
-            model = model,
+            model = displayedModel,
             modelOptions = modelOptions,
             modelOptionsLoading = modelOptionsLoading,
             effort = effort,
@@ -2491,7 +2521,7 @@ class ChatViewModel(
             active = detail?.active ?: summary?.active ?: false,
             thinking = detail?.thinking ?: summary?.thinking ?: false,
             steeringAllowed = when (flavor) {
-                "claude", "hermes" -> detail?.agentState?.steeringActive == true
+                "agy", "claude", "hermes" -> detail?.agentState?.steeringActive == true
                 else -> true
             },
         )

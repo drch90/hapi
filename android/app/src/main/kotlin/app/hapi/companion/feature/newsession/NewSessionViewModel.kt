@@ -16,6 +16,7 @@ import app.hapi.companion.feature.newsession.NewSessionLogic.worktreeNameError
 import app.hapi.data.api.ApiError
 import app.hapi.data.store.MachineListStore
 import app.hapi.protocol.catalog.AgentFlavor
+import app.hapi.protocol.catalog.AgyModels
 import app.hapi.protocol.catalog.CodexCollaborationMode
 import app.hapi.protocol.catalog.CopilotAgentMode
 import app.hapi.protocol.catalog.Flavors
@@ -23,6 +24,7 @@ import app.hapi.protocol.catalog.PermissionMode
 import app.hapi.protocol.catalog.PermissionModes
 import app.hapi.protocol.wire.CodexModelSummary
 import app.hapi.protocol.wire.AgentAvailabilityEntry
+import app.hapi.protocol.wire.AgentModelEntry
 import app.hapi.protocol.wire.Machine
 import app.hapi.protocol.wire.MachineDirectoryEntry
 import app.hapi.protocol.wire.objOrNull
@@ -118,6 +120,14 @@ sealed interface AgentAvailabilityUi {
     data class Failed(val message: String, val upgradeRequired: Boolean = false) : AgentAvailabilityUi
 }
 
+private data class AgyModelsUi(
+    val machineId: String? = null,
+    val models: List<AgentModelEntry> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+    val warning: String? = null,
+)
+
 data class NewSessionUiState(
     val form: NewSessionForm,
     val machines: List<MachineOptionUi>,
@@ -131,11 +141,11 @@ data class NewSessionUiState(
     val agents: List<OptionItem>,
     val agentAvailabilityLoading: Boolean,
     val agentAvailabilityError: String?,
-    /** Null hides the model picker (v1: only claude + supported codex). */
+    /** Null hides the model picker; Hermes has a searchable picker. */
     val modelOptions: List<OptionItem>?,
     val modelsLoading: Boolean,
     val modelsError: String?,
-    /** Claude launch-effort options; null hides the field. */
+    /** Claude/Antigravity launch-effort options; null hides the field. */
     val effortOptions: List<OptionItem>?,
     /** Codex reasoning-effort options; null hides the field. */
     val reasoningEffortOptions: List<OptionItem>?,
@@ -154,6 +164,7 @@ data class NewSessionUiState(
     /** Armed after the first Create tap on a missing simple directory. */
     val confirmCreateDirectory: Boolean,
     val hermesModels: List<HermesModelSummary> = emptyList(),
+    val modelsWarning: String? = null,
 )
 
 /**
@@ -164,9 +175,10 @@ data class NewSessionUiState(
  *
  * v1 notes (deliberate cuts, mirrored in the option matrix):
  * - model pickers: claude (static presets) + codex (machine catalog; hidden
- *   when the runner lacks the RPC). agy/opencode/grok/copilot/cursor/pi model
- *   discovery is TODO — spawn omits `model` so the agent default applies.
- * - effort: claude static levels; codex reasoning effort from the catalog.
+ *   when the runner lacks the RPC), Antigravity's machine catalog and Hermes.
+ *   opencode/grok/copilot/cursor/pi model discovery is TODO — spawn omits
+ *   `model` so the agent default applies.
+ * - effort: claude static levels; codex/Antigravity effort from the catalog.
  *   grok/pi effort ships with their model discovery.
  * - grok's `auto` availability IS probed (directory-scoped grok-models,
  *   `autoPermissionModeSupported`); the rest of that response (model/effort
@@ -188,6 +200,9 @@ class NewSessionViewModel(
     private val codexModels = MutableStateFlow<CodexModelsUi>(CodexModelsUi.Hidden)
     private val hermesModels = MutableStateFlow(HermesModelsUi())
     private val hermesRefresh = MutableStateFlow(0)
+    private val agyModels = MutableStateFlow(AgyModelsUi())
+    private val agyRefresh = MutableStateFlow(0)
+    private var agyModelPickedByUser = false
     private val agentAvailability = MutableStateFlow<AgentAvailabilityUi>(AgentAvailabilityUi.Loading)
     /** Grok Auto gate: `null` = unknown/loading (never disables), `false` = unsupported. */
     private val grokAutoSupport = MutableStateFlow<Boolean?>(null)
@@ -233,6 +248,43 @@ class NewSessionViewModel(
     private var cachedListing: Pair<Pair<String, String>, List<MachineDirectoryEntry>>? = null
 
     init {
+        scope.launch {
+            var consumedRefresh = 0
+            combine(form, agyRefresh) { current, refresh ->
+                current.machineId.takeIf { current.agent == "agy" } to refresh
+            }.distinctUntilChanged().collectLatest { (machineId, refresh) ->
+                val forceRefresh = refresh != consumedRefresh
+                consumedRefresh = refresh
+                if (machineId == null) {
+                    agyModels.value = AgyModelsUi()
+                    return@collectLatest
+                }
+                val previous = agyModels.value.takeIf { it.machineId == machineId } ?: AgyModelsUi(machineId)
+                agyModels.value = previous.copy(loading = true, error = null, warning = null)
+                try {
+                    val result = gateway.agyModels(machineId, forceRefresh)
+                    if (form.value.agent != "agy" || form.value.machineId != machineId) return@collectLatest
+                    val error = if (result.success) null else result.error ?: strings.modelsFailedDetail.format("Antigravity")
+                    val models = if (result.success) result.availableModels else previous.models
+                    agyModels.value = AgyModelsUi(
+                        machineId = machineId,
+                        models = models,
+                        error = error.takeIf { models.isEmpty() },
+                        warning = result.error.takeIf { result.success } ?: error.takeIf { models.isNotEmpty() },
+                    )
+                    if (result.success) form.update { NewSessionLogic.reconcileAgySelections(it, models, agyModelPickedByUser) }
+                } catch (cancellation: CancellationException) { throw cancellation }
+                catch (error: Exception) {
+                    if (form.value.agent != "agy" || form.value.machineId != machineId) return@collectLatest
+                    val message = error.message ?: strings.modelsFailedDetail.format("Antigravity")
+                    agyModels.value = previous.copy(
+                        loading = false,
+                        error = message.takeIf { previous.models.isEmpty() },
+                        warning = message.takeIf { previous.models.isNotEmpty() },
+                    )
+                }
+            }
+        }
         scope.launch {
             combine(form, pathExistence, outsideWorkspaceRoots, hermesRefresh) { current, exists, outside, refresh ->
                 Triple(current.machineId, current.trimmedDirectory.takeIf {
@@ -317,8 +369,8 @@ class NewSessionViewModel(
     val uiState: StateFlow<NewSessionUiState> = combine(
         form,
         machineStore.machines,
-        combine(codexModels, agentAvailability, grokAutoSupport, hermesModels) { codex, availability, grokAuto, hermes ->
-            CatalogState(codex, availability, grokAuto, hermes)
+        combine(codexModels, agentAvailability, grokAutoSupport, hermesModels, agyModels) { codex, availability, grokAuto, hermes, agy ->
+            CatalogState(codex, availability, grokAuto, hermes, agy)
         },
         combine(suggestions, pathExistence, prefsData, outsideWorkspaceRoots, directoryLookupError) {
                 s, exists, stored, outside, lookupError ->
@@ -336,7 +388,7 @@ class NewSessionViewModel(
         initialValue = buildUiState(
             form.value,
             machineStore.machines.value,
-            CatalogState(codexModels.value, agentAvailability.value, grokAutoSupport.value, hermesModels.value),
+            CatalogState(codexModels.value, agentAvailability.value, grokAutoSupport.value, hermesModels.value, agyModels.value),
             DirectoryData(emptyList(), emptyMap(), prefsData.value, emptySet(), null),
             SpawnFlags(isSpawning = false, spawnError = null, confirmed = false, machinesSettled = false),
         ),
@@ -354,6 +406,7 @@ class NewSessionViewModel(
         val availability: AgentAvailabilityUi,
         val grokAutoSupported: Boolean?,
         val hermes: HermesModelsUi = HermesModelsUi(),
+        val agy: AgyModelsUi = AgyModelsUi(),
     )
 
     private data class DirectoryData(
@@ -400,6 +453,7 @@ class NewSessionViewModel(
 
     fun setAgent(agent: String) {
         if (agent == form.value.agent) return
+        agyModelPickedByUser = false
         // Web parity: switching agents resets every agent-dependent field
         // (yolo is a cross-flavor preference and survives), then the
         // remembered launch defaults for the new (machine, agent) dimension
@@ -423,13 +477,19 @@ class NewSessionViewModel(
     }
 
     fun setModel(model: String) {
+        if (form.value.agent == "agy") agyModelPickedByUser = model != "auto"
         form.update { current ->
             val next = current.copy(model = model)
-            if (current.agent == "codex") reconcileCodexSelections(next) else next
+            when (current.agent) {
+                "codex" -> reconcileCodexSelections(next)
+                "agy" -> NewSessionLogic.reconcileAgySelections(next, agyModels.value.models, agyModelPickedByUser)
+                else -> next
+            }
         }
     }
 
     fun refreshHermesModels() { hermesRefresh.value++ }
+    fun refreshAgyModels() { agyRefresh.value++ }
 
     fun setEffort(effort: String) = form.update { it.copy(effort = effort) }
 
@@ -469,6 +529,8 @@ class NewSessionViewModel(
         val current = form.value
         val machineId = current.machineId ?: return
         if (current.trimmedDirectory.isEmpty() || spawnInFlight) return
+        val agy = agyModels.value
+        if (current.agent == "agy" && current.model != "auto" && (agy.machineId != machineId || agy.loading)) return
         if (worktreeNameBlocks(current)) return
         when (val availability = agentAvailability.value) {
             AgentAvailabilityUi.Loading -> return
@@ -608,6 +670,7 @@ class NewSessionViewModel(
     }
 
     private fun applyMachineSelection(machineId: String, resetDirectory: Boolean) {
+        agyModelPickedByUser = false
         directoryBrowser.close()
         pathExistence.value = emptyMap()
         outsideWorkspaceRoots.value = emptySet()
@@ -941,8 +1004,16 @@ class NewSessionViewModel(
             is AgentAvailabilityUi.Loaded -> if (availableAgentIds.isEmpty()) strings.noAvailableAgents else null
         }
 
+        val agyChoices = AgyModels.choices(catalogs.agy.models)
         val modelOptions: List<OptionItem>? = when {
             agent == "claude" -> NewSessionCatalogs.CLAUDE_MODELS
+            agent == "agy" -> buildList {
+                add(OptionItem("auto", "Default"))
+                agyChoices.forEach { add(OptionItem(it.modelId, it.name)) }
+                if (currentForm.model != "auto" && none { it.value == currentForm.model }) {
+                    add(OptionItem(currentForm.model, currentForm.model))
+                }
+            }
             agent == "codex" && codex is CodexModelsUi.Loaded -> {
                 listOf(OptionItem("auto", "Default")) + codex.models.map { OptionItem(it.id, it.displayName) }
             }
@@ -988,6 +1059,9 @@ class NewSessionViewModel(
         // codex model/effort must not spawn before the catalog validated it.
         val codexValidationPending = agent == "codex" && codex is CodexModelsUi.Loading &&
             (currentForm.model != "auto" || currentForm.modelReasoningEffort != "default" || currentForm.serviceTier == "fast")
+        val agyValidationPending = agent == "agy" && currentForm.model != "auto" &&
+            (catalogs.agy.machineId != currentForm.machineId || catalogs.agy.loading)
+        val agyEfforts = AgyModels.selectedChoice(agyChoices, currentForm.model)?.supportedEfforts.orEmpty()
 
         val nameError = if (currentForm.sessionType == SESSION_TYPE_WORKTREE) {
             worktreeNameError(currentForm.worktreeName)?.let { strings.worktreeNameInvalid }
@@ -1007,10 +1081,24 @@ class NewSessionViewModel(
             agentAvailabilityLoading = availability is AgentAvailabilityUi.Loading,
             agentAvailabilityError = availabilityError,
             modelOptions = modelOptions,
-            modelsLoading = if (agent == "hermes") catalogs.hermes.loading else agent == "codex" && codex is CodexModelsUi.Loading,
-            modelsError = if (agent == "hermes") catalogs.hermes.error else (codex as? CodexModelsUi.Failed)?.message?.let { strings.modelsFailedDetail.format(it) },
+            modelsLoading = when (agent) {
+                "hermes" -> catalogs.hermes.loading
+                "agy" -> catalogs.agy.loading || catalogs.agy.machineId != currentForm.machineId
+                else -> agent == "codex" && codex is CodexModelsUi.Loading
+            },
+            modelsError = when (agent) {
+                "hermes" -> catalogs.hermes.error
+                "agy" -> catalogs.agy.error
+                else -> (codex as? CodexModelsUi.Failed)?.message?.let { strings.modelsFailedDetail.format(it) }
+            },
+            modelsWarning = catalogs.agy.warning.takeIf { agent == "agy" },
             hermesModels = catalogs.hermes.models,
-            effortOptions = if (agent == "claude") NewSessionCatalogs.CLAUDE_EFFORTS else null,
+            effortOptions = when {
+                agent == "claude" -> NewSessionCatalogs.CLAUDE_EFFORTS
+                agent == "agy" && agyEfforts.isNotEmpty() -> listOf(OptionItem("auto", "Default")) +
+                    agyEfforts.map { OptionItem(it, NewSessionCatalogs.effortLabel(it)) }
+                else -> null
+            },
             reasoningEffortOptions = reasoningEffortOptions,
             permission = permission,
             grokAutoUnavailable = grokAutoUnavailable,
@@ -1030,7 +1118,7 @@ class NewSessionViewModel(
                 availability is AgentAvailabilityUi.Loaded &&
                 currentForm.agent in availableAgentIds &&
                 nameError == null &&
-                !codexValidationPending,
+                !codexValidationPending && !agyValidationPending,
             confirmCreateDirectory = flags.confirmed && needsCreationWarning,
         )
     }

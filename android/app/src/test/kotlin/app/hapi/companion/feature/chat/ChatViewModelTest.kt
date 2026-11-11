@@ -15,6 +15,7 @@ import app.hapi.data.store.MessageWindowStores
 import app.hapi.data.store.SessionDetailStore
 import app.hapi.data.store.StoreSyncTargets
 import app.hapi.protocol.chat.AgentTextBlock
+import app.hapi.protocol.chat.AgentReasoningBlock
 import app.hapi.protocol.chat.ToolCallBlock
 import app.hapi.protocol.wire.ApprovePermissionRequest
 import app.hapi.protocol.wire.CancelMessageResponse
@@ -189,6 +190,7 @@ private open class FakeMessagesApi : ChatSessionApi {
     override suspend fun denyPermission(sessionId: String, requestId: String, decision: String?) {}
     override suspend fun setPermissionMode(sessionId: String, mode: String) {}
     override suspend fun setModel(sessionId: String, model: String?) {}
+    override suspend fun setModelWithEffort(sessionId: String, model: String?, effort: String?) {}
     override suspend fun setEffort(sessionId: String, effort: String?) {}
     override suspend fun setModelReasoningEffort(sessionId: String, modelReasoningEffort: String?) {}
     override suspend fun getAgentModelDirectory(sessionId: String, flavor: String, machineId: String?, refresh: Boolean) = app.hapi.protocol.wire.AgentModelDirectory(false)
@@ -352,6 +354,66 @@ private class Harness(
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ChatViewModelTest {
+    private fun agyFixtureMessages(name: String): List<DecryptedMessage> {
+        val fixtures = File(System.getProperty("hapi.fixtures.dir") ?: error("hapi.fixtures.dir not set"))
+        val document = HapiJson.parseToJsonElement(File(fixtures, "chat/$name.json").readText()).jsonObject
+        return (document.getValue("input").jsonObject.getValue("messages") as JsonArray).map {
+            HapiJson.decodeFromJsonElement(DecryptedMessage.serializer(), it)
+        }
+    }
+
+    @Test
+    fun `Antigravity snapshots render one reply through live replay and history reload`() = runTest {
+        val messages = agyFixtureMessages("agy-native-streamed-prose")
+        val harness = Harness(this, ScriptedTransport(listOf("ok")))
+        harness.sessionStore.detailToLoad = detailSession().copy(
+            metadata = app.hapi.protocol.wire.SessionMetadata(flavor = "agy", path = "/repo/app", host = "devbox"))
+        harness.api.tailResponses += MessagesResponse(messages = messages.take(2), page = page("latest", hasMore = false))
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { it.blocks.filterIsInstance<AgentTextBlock>().singleOrNull()?.text == "First" }
+        val window = harness.messageWindows.open(SESSION_ID)
+        for (message in messages.drop(2)) {
+            window.ingestSseMessages(listOf(app.hapi.protocol.window.WindowMessage(message)))
+            val version = window.state.value.messagesVersion
+            val state = harness.viewModel.uiState.first { it.messagesVersion == version }
+            assertEquals(1, state.blocks.filterIsInstance<AgentTextBlock>().size)
+            assertEquals(1, state.blocks.filterIsInstance<AgentReasoningBlock>().size)
+            assertEquals("agy-text-1", state.blocks.filterIsInstance<AgentTextBlock>().single().id)
+        }
+        val finalText = "First, prepare the plan. Second, request review."
+        assertEquals(finalText, harness.viewModel.uiState.value.blocks.filterIsInstance<AgentTextBlock>().single().text)
+        // Replayed older frames and a full REST history refresh must preserve the final snapshot.
+        window.ingestSseMessages(messages.reversed().map { app.hapi.protocol.window.WindowMessage(it) })
+        harness.api.tailResponses += MessagesResponse(messages = messages, page = page("latest", hasMore = false))
+        window.syncTail(allowingHistoryReset = true)
+        val reloaded = harness.viewModel.uiState.first { !it.isSyncingTail && it.messagesVersion == window.state.value.messagesVersion }
+        val text = reloaded.blocks.filterIsInstance<AgentTextBlock>().single()
+        assertEquals("agy-text-1", text.id)
+        assertEquals(finalText, text.text)
+        assertEquals("Gemini 3.8 Flash (High)", text.model)
+        assertEquals(1, reloaded.blocks.filterIsInstance<AgentReasoningBlock>().size)
+        harness.viewModel.stop()
+    }
+
+    @Test
+    fun `Antigravity context snapshots compact and clear without adding reply rows`() = runTest {
+        val messages = agyFixtureMessages("agy-native-context-cleared")
+        val harness = Harness(this, ScriptedTransport(listOf("ok")))
+        harness.sessionStore.detailToLoad = detailSession().copy(
+            metadata = app.hapi.protocol.wire.SessionMetadata(flavor = "agy", path = "/repo/app", host = "devbox"))
+        harness.api.tailResponses += MessagesResponse(messages = messages.take(1), page = page("latest", hasMore = false))
+        harness.viewModel.start()
+        harness.viewModel.uiState.first { it.blocks.isNotEmpty() && !it.isSyncingTail }
+        val window = harness.messageWindows.open(SESSION_ID)
+        for ((message, used) in messages.drop(1).zip(listOf(10_034.0, 1_000.0, 0.0))) {
+            window.ingestSseMessages(listOf(app.hapi.protocol.window.WindowMessage(message)))
+            val usage = harness.viewModel.contextUsage.first { it?.used == used }
+            assertEquals(1_048_576.0, usage?.window)
+            assertEquals(1, harness.viewModel.uiState.value.blocks.size)
+        }
+        harness.viewModel.stop()
+    }
+
     @Test
     fun `inspection cancels hidden history demand and keeps one session subscription`() = runTest {
         val transport = ScriptedTransport(listOf("ok"))

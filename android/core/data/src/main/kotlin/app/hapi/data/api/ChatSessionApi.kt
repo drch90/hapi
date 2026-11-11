@@ -91,7 +91,10 @@ interface ChatSessionApi : MessagesApi, AttachmentUploadApi {
     /** `POST /api/sessions/:id/model` — string id, null clears to the agent default. */
     suspend fun setModel(sessionId: String, model: String?)
 
-    /** `POST /api/sessions/:id/effort` (claude, grok, pi) — null clears. */
+    /** Atomic model/effort selection (claude, agy); explicit null clears effort. */
+    suspend fun setModelWithEffort(sessionId: String, model: String?, effort: String?)
+
+    /** `POST /api/sessions/:id/effort` (agy, claude, grok, pi) — null clears. */
     suspend fun setEffort(sessionId: String, effort: String?)
 
     /** `POST /api/sessions/:id/model-reasoning-effort` (codex, opencode) — null clears. */
