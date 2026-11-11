@@ -45,7 +45,39 @@ Linux tunwg asset; its integration is unchanged.
 
 The push to `android-session-parity` triggers Test (including runner integration
 and Windows Codex MCP) and Android (compile/unit/lint before APK and API 36
-emulator jobs). It does not publish a release or deploy native applications.
+emulator jobs). Their completion also triggers the existing Auto Merge observer,
+which requires the repository owner's approval for the current HEAD. This push
+does not publish a release or deploy native applications.
+
+### Service deployment
+
+Deployed source merge [`b16d36db`](https://github.com/drch90/hapi/commit/b16d36db0b5276f1d3d18abee9ef69791e266a32)
+to the existing PM2 installation. The launcher and platform package both report
+**0.34.6** and record the source commit. Matching old package/database backups
+and private verification records remain on the host.
+
+Built the search index on a database copy before stopping the hub, then reconciled
+the final consistent backup into that copy. All **13 original tables** matched
+exactly before activation, retaining **285 sessions and 151,170 messages** while
+upgrading schema **30 → 34**. A subsequent backup contained **151,226 messages**;
+every original message remained unchanged, and no original rows were missing
+from any of those tables. Live session and machine state continued updating.
+
+The hub's measured availability gap was **10.5 seconds**. All **five session
+wrappers, five native agent processes and six persistent bridge processes** kept
+their original PIDs, process start times and executable inodes. All five sessions
+reconnected, their histories loaded, and the original client JWT remained valid.
+The live service also passed authentication rejection, message-content search
+and byte-for-byte checks for all 12 embedded Web assets.
+
+Used `hapi runner stop` for the supervised runner handoff, preserving the
+custom Codex launcher, workspace roots, environment and PM2 ownership. Restored
+all five runner registrations after verifying each original PID generation,
+start marker and native session identity. Verification uses the hub's live
+presence API because persisted presence is reset during startup. Settings,
+login keys, the saved PM2 configuration and other PM2 applications were unchanged.
+Existing wrappers continue their original code for the lifetime of their
+sessions; newly started sessions use the updated CLI.
 
 ## 2026-11-03: upstream v0.34.0
 
