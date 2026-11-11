@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Database } from 'bun:sqlite';
+import { isObject } from '@hapi/protocol';
 
 type Field = { wire: number; value: Uint8Array | bigint };
 
@@ -195,7 +196,16 @@ export class AgyTranscriptCursor {
     }
 
     get settled(): boolean {
-        return [...this.steps.values()].every(step => step.terminal);
+        // Native daemon commands keep RUNNING in SQLite after the agent has
+        // returned to its input prompt. Their lifetime must not hold the
+        // foreground turn open. Queued commands and approvals still block;
+        // the driver also requires a confirmed, stable native idle state.
+        return [...this.steps.values()].every(step => step.terminal || (
+            step.status === 2
+            && step.tool?.name === 'run_command'
+            && isObject(step.tool.input)
+            && step.tool.input.IsDaemon === true
+        ));
     }
 }
 

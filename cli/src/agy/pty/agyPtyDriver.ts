@@ -14,6 +14,7 @@ import { createAgyProcess, type AgyProcess } from './nativeProcess';
 import { AgyTranscript, AgyTranscriptCursor, matchesAgyReceipt, type AgyNativeStep, type AgyTranscriptSource } from './transcript';
 import { AgyPtyPermissionHandler } from './permissionHandler';
 import { listAgyModels } from '@/modules/common/agyModels';
+import { isAgyStatusReadyForInput } from './nativeStatus';
 import { formatAgyConfig, formatAgyContext, formatAgyHelp, formatAgyModels, formatAgyUsage, resolveAgyCommand, type AgyCommand } from '../commands';
 
 function deferred() {
@@ -43,7 +44,7 @@ type Delivery = {
     receipt: ReturnType<typeof deferred>;
     submitted: boolean;
 };
-type Emission = { text?: string; thinking?: string; live?: boolean; sentAt: number; tool?: string; result?: string; error?: string };
+type Emission = { text?: string; thinking?: string; live?: boolean; thinkingLive?: boolean; sentAt: number; tool?: string; result?: string; error?: string };
 type Turn = {
     prompt: string;
     input: string;
@@ -246,15 +247,20 @@ export class AgyPtyDriver extends RemoteLauncherBase {
         const live = !final && !step.terminal;
         const streamId = `agy-${turn.owner!.process.sessionId}-${step.index}`;
         if (step.type === 15 && (!previous.sentAt || !live || step.text && !previous.text || step.thinking && !previous.thinking || now - previous.sentAt >= 200)) {
+            // Prose starts after native reasoning. Settle reasoning before the
+            // first text snapshot, otherwise the hub's live-snapshot cleanup
+            // moves the final reasoning row below already streamed prose.
+            const thinkingLive = live && !step.text;
+            if (step.thinking && (step.thinking !== previous.thinking || previous.thinkingLive !== thinkingLive)) {
+                this.session.client.sendAgentMessage(convertAgentMessage({ type: 'reasoning', id: `${streamId}-thinking`, text: step.thinking, live: thinkingLive }));
+                previous.thinking = step.thinking;
+                previous.thinkingLive = thinkingLive;
+            }
             if (step.text && (step.text !== previous.text || previous.live !== live)) {
                 this.session.client.sendAgySessionMessage({ type: 'PLANNER_RESPONSE', id: `${streamId}-text`, content: step.text,
                     model: step.model || turn.owner!.process.model || undefined }, turn.owner!.process.sessionId ?? undefined);
                 previous.text = step.text;
                 if (!live) this.messageBuffer.addMessage(step.text, 'assistant');
-            }
-            if (step.thinking && (step.thinking !== previous.thinking || previous.live !== live)) {
-                this.session.client.sendAgentMessage(convertAgentMessage({ type: 'reasoning', id: `${streamId}-thinking`, text: step.thinking, live }));
-                previous.thinking = step.thinking;
             }
             if ((step.text || step.thinking) && !turn.firstOutput) {
                 turn.firstOutput = true;
@@ -320,7 +326,8 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             // A very short response can finish between screen polls. Its new
             // planner step is also evidence that the native turn actually ran.
             if (state.busy || [...turn.cursor!.steps.values()].some(step => step.type === 15)) turn.sawBusy = true;
-            const idle = state.kind === 'prompt' && !state.busy && state.editor === '';
+            const idle = state.kind === 'prompt' && !state.busy && state.editor === ''
+                && owner.process.nativeStatus !== null && isAgyStatusReadyForInput(owner.process.nativeStatus);
             const waiting = [...turn.cursor!.steps.values()].some(step => step.permission);
             if (waiting && !owner.permissions!.pending) {
                 blockedSince ??= Date.now();
@@ -335,7 +342,9 @@ export class AgyPtyDriver extends RemoteLauncherBase {
                 // final snapshots. A DONE tool alone never finishes the turn.
                 if (Date.now() - turn.idleSince >= 150) {
                     await this.refresh(turn, true);
-                    if (owner.process.state.kind === 'prompt' && !owner.process.state.busy && turn.cursor!.settled) {
+                    if (owner.process.state.kind === 'prompt' && !owner.process.state.busy && owner.process.state.editor === ''
+                        && owner.process.nativeStatus !== null && isAgyStatusReadyForInput(owner.process.nativeStatus)
+                        && turn.cursor!.settled && !owner.permissions!.pending) {
                         turn.pending?.receipt.reject(new AgyIndeterminateDeliveryError('Antigravity became idle before confirming guidance'));
                         turn.pending = null;
                         turn.finished = true;

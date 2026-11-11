@@ -86,6 +86,23 @@ describe('native Antigravity trajectory', () => {
         expect(() => decode(Uint8Array.from([0]))).toThrow('Invalid');
     });
 
+    it.each([
+        { name: 'running daemon', tool: 'run_command', status: 2, input: { IsDaemon: true }, settled: true },
+        { name: 'running foreground command', tool: 'run_command', status: 2, input: { IsDaemon: false }, settled: false },
+        { name: 'string daemon flag', tool: 'run_command', status: 2, input: { IsDaemon: 'true' }, settled: false },
+        { name: 'queued daemon', tool: 'run_command', status: 1, input: { IsDaemon: true }, settled: false },
+        { name: 'daemon awaiting approval', tool: 'run_command', status: 9, input: { IsDaemon: true }, settled: false },
+        { name: 'other running tool', tool: 'write_file', status: 2, input: { IsDaemon: true }, settled: false },
+    ])('handles $name without confusing its lifetime with turn completion', async ({ tool, status, input, settled }) => {
+        const row = { ...decode(number(1, 132), number(4, status),
+            message(5, message(4, string(1, 'native-command'), string(2, tool), string(3, JSON.stringify(input))))), index: 0 };
+        const source = { maxIndex: async () => 0, read: async () => [row], close() {} };
+        const cursor = new AgyTranscriptCursor(source, 0);
+        await cursor.refresh();
+        expect(cursor.settled).toBe(settled);
+        expect(cursor.steps.get(0)?.terminal).toBe(false);
+    });
+
     it('pages appended rows and revisits an earlier unfinished step in place', async () => {
         const base = decode(number(1, 15), number(4, 3));
         const rows: AgyNativeStep[] = Array.from({ length: 514 }, (_, index) => ({ ...base, index, text: `row-${index}` }));

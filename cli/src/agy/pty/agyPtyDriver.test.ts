@@ -267,15 +267,103 @@ describe('Antigravity native driver', () => {
         expect(h.client.sendAgySessionMessage).toHaveBeenCalledWith(expect.objectContaining({ content: 'STEERED_DONE', id: expect.any(String) }), ID);
     });
 
+    it('ends a completed turn and accepts another prompt while its native daemon keeps running', async () => {
+        const h = harness();
+        h.queue.push('start the web server', MODE, 'one');
+        await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
+        h.acknowledge('start the web server');
+        const command = h.transcript.append({ type: 132, status: 2, terminal: false,
+            tool: { id: 'daemon-call', name: 'run_command', input: {
+                CommandLine: 'node server.mjs', IsDaemon: true, WaitMsBeforeAsync: 3000,
+            }, summary: '', output: '' } });
+        h.finish('The server is available on port 5173.');
+
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.session.thinking).toBe(false);
+        expect(h.client.keepAlive).toHaveBeenLastCalledWith(false, h.session.mode, expect.anything());
+        expect(h.transcript.rows[command]?.terminal).toBe(false);
+        expect(h.client.sendAgentMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call-result', callId: 'daemon-call' }));
+        expect(h.natives[0]!.close).not.toHaveBeenCalled();
+
+        h.queue.push('check the server', MODE, 'two');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(2));
+        h.acknowledge('check the server'); h.finish('The server is healthy.');
+        await waitFor(() => expect(h.readyCount()).toBe(2));
+        expect(h.factory).toHaveBeenCalledOnce();
+        expect(h.client.emitMessagesConsumed).toHaveBeenLastCalledWith(['two']);
+    });
+
+    it('waits for native idle and permission clearance even when the screen and trajectory appear done', async () => {
+        const h = harness();
+        h.queue.push('work', MODE, 'one');
+        await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
+        h.acknowledge('work');
+        h.natives[0]!.nativeStatus = parseAgyNativeStatus('{"agent_state":"working"}');
+        h.finish();
+        await sleep(200);
+        expect(h.readyCount()).toBe(0);
+        expect(h.session.thinking).toBe(true);
+
+        h.natives[0]!.nativeStatus = parseAgyNativeStatus('{"agent_state":"idle","tool_confirmation_pending":true}');
+        await sleep(200);
+        expect(h.readyCount()).toBe(0);
+        expect(h.session.thinking).toBe(true);
+
+        h.natives[0]!.nativeStatus = parseAgyNativeStatus('{"agent_state":"idle"}');
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(h.session.thinking).toBe(false);
+    });
+
+    it('settles reasoning before the first prose snapshot and preserves that order on completion', async () => {
+        const h = harness();
+        h.queue.push('work', MODE, 'one');
+        await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
+        h.acknowledge('work');
+        const index = h.transcript.append({ type: 15, status: 8, terminal: false, thinking: 'Consider the request' });
+        await waitFor(() => expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'reasoning', live: true })));
+        h.transcript.update(index, { text: 'Hello' });
+        await waitFor(() => expect(h.client.sendAgySessionMessage).toHaveBeenCalledWith(expect.objectContaining({ content: 'Hello' }), ID));
+        h.transcript.update(index, { text: 'Hello world', status: 3, terminal: true });
+        h.natives[0]!.state.busy = false;
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+
+        const reasoning = h.client.sendAgentMessage.mock.calls
+            .map(([entry], index) => ({ entry, order: h.client.sendAgentMessage.mock.invocationCallOrder[index]! }))
+            .filter(({ entry }) => entry?.type === 'reasoning');
+        // The hub removes all live reasoning snapshots after the settled row
+        // arrives. That surviving row must precede even the first prose row.
+        const settled = reasoning.filter(({ entry }) => entry.live !== true);
+        expect(settled).toHaveLength(1);
+        expect(settled[0]!.order).toBeLessThan(h.client.sendAgySessionMessage.mock.invocationCallOrder[0]!);
+        expect(settled[0]!.entry.message).toBe('Consider the request');
+        expect(h.client.sendAgySessionMessage.mock.calls.at(-1)?.[0].content).toBe('Hello world');
+    });
+
+    it('emits reasoning before prose when both first arrive in a completed native snapshot', async () => {
+        const h = harness();
+        h.queue.push('quick reply', MODE, 'one');
+        await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
+        h.acknowledge('quick reply');
+        h.transcript.append({ text: 'Done', thinking: 'Consider the request' });
+        h.natives[0]!.state.busy = false;
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        const reasoningIndex = h.client.sendAgentMessage.mock.calls.findIndex(([entry]) => entry?.type === 'reasoning');
+        expect(reasoningIndex).toBeGreaterThanOrEqual(0);
+        expect(h.client.sendAgentMessage.mock.invocationCallOrder[reasoningIndex]!)
+            .toBeLessThan(h.client.sendAgySessionMessage.mock.invocationCallOrder[0]!);
+    });
+
     it('streams stable text and thinking IDs before completion and finalizes them on Stop', async () => {
         const h = harness();
         h.queue.push('work', MODE, 'one');
         await waitFor(() => expect(h.natives[0]?.inputs).toHaveLength(1));
         h.acknowledge('work');
-        const index = h.transcript.append({ type: 15, status: 8, terminal: false, text: 'Hel', thinking: 'Consider' });
+        const index = h.transcript.append({ type: 15, status: 8, terminal: false, thinking: 'Consider' });
+        await waitFor(() => expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'reasoning', live: true })));
+        h.transcript.update(index, { text: 'Hel', thinking: 'Consider carefully' });
         await waitFor(() => expect(h.client.sendAgySessionMessage).toHaveBeenCalledWith(expect.objectContaining({ content: 'Hel' }), ID));
         expect(h.readyCount()).toBe(0);
-        h.transcript.update(index, { text: 'Hello', thinking: 'Consider carefully' });
+        h.transcript.update(index, { text: 'Hello' });
         await h.handlers.get(RPC_METHODS.Abort)!();
         expect(h.session.thinking).toBe(false);
         const prose = h.client.sendAgySessionMessage.mock.calls.map(([entry]) => entry);
