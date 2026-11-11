@@ -111,6 +111,10 @@ alias `androiddebugkey` and store/key password `android`. Keep the same secret
 for subsequent builds. The expected public certificate SHA-256 is committed in
 [`android-debug-certificate.sha256`](../.github/android-debug-certificate.sha256);
 the private keystore is never committed, cached or uploaded as an artifact.
+CI restores the key into the runner's temporary directory and passes its path
+as `HAPI_ANDROID_DEBUG_KEYSTORE`; Gradle explicitly uses that PKCS12 file for
+debug signing. The lightweight scope job also runs Python signing-helper
+checks, which need no Android SDK or Gradle.
 
 On the machine holding that key, encode it with `base64 -w0 /path/to/debug.keystore`
 and paste the value into **Settings → Secrets and variables → Actions → New

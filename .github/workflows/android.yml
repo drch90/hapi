@@ -10,6 +10,7 @@ on:
             - 'shared/fixtures/**'
             - '.github/workflows/android.yml'
             - '.github/scripts/android-signing.py'
+            - '.github/scripts/android-signing.test.py'
             - '.github/android-debug-certificate.sha256'
             - '!android/**/*.md'
             - '!android/**/*.mdx'
@@ -39,6 +40,8 @@ jobs:
                   ref: ${{ github.event_name == 'workflow_dispatch' && 'android-session-parity' || github.sha }}
                   fetch-depth: 0
                   persist-credentials: false
+            - name: Check signing helper
+              run: python3 .github/scripts/android-signing.test.py
             - name: Check Android build inputs
               id: scope
               env:
@@ -88,7 +91,9 @@ jobs:
             - name: Restore and verify the fixed signing key
               env:
                   HAPI_ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.HAPI_ANDROID_DEBUG_KEYSTORE_BASE64 }}
-              run: python3 ../.github/scripts/android-signing.py prepare --keystore "$HOME/.android/debug.keystore"
+              run: |
+                  python3 ../.github/scripts/android-signing.py prepare --keystore "$RUNNER_TEMP/hapi-debug.keystore"
+                  printf 'HAPI_ANDROID_DEBUG_KEYSTORE=%s\n' "$RUNNER_TEMP/hapi-debug.keystore" >> "$GITHUB_ENV"
             - uses: actions/setup-java@v5
               with:
                   distribution: temurin
@@ -159,4 +164,4 @@ jobs:
                   retention-days: 7
             - name: Remove the runner signing key
               if: always()
-              run: rm -f "$HOME/.android/debug.keystore"
+              run: rm -f "$RUNNER_TEMP/hapi-debug.keystore"

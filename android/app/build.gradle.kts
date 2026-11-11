@@ -61,6 +61,9 @@ fun signingSecret(property: String, env: String): String? =
 val uploadKeystorePath = signingSecret("hapiUploadKeystore", "HAPI_UPLOAD_KEYSTORE")
     ?.replaceFirst(Regex("^~"), System.getProperty("user.home"))
 
+// The APK workflow passes the PKCS12 file whose certificate it has verified.
+val debugKeystorePath = providers.environmentVariable("HAPI_ANDROID_DEBUG_KEYSTORE").orNull
+
 if (officialBuild) {
     require(uploadKeystorePath != null && file(uploadKeystorePath).isFile) { "Official builds require a release signing keystore" }
     require(signingSecret("hapiUploadKeystorePassword", "HAPI_UPLOAD_KEYSTORE_PASSWORD") != null) {
@@ -85,6 +88,19 @@ android {
     }
 
     signingConfigs {
+        if (debugKeystorePath != null) {
+            getByName("debug") {
+                val keystore = File(debugKeystorePath)
+                require(keystore.isAbsolute && keystore.isFile) {
+                    "HAPI_ANDROID_DEBUG_KEYSTORE must point to the verified signing file"
+                }
+                storeFile = keystore
+                storeType = "PKCS12"
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
         if (uploadKeystorePath != null) {
             create("release") {
                 storeFile = File(uploadKeystorePath)
