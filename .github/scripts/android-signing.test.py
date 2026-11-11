@@ -18,56 +18,20 @@ spec = importlib.util.spec_from_file_location('android_signing', Path(__file__).
 signing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signing)
 PIN = signing.fingerprint()
-OTHER = '0' * 64
 
 
-def certificate(label='#1', digest=PIN):
-    return f'Signer {label} certificate SHA-256 digest: {digest}\n'
-
-
-class SignerTests(unittest.TestCase):
-    def test_numbered_certificate(self):
-        signing.verify_signers(certificate(digest=PIN.upper()), PIN)
-
-    def test_sdk_range_certificate(self):
-        signing.verify_signers(certificate('(minSdkVersion=28, maxSdkVersion=2147483647)'), PIN)
-
-    def test_same_certificate_across_sdk_ranges(self):
-        output = certificate('(minSdkVersion=33 (dev release=true), maxSdkVersion=2147483647)')
-        output += certificate('(minSdkVersion=28, maxSdkVersion=32)')
-        signing.verify_signers(output, PIN)
-
-    def test_different_certificate_reports_actual_and_expected(self):
-        with self.assertRaises(ValueError) as error:
-            signing.verify_signers(certificate(digest=OTHER), PIN)
-        self.assertIn(PIN, str(error.exception))
-        self.assertIn(OTHER, str(error.exception))
-
-    def test_rotation_to_another_key_is_rejected(self):
-        output = certificate('(minSdkVersion=33, maxSdkVersion=2147483647)')
-        output += certificate('(minSdkVersion=28, maxSdkVersion=32)', OTHER)
-        with self.assertRaisesRegex(ValueError, 'does not match'):
-            signing.verify_signers(output, PIN)
-
-    def test_multiple_or_mixed_signers_are_rejected(self):
-        for extra in (certificate('#2'), certificate('(minSdkVersion=28, maxSdkVersion=32)')):
-            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, 'Expected one APK signer'):
-                signing.verify_signers(certificate() + extra, PIN)
-
-    def test_unrecognized_or_malformed_certificate_is_rejected(self):
-        for line in (certificate('unknown'), certificate(digest=PIN[:-1])):
-            with self.subTest(line=line), self.assertRaisesRegex(ValueError, 'Unrecognized'):
-                signing.verify_signers(certificate() + line, PIN)
-
-    def test_public_key_digest_does_not_count_as_certificate(self):
-        with self.assertRaisesRegex(ValueError, 'No APK signer certificate'):
-            signing.verify_signers(f'Signer #1 public key SHA-256 digest: {PIN}\n', PIN)
-
-    def test_source_stamp_is_not_the_apk_signer(self):
-        stamp = f'Source Stamp Signer certificate SHA-256 digest: {OTHER}\n'
-        signing.verify_signers(certificate() + stamp, PIN)
-        with self.assertRaisesRegex(ValueError, 'No APK signer certificate'):
-            signing.verify_signers(stamp, PIN)
+class VerifierCompilationTests(unittest.TestCase):
+    def test_compiles_against_the_sdk_library(self):
+        with tempfile.TemporaryDirectory(prefix='hapi-verifier-check-') as directory:
+            classes = Path(directory) / 'classes'
+            with patch.object(signing, 'build_tools', return_value=Path('/ci/build-tools/36.0.0')):
+                with patch.object(signing, 'run') as run:
+                    signing.compile_verifier(classes)
+            self.assertTrue(classes.is_dir())
+            run.assert_called_once_with([
+                'javac', '--class-path', '/ci/build-tools/36.0.0/lib/apksigner.jar',
+                '-d', str(classes), str(signing.VERIFIER_SOURCE),
+            ])
 
 
 class ApkIdentityTests(unittest.TestCase):
@@ -78,15 +42,20 @@ class ApkIdentityTests(unittest.TestCase):
         self.apk.write_bytes(b'parser fixture only; not a real APK')
         self.report = self.apk.with_suffix('.json')
 
-    def verify(self, package='run.hapi.companion', version=62, signer=PIN):
+    def verify(self, package='run.hapi.companion', version=62, verification_error=None):
         badging = f"package: name='{package}' versionCode='{version}' versionName='0.34.6'\n"
         with patch.object(signing, 'build_tools', return_value=Path('/ci/build-tools/36.0.0')):
-            with patch.object(signing, 'run', side_effect=[certificate(digest=signer).encode(), badging.encode()]):
+            with patch.object(signing, 'run', side_effect=[verification_error or b'', badging.encode()]) as run:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    signing.verify(self.apk, 62, 'a' * 40, self.report)
+                    signing.verify(self.apk, 62, 'a' * 40, self.report, Path('/ci/verifier-classes'))
+                return run.call_args_list
 
-    def test_verified_identity_generates_public_report(self):
-        self.verify()
+    def test_api_verification_needs_no_display_output(self):
+        calls = self.verify()
+        self.assertEqual(calls[0].args[0], [
+            'java', '--class-path', '/ci/verifier-classes:/ci/build-tools/36.0.0/lib/apksigner.jar',
+            'HapiApkVerifier', str(self.apk), PIN,
+        ])
         report = json.loads(self.report.read_text())
         self.assertEqual(report['certificateSha256'], PIN)
         self.assertEqual(report['versionCode'], 62)
@@ -94,8 +63,8 @@ class ApkIdentityTests(unittest.TestCase):
         self.assertEqual(report['packageName'], 'run.hapi.companion')
 
     def test_wrong_signer_never_generates_report(self):
-        with self.assertRaisesRegex(ValueError, 'does not match'):
-            self.verify(signer=OTHER)
+        with self.assertRaisesRegex(ValueError, 'certificate mismatch'):
+            self.verify(verification_error=ValueError('APK certificate mismatch'))
         self.assertFalse(self.report.exists())
 
     def test_wrong_package_or_version_never_generates_report(self):
@@ -115,10 +84,10 @@ class FailureReportingTests(unittest.TestCase):
         self.assertNotIn('private', str(error.exception))
 
     def test_public_apk_tool_errors_are_visible(self):
-        result = subprocess.CompletedProcess(['apksigner'], 1, b'', b'APK integrity check failed')
+        result = subprocess.CompletedProcess(['java'], 1, b'', b'APK integrity check failed')
         with patch.object(signing.subprocess, 'run', return_value=result):
             with self.assertRaisesRegex(ValueError, 'APK integrity check failed'):
-                signing.run(['/ci/apksigner', 'verify', 'app.apk'])
+                signing.run(['java', 'HapiApkVerifier', 'app.apk', PIN])
 
     def test_actions_annotation_escapes_workflow_commands(self):
         output = io.StringIO()

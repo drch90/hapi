@@ -16,6 +16,7 @@ import tempfile
 SECRET = 'HAPI_ANDROID_DEBUG_KEYSTORE_BASE64'
 PACKAGE = 'run.hapi.companion'
 FINGERPRINT_FILE = Path(__file__).resolve().parents[1] / 'android-debug-certificate.sha256'
+VERIFIER_SOURCE = Path(__file__).resolve().parents[2] / 'android/tools/HapiApkVerifier.java'
 
 
 def run(command, data=None):
@@ -24,8 +25,8 @@ def run(command, data=None):
         # OpenSSL can handle private-key material: never echo its captured output.
         program = Path(command[0]).name
         message = f'{program} validation failed (exit {result.returncode})'
-        if program in ('apksigner', 'aapt2'):
-            # These commands inspect only the public APK, never the keystore.
+        if program in ('java', 'javac', 'aapt2'):
+            # These commands handle public APKs/verifier sources, never the keystore.
             detail = result.stderr.decode(errors='replace').strip()
             if detail:
                 message += ': ' + detail[-3000:]
@@ -91,50 +92,28 @@ def build_tools():
         candidates = [
             path for path in (Path(sdk) / 'build-tools').glob('*')
             if re.fullmatch(r'\d+\.\d+\.\d+', path.name)
-            and all((path / tool).is_file() for tool in ('apksigner', 'aapt2'))
+            and all((path / tool).is_file() for tool in ('lib/apksigner.jar', 'aapt2'))
         ]
         if candidates:
             return max(candidates, key=lambda path: tuple(map(int, path.name.split('.'))))
-    raise ValueError('Android build-tools with apksigner and aapt2 are required on the CI runner')
+    raise ValueError('Android build-tools with lib/apksigner.jar and aapt2 are required on the CI runner')
 
 
-def verify_signers(output, expected):
-    # apksigner prints numbered signers, or SDK ranges for v3.1 signing.
-    pattern = re.compile(
-        r'^Signer (?P<label>#[1-9]\d*|\(minSdkVersion=\d+(?: \(dev release=true\))?, '
-        r'maxSdkVersion=\d+\)) certificate SHA-256 digest:[ \t]*'
-        r'(?P<digest>[0-9a-fA-F]{64})[ \t]*$'
-    )
-    signers = []
-    for line in output.splitlines():
-        if not line.startswith('Signer ') or ' certificate SHA-256 digest:' not in line:
-            continue
-        match = pattern.fullmatch(line)
-        if not match:
-            raise ValueError(f'Unrecognized APK signer certificate output: {line}')
-        signers.append((match['label'], match['digest'].lower()))
-    if not signers:
-        raise ValueError(f'No APK signer certificate found; expected SHA-256 {expected}')
-    numbered = [label for label, _ in signers if label.startswith('#')]
-    if numbered and (numbered != ['#1'] or len(signers) != 1):
-        raise ValueError('Expected one APK signer, not multiple numbered or mixed signers')
-    found = sorted({digest for _, digest in signers})
-    if found != [expected]:
-        raise ValueError(
-            f'APK signer does not match the fixed certificate: expected {expected}; '
-            f'found {", ".join(found)}'
-        )
+def compile_verifier(output):
+    binaries = build_tools()
+    output.mkdir(parents=True, exist_ok=True)
+    run(['javac', '--class-path', str(binaries / 'lib/apksigner.jar'), '-d', str(output), str(VERIFIER_SOURCE)])
 
 
-def verify(apk, version_code, source_sha, report):
+def verify(apk, version_code, source_sha, report, verifier_classes):
     if not 0 < version_code <= 2100000000:
         raise ValueError('Invalid APK version code')
     if not re.fullmatch(r'[0-9a-f]{40}', source_sha):
         raise ValueError('Invalid source commit SHA')
     expected = fingerprint()
     binaries = build_tools()
-    signatures = run([str(binaries / 'apksigner'), 'verify', '--print-certs', str(apk)]).decode()
-    verify_signers(signatures, expected)
+    classpath = os.pathsep.join((str(verifier_classes), str(binaries / 'lib/apksigner.jar')))
+    run(['java', '--class-path', classpath, 'HapiApkVerifier', str(apk), expected])
     badging = run([str(binaries / 'aapt2'), 'dump', 'badging', str(apk)]).decode()
     package = re.search(r"^package: name='([^']+)' versionCode='(\d+)'", badging, re.MULTILINE)
     if not package or package.group(1) != PACKAGE or int(package.group(2)) != version_code:
@@ -154,17 +133,22 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     restore = commands.add_parser('prepare')
     restore.add_argument('--keystore', type=Path, required=True)
+    compiler = commands.add_parser('compile-verifier')
+    compiler.add_argument('--output', type=Path, required=True)
     check = commands.add_parser('verify')
     check.add_argument('--apk', type=Path, required=True)
     check.add_argument('--version-code', type=int, required=True)
     check.add_argument('--source-sha', required=True)
     check.add_argument('--report', type=Path, required=True)
+    check.add_argument('--verifier-classes', type=Path, required=True)
     args = parser.parse_args()
     try:
         if args.command == 'prepare':
             prepare(args.keystore)
+        elif args.command == 'compile-verifier':
+            compile_verifier(args.output)
         else:
-            verify(args.apk, args.version_code, args.source_sha, args.report)
+            verify(args.apk, args.version_code, args.source_sha, args.report, args.verifier_classes)
     except (OSError, ValueError) as error:
         message = f'Android signing: {error}'
         if os.environ.get('GITHUB_ACTIONS') == 'true':
