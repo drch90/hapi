@@ -114,7 +114,10 @@ the private keystore is never committed, cached or uploaded as an artifact.
 CI restores the key into the runner's temporary directory and passes its path
 as `HAPI_ANDROID_DEBUG_KEYSTORE`; Gradle explicitly uses that PKCS12 file for
 debug signing. The lightweight scope job also runs Python signing-helper
-checks, which need no Android SDK or Gradle.
+checks, which need no Android SDK or Gradle. The build job compiles
+`tools/HapiApkVerifier.java` against the SDK's bundled `apksigner.jar` before
+APK assembly. It validates the APK signature and certificate through the
+Android signing library API, without parsing the CLI's display text.
 
 On the machine holding that key, encode it with `base64 -w0 /path/to/debug.keystore`
 and paste the value into **Settings → Secrets and variables → Actions → New

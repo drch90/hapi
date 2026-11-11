@@ -102,6 +102,8 @@ jobs:
             - uses: gradle/actions/setup-gradle@v5
             - name: Compile app, unit tests and instrumentation tests
               run: GITHUB_SHA="$HAPI_SOURCE_SHA" ./gradlew -PhapiVersionCode="$HAPI_VERSION_CODE" :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --continue --console=plain 2>&1 | tee compile.log
+            - name: Compile APK certificate verifier
+              run: python3 ../.github/scripts/android-signing.py compile-verifier --output "$RUNNER_TEMP/hapi-apk-verifier"
             - name: Protocol, data and app unit tests and lint
               run: GITHUB_SHA="$HAPI_SOURCE_SHA" ./gradlew -PhapiVersionCode="$HAPI_VERSION_CODE" :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug --continue --console=plain 2>&1 | tee unit-lint.log
             - name: Assemble the verified debug APK
@@ -112,6 +114,7 @@ jobs:
                       --apk app/build/outputs/apk/debug/app-debug.apk \
                       --version-code "$HAPI_VERSION_CODE" \
                       --source-sha "$HAPI_SOURCE_SHA" \
+                      --verifier-classes "$RUNNER_TEMP/hapi-apk-verifier" \
                       --report app/build/outputs/apk/debug/signing.json
             - name: Upload the signed APK
               uses: actions/upload-artifact@v6
