@@ -4,6 +4,23 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-11: Android-only Actions
+
+After re-enabling Actions on the fork, the workflow configuration was reduced
+to **Android APK** on both `main` and `android-session-parity`. Other inherited
+workflows, including automated review/merge, release and emulator jobs, were
+removed. Automatic builds require Android/fixture changes on the development
+branch; manual runs always build that branch. Workflow-only edits run only the
+lightweight scope check.
+
+APK builds now require a fixed private signing key in a repository Actions
+secret, verify its public certificate and use an increasing version code.
+Signature continuity starts with the first build using that key; older ephemeral
+CI signatures are not recovered. See [Android build and signing setup](https://github.com/drch90/hapi/blob/android-session-parity/android/README.md#fixed-apk-signing).
+Compilation, unit tests and lint remain CI gates; the service host does not
+run Android tests/Gradle or recreate a native toolchain. The upstream-sync
+verification records below describe checks and workflows at that time.
+
 ## 2026-11-11: upstream v0.34.6
 
 Merged [upstream v0.34.6](https://github.com/tiann/hapi/releases/tag/v0.34.6)
@@ -43,11 +60,12 @@ Windows execution, Docker-backed PowerShell checks and Android emulator tests
 were not available locally. This service build reuses the verified installed
 Linux tunwg asset; its integration is unchanged.
 
-The push to `android-session-parity` triggers Test (including runner integration
-and Windows Codex MCP) and Android (compile/unit/lint before APK and API 36
-emulator jobs). Their completion also triggers the existing Auto Merge observer,
-which requires the repository owner's approval for the current HEAD. This push
-does not publish a release or deploy native applications.
+At the time of the upstream merge, the push to `android-session-parity` was
+configured to trigger Test (including runner integration and Windows Codex MCP)
+and Android (compile/unit/lint before APK and API 36 emulator jobs). Their
+completion was also configured to trigger the Auto Merge observer, requiring
+the repository owner's approval for that HEAD. The push did not publish a
+release or deploy native applications.
 
 ### Service deployment
 

@@ -446,7 +446,9 @@ and pushes. It requires a clean working tree on `main`. Use `--dry-run` to previ
 without changing files. Native build numbers (`CURRENT_PROJECT_VERSION` / `versionCode`)
 remain managed separately; Android's `-PhapiVersionName` override is preserved.
 
-The pushed tag triggers `.github/workflows/release.yml`, which builds all binaries,
+This fork retains only the Android APK workflow; pushing a tag here does not
+publish CLI packages or create a GitHub Release. In `tiann/hapi`, the pushed tag
+triggers the [upstream release workflow](https://github.com/tiann/hapi/blob/main/.github/workflows/release.yml), which builds all binaries,
 runs `bun run --cwd cli publish-npm`, and creates the GitHub Release. npm publishing
 uses [Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC), so no npm
 token is involved; each `@twsxtd/hapi*` package must list `tiann/hapi` /

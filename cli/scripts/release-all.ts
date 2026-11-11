@@ -5,8 +5,9 @@
  * 2. Refresh bun.lock for the new workspace version
  * 3. Git commit + tag + push
  *
- * Pushing the tag triggers .github/workflows/release.yml, which builds the binaries,
- * publishes to npm via Trusted Publishing, and creates the GitHub Release.
+ * In tiann/hapi, pushing the tag triggers the upstream release workflow to build
+ * binaries, publish to npm and create the GitHub Release. This fork retains only
+ * Android APK automation; tags here do not trigger publishing.
  */
 
 import { execSync } from 'node:child_process';

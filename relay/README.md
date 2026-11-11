@@ -194,8 +194,9 @@ relay hosting and bandwidth are separate costs.
 
 ### Publishing images
 
-The [Push Relay Image workflow](../.github/workflows/push-relay-image.yml)
-runs the relay type check and tests, then builds both architectures. Pushes to
+This fork retains only the Android APK workflow and does not publish relay
+images through Actions. The [upstream Push Relay Image workflow](https://github.com/tiann/hapi/blob/main/.github/workflows/push-relay-image.yml)
+runs the relay type check and tests, then builds both architectures in `tiann/hapi`. Pushes to
 `main` affecting `relay/`, the workflow, or its dependency/type-check inputs
 publish `latest` and `sha-<full-commit-sha>`. Pull requests build without
 publishing. To publish manually, run **Actions → Push Relay Image → Run
@@ -204,7 +205,7 @@ workflow** on `main`; dispatches on other branches only validate and build.
 Publishing uses the repository's `GITHUB_TOKEN` with `packages: write`; no
 registry credential needs to be added. After the first successful run, set
 the `hapi-push-relay` package visibility to **Public** in GitHub Packages so
-servers can pull without logging in. Forks publish under their own owner.
+servers can pull without logging in.
 
 For local development, building from source remains available from the repo
 root:
