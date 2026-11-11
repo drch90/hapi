@@ -22,7 +22,14 @@ def run(command, data=None):
     result = subprocess.run(command, input=data, capture_output=True)
     if result.returncode:
         # OpenSSL can handle private-key material: never echo its captured output.
-        raise ValueError(f'{Path(command[0]).name} validation failed')
+        program = Path(command[0]).name
+        message = f'{program} validation failed (exit {result.returncode})'
+        if program in ('apksigner', 'aapt2'):
+            # These commands inspect only the public APK, never the keystore.
+            detail = result.stderr.decode(errors='replace').strip()
+            if detail:
+                message += ': ' + detail[-3000:]
+        raise ValueError(message)
     return result.stdout
 
 
@@ -91,6 +98,34 @@ def build_tools():
     raise ValueError('Android build-tools with apksigner and aapt2 are required on the CI runner')
 
 
+def verify_signers(output, expected):
+    # apksigner prints numbered signers, or SDK ranges for v3.1 signing.
+    pattern = re.compile(
+        r'^Signer (?P<label>#[1-9]\d*|\(minSdkVersion=\d+(?: \(dev release=true\))?, '
+        r'maxSdkVersion=\d+\)) certificate SHA-256 digest:[ \t]*'
+        r'(?P<digest>[0-9a-fA-F]{64})[ \t]*$'
+    )
+    signers = []
+    for line in output.splitlines():
+        if not line.startswith('Signer ') or ' certificate SHA-256 digest:' not in line:
+            continue
+        match = pattern.fullmatch(line)
+        if not match:
+            raise ValueError(f'Unrecognized APK signer certificate output: {line}')
+        signers.append((match['label'], match['digest'].lower()))
+    if not signers:
+        raise ValueError(f'No APK signer certificate found; expected SHA-256 {expected}')
+    numbered = [label for label, _ in signers if label.startswith('#')]
+    if numbered and (numbered != ['#1'] or len(signers) != 1):
+        raise ValueError('Expected one APK signer, not multiple numbered or mixed signers')
+    found = sorted({digest for _, digest in signers})
+    if found != [expected]:
+        raise ValueError(
+            f'APK signer does not match the fixed certificate: expected {expected}; '
+            f'found {", ".join(found)}'
+        )
+
+
 def verify(apk, version_code, source_sha, report):
     if not 0 < version_code <= 2100000000:
         raise ValueError('Invalid APK version code')
@@ -99,9 +134,7 @@ def verify(apk, version_code, source_sha, report):
     expected = fingerprint()
     binaries = build_tools()
     signatures = run([str(binaries / 'apksigner'), 'verify', '--print-certs', str(apk)]).decode()
-    signers = re.findall(r'^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-fA-F]+)\s*$', signatures, re.MULTILINE)
-    if [signer.lower() for signer in signers] != [expected]:
-        raise ValueError('APK signer does not match the fixed certificate')
+    verify_signers(signatures, expected)
     badging = run([str(binaries / 'aapt2'), 'dump', 'badging', str(apk)]).decode()
     package = re.search(r"^package: name='([^']+)' versionCode='(\d+)'", badging, re.MULTILINE)
     if not package or package.group(1) != PACKAGE or int(package.group(2)) != version_code:
@@ -133,7 +166,12 @@ def main():
         else:
             verify(args.apk, args.version_code, args.source_sha, args.report)
     except (OSError, ValueError) as error:
-        print(f'Android signing: {error}', file=sys.stderr)
+        message = f'Android signing: {error}'
+        if os.environ.get('GITHUB_ACTIONS') == 'true':
+            escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print('::error::' + escaped)
+        else:
+            print(message, file=sys.stderr)
         return 1
     return 0
 
