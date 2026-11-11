@@ -45,9 +45,9 @@ xcodebuild build -project ios/Hapi.xcodeproj -scheme Hapi \
 swift test --package-path ios/Packages/HapiKit
 ```
 
-CI runs package tests, the simulator build, and app-hosted transcript tests
-on `macos-15` via `.github/workflows/ios.yml` (triggered by changes under
-`ios/**` and `shared/fixtures/**`).
+This fork retains only the Android APK workflow. Run iOS package tests,
+simulator builds and app-hosted transcript tests on a suitable Mac; changes
+under `ios/**` or shared fixtures do not start iOS Actions here.
 
 ### Linux verification (no Mac needed)
 

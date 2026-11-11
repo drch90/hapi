@@ -291,6 +291,9 @@ bun run build:single-exe
 
 ## Releasing
 
+This fork retains only the Android APK workflow; pushing a tag here does not
+trigger an Actions release or publishing job.
+
 From the repository root, `bun run release-all <version>` updates the CLI package,
 shared app version, iOS `MARKETING_VERSION` (app and notification extension, all
 configurations), and Android's default `versionName` before building and publishing.

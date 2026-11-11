@@ -43,28 +43,85 @@ differences, pairing and features currently available through the web.
 Native chat scrolling architecture and acceptance checklist:
 [Native transcript scrolling](../docs/native-chat-scrolling.md).
 
+The commands below are for CI or a dedicated Android build machine. On the HAPI
+service host, do not run Android unit tests, including the SDK-free protocol
+suite, or other Gradle compilation/lint, APK assembly or emulator checks. Do not
+install or recreate a local Android SDK/JDK/Gradle test environment. Use static
+source/diff inspection on that host; see the
+[service-host verification policy](../AGENTS.md#verification-and-completion).
+
 Requires an Android SDK for `:app`/`:core:data` (set `ANDROID_HOME` or
 `android/local.properties` with `sdk.dir=...`). `:core:protocol` alone needs
 only a JDK.
 
 ```sh
 cd android
-./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest
-./gradlew :app:assembleDebug :app:lintDebug
+./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin :app:compileDebugAndroidTestKotlin --continue --console=plain
+./gradlew :core:protocol:test :core:data:testDebugUnitTest :app:testDebugUnitTest :app:lintDebug --continue --console=plain
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain
 ./gradlew :app:installDebug                  # connected device
 ./gradlew :app:connectedDebugAndroidTest     # emulator/device instrumentation
 ```
 
-Without an Android SDK you can still run the protocol suite by configuring
-only the needed projects:
+On a dedicated build machine without an Android SDK, run the protocol suite by
+configuring only the needed projects:
 
 ```sh
 ./gradlew --no-configuration-cache --configure-on-demand :core:protocol:test
 ```
 
-CI (`.github/workflows/android.yml`) runs protocol/data/app unit tests,
-`:app:assembleDebug`, `:app:lintDebug`, and Compose instrumentation on API 29, API 33
-and API 36 for PRs touching `android/**` or `shared/fixtures/**`.
+This fork retains only **Android APK**
+([`android.yml`](../.github/workflows/android.yml)), using Ubuntu 24.04 and JDK 21.
+Pushes to `android-session-parity` build only when Android source/build files
+or shared conformance fixtures change. Documentation-only and non-native
+pushes do not start Android builds. Workflow/signing-helper configuration
+edits run a lightweight scope check and skip Gradle when those inputs are
+unchanged. Manual dispatch explicitly requests a rebuild. Superseded runs
+are cancelled; there are no PR, scheduled, release, bot or other-platform jobs.
+
+The build job validates the fixed signing key, compiles the app, unit tests
+and instrumentation tests, then runs protocol/data/app unit tests and lint.
+Only successful preflight proceeds to debug APK assembly. Before upload,
+the workflow checks the APK's signature, application ID and version code.
+There is no emulator job or instrumentation APK artifact; successful CI does
+not verify device behavior.
+
+On the HAPI service host, perform static source/diff checks and use one remote
+preflight for the reviewed change set; do not run Gradle locally. Use the same
+remote fallback on other machines without enough disk or a native toolchain.
+Collect failures and fix them together before the next run. Avoid dispatching
+another build when a push has already triggered one.
+
+To start a build manually, open **Actions → Android APK → Run workflow** in
+GitHub and leave the workflow branch as `main`. Manual runs always build the
+current `android-session-parity` source, pinning the checkout SHA across jobs.
+Keep the workflow on both branches so the default branch exposes the button.
+
+Download `hapi-android-debug-<source-commit-sha>` from a successful run and
+extract `app-debug.apk`. The artifact also contains `signing.json` with the
+source SHA, package, version code, APK hash and public certificate hash.
+Unit/lint results are in `android-unit-lint-reports`; artifacts are kept for
+seven days.
+
+### Fixed APK signing
+
+Set the repository Actions secret **`HAPI_ANDROID_DEBUG_KEYSTORE_BASE64`** to
+the base64 encoding of the fixed PKCS12 debug keystore. It must use the standard
+alias `androiddebugkey` and store/key password `android`. Keep the same secret
+for subsequent builds. The expected public certificate SHA-256 is committed in
+[`android-debug-certificate.sha256`](../.github/android-debug-certificate.sha256);
+the private keystore is never committed, cached or uploaded as an artifact.
+
+On the machine holding that key, encode it with `base64 -w0 /path/to/debug.keystore`
+and paste the value into **Settings → Secrets and variables → Actions → New
+repository secret**. Do not paste it into issues, logs or chat. Missing keys,
+invalid aliases and certificate mismatches fail before Gradle starts.
+
+The APK keeps `run.hapi.companion` and uses the existing workflow's increasing
+`github.run_number` as `versionCode`. From the first APK built with this fixed
+key onward, newer APKs can update it in place and retain app data. Older APKs
+signed by an ephemeral CI key may require a one-time reinstall; their signatures
+are not recovered. Play-installed builds use a different signing identity.
 
 ### Protocol conformance fixtures
 
@@ -163,8 +220,8 @@ replay can supply them; the app does not scan old conversation history.
 Deduplication is per hub, bounded to 2,048 identifiers and seven days, and stores
 no message bodies. Settings and dedup records are excluded from backup/transfer.
 
-Verification runs in GitHub Actions (API 29/33/36). Physical-device acceptance
-should include LAN connection, background/lock screen, network loss/recovery,
+The APK workflow compiles instrumentation sources but does not run a device or emulator.
+Physical-device acceptance should include LAN connection, background/lock screen, network loss/recovery,
 hub switching, permission denial and reopening the app after stopping it.
 
 ## Firebase / push
@@ -217,21 +274,11 @@ for wire details and [relay deployment](../relay/README.md) for maintainer setup
 
 ### Official APK/AAB builds
 
-The [Android Official Build workflow](../.github/workflows/android-release.yml)
-is manually dispatched on `main`.
-It tests and uploads signed APK/AAB artifacts; it does not publish to Play.
-Provide a new positive `version_code` and the desired `version_name`.
-
-Repository configuration, set once by the maintainer:
-
-| Setting | Value |
-|---|---|
-| Variable `ANDROID_FIREBASE_PROJECT_ID` | Project used by the deployed relay's FCM service account |
-| Secret `ANDROID_GOOGLE_SERVICES_JSON` | Firebase **client** config for `run.hapi.companion` in that project |
-| Secret `HAPI_UPLOAD_KEYSTORE_BASE64` | Base64-encoded release keystore |
-| Secret `HAPI_UPLOAD_KEYSTORE_PASSWORD` | Keystore password |
-| Secret `HAPI_UPLOAD_KEY_ALIAS` | Optional, defaults to `upload` |
-| Secret `HAPI_UPLOAD_KEY_PASSWORD` | Optional, defaults to store password |
+The [upstream Android Official Build workflow](https://github.com/tiann/hapi/blob/main/.github/workflows/android-release.yml)
+is not retained in this fork. The fork's Android APK workflow produces debug
+APKs and does not inject Firebase configuration, publish releases or upload to
+Google Play. Official APK/AAB builds require a separate dedicated build machine
+and the [release signing](#release-signing) configuration below.
 
 `-PhapiOfficialBuild=true -PhapiFirebaseProjectId=<project>` requires a
 matching Firebase project/package and release signing configuration.
