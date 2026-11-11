@@ -115,15 +115,21 @@ attachment behavior applies: leaving the chat discards unsent attachments.
 
 ### Session-list parity
 
-Session recency follows the latest user input, falling back to creation time;
-agent output and heartbeats do not move rows. Pins remain first. Android also
-groups global pins, in-progress and active sessions above workspace history,
-with project pins first inside each workspace. Search can rank matching rows.
-Both native apps offer machine filtering, relevance-ranked text search,
-unread-only filtering and **Mark All as Read**. Android also has active-only and
-local date-range filters. Read status syncs across Web and native clients in the
-same hub/namespace. Android and iOS README files describe their filter
-presentation and session-row differences.
+Android and iOS use the shared base session-list order: global-pinned sessions,
+project-pinned sessions, then your most recent input (`lastUserMessageAt`,
+falling back to creation time) descending, with creation time and session ID
+breaking ties; see [Session list](./session-list.md#ordering-and-grouping). The
+Web sidebar adds directory grouping, client-side search ranking and a sort and
+filter menu. Both native apps mirror that menu: sort by last message or date
+created, **Active first** (on by default; manual pins still come first), show
+all, active or archived sessions, and an unread-only lens, alongside machine
+filtering and relevance-ranked text search. Both provide **Mark All as Read**. Android also retains date filtering, persisted
+machine/active-only choices and collapsible workspace groups with per-workspace
+creation and project pins. Turning off Active first keeps active rows in their
+workspaces. Rows in all three clients use the same presence badges
+and show a running [attached job](./session-jobs.md). Android and iOS README
+files describe their platform-specific filter presentation and session-row
+differences.
 
 Selecting an attachment starts its upload after preparation, before you send
 the message or save the Scratchlist entry. Removing it requests cleanup of

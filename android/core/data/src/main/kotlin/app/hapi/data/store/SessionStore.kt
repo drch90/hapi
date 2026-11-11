@@ -428,8 +428,8 @@ class SessionStore(
             val index = list.indexOfFirst { it.id == session.id }
             val existing = if (index >= 0) list[index] else null
             // The projection cannot derive the hub-computed scheduled-message
-            // fields — carry them over from the previous row (web
-            // `upsertSessionSummary`).
+            // fields or the attached job — carry them over from the previous
+            // row (web `upsertSessionSummary`).
             val summary = SummaryPatching.toSessionSummary(session).copy(
                 contentRevision = listOfNotNull(existing?.contentRevision, session.contentRevision).maxOrNull(),
                 readState = SessionReadState.merge(existing?.readState, session.readState),
@@ -437,6 +437,8 @@ class SessionStore(
                 futureScheduledMessageCount = existing?.futureScheduledMessageCount ?: 0,
                 nextScheduledAt = existing?.nextScheduledAt,
                 hasConversationContent = session.hasConversationContent ?: existing?.hasConversationContent ?: false,
+                attachedJob = existing?.attachedJob,
+                attachedJobUpdatedAt = existing?.attachedJobUpdatedAt ?: 0,
             )
             val next = list.toMutableList()
             if (index >= 0) next[index] = summary else next.add(summary)

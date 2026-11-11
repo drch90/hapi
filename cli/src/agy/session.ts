@@ -12,7 +12,8 @@ type LocalLaunchFailure = {
 };
 
 /**
- * Remote agy session backed by a persistent native interactive terminal.
+ * Remote agy session backed by the persistent native interactive terminal.
+ * Queued messages are acknowledged only after native input admission.
  */
 export class AgySession extends AgentSessionBase<AgyMode> {
     readonly startedBy: 'runner' | 'terminal';

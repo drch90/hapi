@@ -19,7 +19,7 @@ function session(nativeId: string | null = null) {
     const result = {
         path: '/tmp/hermes-test', logPath: '', queue, sessionId: nativeId, thinking: false,
         client: { rpcHandlerManager: { registerHandler: (key: string, fn: (p: unknown) => Promise<unknown>) => handlers.set(key, fn) },
-            updateMetadata: vi.fn(), emitMessagesConsumed: vi.fn(), emitSessionReady: vi.fn(), updateAgentState: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(), sendSessionEvent: vi.fn(), flush: vi.fn(async () => true) },
+            getMetadata: vi.fn(() => null), updateMetadata: vi.fn(), emitMessagesConsumed: vi.fn(), emitSessionReady: vi.fn(), updateAgentState: vi.fn(), sendClaudeSessionMessage: vi.fn(), sendAgentMessage: vi.fn(), sendSessionEvent: vi.fn(), flush: vi.fn(async () => true) },
         onSessionFound: vi.fn((id: string) => { result.sessionId = id }),
         onThinkingChange: vi.fn((value: boolean) => { result.thinking = value }),
         getModel: () => model, setModel: (value: string) => { model = value },

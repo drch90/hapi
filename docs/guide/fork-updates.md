@@ -4,6 +4,49 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-11: upstream v0.34.6
+
+Merged [upstream v0.34.6](https://github.com/tiann/hapi/releases/tag/v0.34.6)
+(`92da7846`) from the local `150de900` tip. Both histories and all 118 files
+added locally since v0.34.0 are retained.
+
+### Preserved local capabilities
+
+| Area | Integration retained in this merge |
+| --- | --- |
+| Antigravity | The persistent native terminal remains the default, including Auto, Plan, permissions, commands, context/quota reporting and receipt-based steering. Upstream ACP and legacy transport modules remain available in the source. |
+| OpenCode | Upstream v1/v2 steering retains the local v2 version gate, equivalent default/model selection, and `resume: false` admission so a late steer cannot start an untracked turn. |
+| Hermes | Creation/resume, model/provider discovery, permission modes, commands and steering remain integrated across clients. Upstream peer reply forwarding recognizes Hermes completion events. |
+| Message delivery | Dispatching remains distinct from an unknown outcome. Cancellation tombstones, explicit retry, late receipt reconciliation and stale-response protection remain intact. Peer reply waiting recognizes dispatching rows. |
+| Web and Android | Local grouping, pins, search/filter preferences, unread state, composer references, scheduling, media and workspace actions coexist with upstream sorting, presence, attached jobs and gap recovery. Local Android completion notifications remain available. |
+
+### Verification
+
+Checks and the Linux build used the pinned **Bun 1.4.4**.
+
+| Check | Result |
+| --- | --- |
+| Frozen dependency install and `bun typecheck` | Passed for CLI, Web, hub and relay. |
+| Hub, shared and relay suites | 1,807, 457 and 118 passed; 3 optional hub integration tests skipped. The final delivery-owner guard also passed all 42 focused tests. |
+| Web suite | 4,422 passed initially; all 75 tests in the four affected files passed after the queue UI and mode assertions were reconciled. |
+| CLI suite | 5,100 passed in the full run. Follow-up runs passed all 69 affected lifecycle/command tests and 118 peer tests. Cursor permission cases passed under a non-root user. Four difftastic cases remain limited by the host's older glibc. |
+| Runner integration | 25 passed, 1 skipped, using isolated temporary processes and a temporary hub. |
+| Browser regressions | All 82 workflow-selected Chromium cases passed across the full run and a focused retry. One share-export case exhausted its 30-second budget during the loaded full run, then passed unchanged in 5.2 seconds in isolation. |
+| Fixtures | 91 chat, 14 SSE and 15 pagination fixtures plus catalogs regenerated; the final generation had no drift. |
+| Android | App, unit-test and instrumentation-test sources compiled. Protocol/data/app suites passed 448/305/696 tests, and `lintDebug` passed using the existing JDK/SDK and locked offline dependencies. |
+| Actions automation | All 58 review/merge automation tests passed. |
+| Linux build and migration | CLI, hub and embedded Web build passed. An isolated candidate upgraded schema 30 to 34, preserving all original rows and column values except the three expected interrupted-turn recovery records. Authentication, five live-session histories and 12 embedded assets were verified. |
+
+The bundled difftastic executable requires unavailable `GLIBC_2.32`,
+`GLIBC_2.33` and `GLIBC_2.34`; its code and archive are unchanged. iOS compilation,
+Windows execution, Docker-backed PowerShell checks and Android emulator tests
+were not available locally. This service build reuses the verified installed
+Linux tunwg asset; its integration is unchanged.
+
+The push to `android-session-parity` triggers Test (including runner integration
+and Windows Codex MCP) and Android (compile/unit/lint before APK and API 36
+emulator jobs). It does not publish a release or deploy native applications.
+
 ## 2026-11-03: upstream v0.34.0
 
 Merged [upstream v0.34.0](https://github.com/tiann/hapi/releases/tag/v0.34.0)

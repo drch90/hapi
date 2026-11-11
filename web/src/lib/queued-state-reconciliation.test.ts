@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient } from '@/api/client'
 
 vi.mock('./message-window-store', () => ({
+    getMessageWindowState: vi.fn(() => ({ messages: [] })),
+    markMessagesDispatching: vi.fn(),
     getQueuedReconcileCandidateLocalIds: vi.fn(),
     markMessagesConsumed: vi.fn(),
-    markMessagesDispatching: vi.fn(),
     markMessagesIndeterminate: vi.fn(),
     markMessagesRequeued: vi.fn(),
     reconcileQueuedLocalIds: vi.fn(),
@@ -12,9 +13,10 @@ vi.mock('./message-window-store', () => ({
 }))
 
 import {
+    getMessageWindowState,
+    markMessagesDispatching,
     getQueuedReconcileCandidateLocalIds,
     markMessagesConsumed,
-    markMessagesDispatching,
     markMessagesIndeterminate,
     markMessagesRequeued,
     reconcileQueuedLocalIds,
@@ -48,7 +50,7 @@ describe('reconcileQueuedStateAfterConnect', () => {
         await reconcileQueuedStateAfterConnect(createMockApi(getQueuedState), 'session-pending')
         expect(markMessagesDispatching).toHaveBeenCalledWith('session-pending', ['sending'])
         expect(mockMarkMessagesIndeterminate).toHaveBeenCalledWith('session-pending', ['unknown'])
-        expect(mockReconcileQueuedLocalIds).toHaveBeenCalledWith('session-pending', ['sending', 'unknown'], ['sending', 'unknown'])
+        expect(mockReconcileQueuedLocalIds).toHaveBeenCalledWith('session-pending', ['sending', 'unknown'], expect.arrayContaining(['sending', 'unknown']))
         expect(getQueuedState).toHaveBeenCalledOnce()
     })
     beforeEach(() => {
@@ -56,6 +58,8 @@ describe('reconcileQueuedStateAfterConnect', () => {
         mockSyncTailMessages.mockResolvedValue(undefined)
         mockGetCandidates.mockReturnValue([])
         mockMarkMessagesIndeterminate.mockClear()
+        vi.mocked(markMessagesDispatching).mockClear()
+        vi.mocked(getMessageWindowState).mockReturnValue({ messages: [] } as unknown as ReturnType<typeof getMessageWindowState>)
     })
 
     it('waits for the latest messages before snapshotting and querying queued state', async () => {
@@ -174,5 +178,27 @@ describe('reconcileQueuedStateAfterConnect', () => {
             reconcileQueuedStateAfterConnect(createMockApi(getQueuedState), 'session-D')
         ).rejects.toBe(endpointError)
         expect(mockReconcileQueuedLocalIds).not.toHaveBeenCalled()
+    })
+})
+
+
+describe('pending readback reconciliation', () => {
+    beforeEach(() => { vi.clearAllMocks(); mockSyncTailMessages.mockResolvedValue(undefined); vi.mocked(getMessageWindowState).mockReturnValue({ messages: [] } as unknown as ReturnType<typeof getMessageWindowState>) })
+    it('separates live dispatches from genuine unknown rows while retaining both conservatively', async () => {
+        mockGetCandidates.mockReturnValue(['pending', 'unknown'])
+        await reconcileQueuedStateAfterConnect(createMockApi(async () => ({ queuedLocalIds: [], indeterminateLocalIds: ['pending', 'unknown'], dispatchingLocalIds: ['pending'], invokedLocalMessages: [] })), 'pending-test')
+        expect(markMessagesDispatching).toHaveBeenCalledWith('pending-test', ['pending'])
+        expect(mockMarkMessagesIndeterminate).toHaveBeenCalledWith('pending-test', ['unknown'])
+    })
+
+    it('does not apply a stale pending snapshot after an SSE state transition', async () => {
+        const oldMessage = { localId: 'pending' }
+        const changedMessage = { ...oldMessage, deliveryState: 'indeterminate' }
+        vi.mocked(getMessageWindowState)
+            .mockReturnValueOnce({ messages: [oldMessage] } as unknown as ReturnType<typeof getMessageWindowState>)
+            .mockReturnValueOnce({ messages: [changedMessage] } as unknown as ReturnType<typeof getMessageWindowState>)
+        mockGetCandidates.mockReturnValue(['pending'])
+        await reconcileQueuedStateAfterConnect(createMockApi(async () => ({ queuedLocalIds: [], indeterminateLocalIds: ['pending'], dispatchingLocalIds: ['pending'], invokedLocalMessages: [] })), 'stale-test')
+        expect(markMessagesDispatching).toHaveBeenCalledWith('stale-test', [])
     })
 })

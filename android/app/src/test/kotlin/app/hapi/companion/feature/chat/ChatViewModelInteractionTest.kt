@@ -34,6 +34,7 @@ import app.hapi.protocol.wire.AgentState
 import app.hapi.protocol.wire.AgentStateRequest
 import app.hapi.protocol.wire.ApprovePermissionRequest
 import app.hapi.protocol.wire.CancelMessageResponse
+import app.hapi.protocol.wire.MessageContextResponse
 import app.hapi.protocol.chat.NormalizedMessage
 import app.hapi.protocol.chat.normalizeDecryptedMessage
 import app.hapi.protocol.wire.CodexModelsResponse
@@ -217,6 +218,8 @@ private class RecordingChatApi : ChatSessionApi {
         queuedStateGate?.await()
         return queuedStateResult ?: QueuedStateResponse(queuedLocalIds = localIds, invokedLocalMessages = emptyList())
     }
+
+    override suspend fun getMessageContext(sessionId: String, messageId: String): MessageContextResponse? = null
 
     override suspend fun sendMessage(sessionId: String, message: SendMessageRequest) {
         sendCalls.value = sendCalls.value + (sessionId to message)

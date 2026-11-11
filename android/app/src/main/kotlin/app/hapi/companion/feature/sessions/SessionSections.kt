@@ -1,5 +1,8 @@
 package app.hapi.companion.feature.sessions
 
+import app.hapi.protocol.wire.SessionListOrder
+import app.hapi.protocol.wire.SessionListSort
+
 enum class SessionSectionKind { PINNED, IN_PROGRESS, ACTIVE, WORKSPACE }
 
 data class SessionSectionUi(
@@ -30,6 +33,7 @@ internal fun buildSessionSections(
     rows: List<SessionRowUi>,
     collapseOverrides: Map<String, Boolean> = emptyMap(),
     searching: Boolean = false,
+    order: SessionListOrder = SessionListOrder.Default,
 ): List<SessionSectionUi> {
     val globalPins = mutableListOf<SessionRowUi>()
     val inProgress = mutableListOf<SessionRowUi>()
@@ -39,8 +43,8 @@ internal fun buildSessionSections(
         val summary = row.summary
         when {
             summary.globalPinned == true -> globalPins.add(row)
-            summary.pinned != true && summary.active -> {
-                if (summary.thinking || summary.backgroundTaskCount > 0 || summary.pendingRequestsCount > 0) {
+            summary.pinned != true && (summary.active || summary.runningAttachedJob != null) && order.activeFirst -> {
+                if (summary.thinking || summary.backgroundTaskCount > 0 || summary.pendingRequestsCount > 0 || summary.runningAttachedJob != null) {
                     inProgress.add(row)
                 } else {
                     active.add(row)
@@ -50,6 +54,12 @@ internal fun buildSessionSections(
                 workspaces.getOrPut(workspaceKey(row)) { mutableListOf() }.add(row)
             }
         }
+    }
+
+    fun sortTime(row: SessionRowUi): Long = if (!searching && order.sort == SessionListSort.Created) {
+        row.summary.createdAt ?: 0L
+    } else {
+        row.summary.lastUserMessageAt ?: row.summary.createdAt ?: 0L
     }
 
     val sections = buildList {
@@ -71,7 +81,7 @@ internal fun buildSessionSections(
         addAll(workspaceSections.sortedWith(
             compareByDescending<SessionSectionUi> { section -> section.rows.any { it.summary.pinned == true } }
                 .thenBy { section -> if (searching) section.rows.minOf { searchOrder.getValue(it.id) } else 0 }
-                .thenByDescending { section -> section.rows.maxOf { it.summary.lastUserMessageAt ?: it.summary.createdAt ?: 0L } }
+                .thenByDescending { section -> section.rows.maxOf(::sortTime) }
                 .thenBy { it.id },
         ))
         // Keep creation available when every row in a workspace floated to the
@@ -81,7 +91,7 @@ internal fun buildSessionSections(
         addAll(actionOnlyGroups.entries.sortedWith(
             compareBy<Map.Entry<WorkspaceKey, List<SessionRowUi>>> { (_, group) ->
                 if (searching) group.minOf { searchOrder.getValue(it.id) } else 0
-            }.thenByDescending { (_, group) -> group.maxOf { it.summary.lastUserMessageAt ?: it.summary.createdAt ?: 0L } }
+            }.thenByDescending { (_, group) -> group.maxOf(::sortTime) }
                 .thenBy { it.key.id },
         ).map { (key, group) ->
             SessionSectionUi(

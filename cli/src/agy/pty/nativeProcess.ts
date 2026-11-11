@@ -29,6 +29,7 @@ export interface AgyProcess {
 }
 
 export function nativeModeFor(mode: PermissionMode): AgyNativeMode {
+    if (mode === 'acceptEdits') throw new Error('Accept Edits requires the Antigravity ACP transport');
     return mode === 'auto' || mode === 'plan' ? mode : 'default';
 }
 

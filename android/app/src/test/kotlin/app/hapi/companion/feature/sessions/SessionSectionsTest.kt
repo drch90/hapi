@@ -1,6 +1,8 @@
 package app.hapi.companion.feature.sessions
 
 import app.hapi.protocol.wire.SessionSummary
+import app.hapi.protocol.wire.SessionListOrder
+import app.hapi.protocol.wire.SessionListSort
 import app.hapi.protocol.wire.SessionSummaryMetadata
 import app.hapi.protocol.wire.WorktreeMetadata
 import kotlin.test.Test
@@ -136,4 +138,24 @@ class SessionSectionsTest {
             assertEquals(listOf("/repo/first", "/repo/second"), directories(listOf(nextPrompt, rows.last())))
         }
     }
+    @Test fun disablingActiveFirstKeepsLiveRowsInTheirWorkspace() {
+        val rows = listOf(row("live", active = true), row("history"))
+        val sections = buildSessionSections(rows, order = SessionListOrder.Base)
+        assertEquals(listOf(SessionSectionKind.WORKSPACE), sections.map { it.kind })
+        assertEquals(listOf("live", "history"), sections.single().rows.map { it.id })
+        assertEquals("/repo/app", sections.single().directory)
+    }
+
+    @Test fun createdOrderAlsoOrdersWorkspaceGroupsWhileKeepingProjectPins() {
+        val rows = listOf(
+            row("old-created-new-input", path = "/repo/a", updatedAt = 100) { it.copy(createdAt = 1) },
+            row("new-created-old-input", path = "/repo/b", updatedAt = 10) { it.copy(createdAt = 50) },
+            row("project-pin", path = "/repo/c", updatedAt = 1) { it.copy(pinned = true, createdAt = 0) },
+        )
+        val sections = buildSessionSections(rows,
+            order = SessionListOrder(sort = SessionListSort.Created, activeFirst = false))
+        assertEquals(listOf("/repo/c", "/repo/b", "/repo/a"), sections.map { it.directory })
+        assertEquals(rows.map { it.id }.toSet(), sections.flatMap { it.rows }.map { it.id }.toSet())
+    }
+
 }

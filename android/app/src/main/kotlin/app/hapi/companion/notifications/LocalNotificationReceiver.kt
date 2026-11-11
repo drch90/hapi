@@ -86,7 +86,9 @@ internal class LocalNotificationReceiver(
                             if (!fresh) return@collect
                             if (suppressed(completion.sessionId)) return@collect
                             val session = hub.sessionStore.sessions.value.firstOrNull { it.id == completion.sessionId }
-                            val type = if (completion.task) PushType.TASK_NOTIFICATION else PushType.READY
+                            // Local task completions keep their plain notification and tag;
+                            // the hub no longer defines a task-specific push action.
+                            val type = if (completion.task) null else PushType.READY
                             show(type, completion.sessionId, name(session), completion.body)
                         }
                     }
@@ -162,19 +164,19 @@ internal class LocalNotificationReceiver(
     private fun activeTags(): Set<String> = context.getSystemService(NotificationManager::class.java)
         .activeNotifications.mapNotNull { it.tag }.toSet()
 
-    private fun payload(type: PushType, sessionId: String, sessionName: String?, body: String?): PushPayload {
+    private fun payload(type: PushType?, sessionId: String, sessionName: String?, body: String?): PushPayload {
         val localized = context.localizedForAppLanguage(graph.appLanguage.value)
         val title = localized.getString(when (type) {
-            PushType.READY, PushType.TASK_NOTIFICATION -> R.string.local_notifications_ready
+            PushType.READY, null -> R.string.local_notifications_ready
             PushType.PERMISSION_REQUEST -> R.string.local_notifications_approval
             PushType.INPUT_REQUEST -> R.string.local_notifications_question
         })
-        return PushPayload(type, type.wire, sessionId, sessionName, null, title,
+        return PushPayload(type, type?.wire ?: "task-notification", sessionId, sessionName, null, title,
             body?.let(LocalNotificationPolicy::preview) ?: localized.getString(R.string.local_notifications_view_session),
             null, PushSeverity.INFO, null, null)
     }
 
-    private fun show(type: PushType, sessionId: String, sessionName: String?, body: String?, quiet: Boolean = false) {
+    private fun show(type: PushType?, sessionId: String, sessionName: String?, body: String?, quiet: Boolean = false) {
         if (!current() || !LocalNotificationService.canNotify(context)) return
         PushNotifications.show(context.localizedForAppLanguage(graph.appLanguage.value),
             payload(type, sessionId, sessionName, body), sourceHub = hub.hubUrl, allowActions = false, onlyAlertOnce = quiet)
