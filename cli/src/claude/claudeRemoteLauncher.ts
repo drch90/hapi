@@ -545,7 +545,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                     // The original task may already have side effects.
                                     // After live input is written, a transport failure
                                     // must not replay that task as a startup retry.
-                                    if (sent) inFlightMessage = null;
+                                    if (sent) {
+                                        inFlightMessage = null;
+                                        permissionHandler.denyPendingForSteer();
+                                    }
                                     return sent;
                                 } catch (error) {
                                     inFlightMessage = null;
@@ -558,6 +561,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         claudeArgs: session.claudeArgs,
                         onMessage,
                         onContextUsage: (usage) => sdkToLogConverter.applyContextUsage(usage.model, usage.maxTokens),
+                        onAccountIdentity: (identity) => sdkToLogConverter.updateAccountIdentity?.(identity),
                         onFirstResult: (initialMessage) => {
                             // SDK streams omit Claude Code's native ai-title; it is only in the transcript.
                             const sessionId = session.sessionId;

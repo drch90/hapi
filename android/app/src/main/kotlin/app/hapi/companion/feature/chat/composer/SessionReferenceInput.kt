@@ -192,12 +192,14 @@ internal class SessionEditText(context: Context) : AppCompatEditText(context) {
 @Composable
 internal fun SessionReferenceInput(value: String, onChange: (String, Int, Int) -> Unit, sessionId: String,
     sessions: List<SessionSummary>, machineLabel: (String?) -> String, focusRequest: Long, modifier: Modifier = Modifier,
-    enabled: Boolean = true, caretPosition: Int = -1, showSessionSuggestions: Boolean = true) {
+    enabled: Boolean = true, caretPosition: Int = -1, showSessionSuggestions: Boolean = true,
+    onFocusChange: (Boolean) -> Unit = {}) {
     val focusRequester = remember { FocusRequester() }
     var editor by remember { mutableStateOf<SessionEditText?>(null) }
     var isFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf<String?>(null) }
     val latestChange by rememberUpdatedState(onChange)
+    val latestFocusChange by rememberUpdatedState(onFocusChange)
     val colors = MaterialTheme.colorScheme
     val hint = stringResource(R.string.chat_composer_placeholder)
     val candidates = remember(sessions, query, sessionId, machineLabel) {
@@ -240,7 +242,7 @@ internal fun SessionReferenceInput(value: String, onChange: (String, Int, Int) -
                 view.linkColor = colors.primary.toArgb(); view.chipColor = colors.secondaryContainer.toArgb()
                 view.setTextColor(colors.onSurface.toArgb()); view.setHintTextColor(colors.onSurfaceVariant.toArgb())
                 view.textSize = 16f; view.hint = hint
-                view.focusChanged = { isFocused = it }
+                view.focusChanged = { isFocused = it; latestFocusChange(it) }
                 // External mention insertion supplies a wire caret. Do not
                 // report the intermediate chip replacement as a user edit.
                 view.selectionChanged = null

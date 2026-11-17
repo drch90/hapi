@@ -65,8 +65,10 @@ function createApp(session: Session, opts?: {
     getSessionExport?: (sessionId: string, session: Session, options?: { force?: boolean }) => unknown
     sessionExists?: boolean
     archiveSession?: (sessionId: string) => Promise<void>
+    acknowledgeModelError?: (sessionId: string, eventId: string) => Promise<void>
     getCursorChatStoreStatus?: SyncEngine['getCursorChatStoreStatus']
     listCodexModelsForSession?: SyncEngine['listCodexModelsForSession']
+    branchConversation?: SyncEngine['branchConversation']
     listDshModelsForSession?: SyncEngine['listDshModelsForSession']
     listPiModelsForSession?: SyncEngine['listPiModelsForSession']
     forkConversation?: SyncEngine['forkConversation']
@@ -80,6 +82,7 @@ function createApp(session: Session, opts?: {
     allocateAttachedJobVersion?: SyncEngine['allocateAttachedJobVersion']
     setSessionPinned?: (sessionId: string, pinned: boolean) => void
     setSessionPinMode?: (sessionId: string, mode: 'none' | 'project' | 'global') => void
+    namespace?: string
 }) {
     const applySessionConfigCalls: Array<[string, Record<string, unknown>]> = []
     const applySessionConfig = async (sessionId: string, config: Record<string, unknown>) => {
@@ -144,6 +147,7 @@ function createApp(session: Session, opts?: {
     }))
     const sessionExists = opts?.sessionExists !== false
     const archiveSessionMock = opts?.archiveSession ?? (async () => {})
+    const acknowledgeModelErrorMock = opts?.acknowledgeModelError ?? (async () => {})
     const engine = {
         resolveSessionAccess: () => sessionExists
             ? { ok: true, sessionId: session.id, session }
@@ -178,6 +182,7 @@ function createApp(session: Session, opts?: {
         archiveSession: archiveSessionMock,
         setSessionPinned: opts?.setSessionPinned ?? (() => {}),
         setSessionPinMode: opts?.setSessionPinMode ?? (() => {}),
+        acknowledgeModelError: acknowledgeModelErrorMock,
         getSessionExport: opts?.getSessionExport ?? (() => ({
             type: 'success',
             payload: {
@@ -192,6 +197,7 @@ function createApp(session: Session, opts?: {
             success: true,
             commands: []
         })),
+        branchConversation: opts?.branchConversation,
         forkConversation: opts?.forkConversation ?? (async () => ({ type: 'success', sessionId: 'child-1' })),
         clearConversation: opts?.clearConversation,
         implementCodexPlan: opts?.implementCodexPlan,
@@ -205,7 +211,7 @@ function createApp(session: Session, opts?: {
 
     const app = new Hono<WebAppEnv>()
     app.use('*', async (c, next) => {
-        c.set('namespace', 'default')
+        c.set('namespace', opts?.namespace ?? 'default')
         await next()
     })
     app.route('/api', createSessionsRoutes(() => engine as SyncEngine))
@@ -226,6 +232,8 @@ describe('sessions routes', () => {
         expect(calls).toEqual([['session-1', 'default', 'plan']])
         result = { ok: false, code: 'stale_plan', error: 'Old plan' }
         expect((await post()).status).toBe(409)
+        result = { ok: false, code: 'failed', error: 'Try again' }
+        expect((await post()).status).toBe(500)
         result = { ok: false, code: 'indeterminate', error: 'Unknown result' }
         expect((await post()).status).toBe(503)
     })
@@ -725,9 +733,32 @@ describe('sessions routes', () => {
 
         expect(response.status).toBe(400)
         expect(await response.json()).toEqual({
-            error: 'Model reasoning effort is only supported for Codex and OpenCode sessions'
+            error: 'Model reasoning effort is only supported for Codex, OpenCode, and DSH sessions'
         })
         expect(applySessionConfigCalls).toEqual([])
+    })
+
+    it('applies model reasoning effort changes for remote DSH sessions', async () => {
+        const session = createSession({
+            metadata: {
+                path: '/tmp/project',
+                host: 'localhost',
+                flavor: 'dsh'
+            }
+        })
+        const { app, applySessionConfigCalls } = createApp(session)
+
+        const response = await app.request('/api/sessions/session-1/model-reasoning-effort', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ modelReasoningEffort: 'max' })
+        })
+
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ ok: true })
+        expect(applySessionConfigCalls).toEqual([
+            ['session-1', { modelReasoningEffort: 'max' }]
+        ])
     })
 
     it('rejects model reasoning effort changes for local Codex sessions', async () => {
@@ -1851,6 +1882,30 @@ describe('sessions routes', () => {
         expect(calls[0]?.[2]).toBe('boundary')
     })
 
+    it('validates portable branch options and passes the authenticated namespace', async () => {
+        let calls = 0
+        const { app } = createApp(createSession({ active: false }), {
+            branchConversation: async (id, namespace, options) => {
+                calls++
+                expect([id, namespace, options.agent, options.boundary]).toEqual(['session-1', 'default', 'codex', 'after'])
+                return { type: 'success', sessionId: 'branch-child', warning: 'Inspect uncertain launch' }
+            }
+        })
+        const options = { requestId: 'b428e5be-dc54-4edc-9903-59250c1b5c31', messageLocalId: 'turn-2',
+            agent: 'codex', boundary: 'after', instruction: 'Try again' }
+        const post = (body: unknown) => app.request('/api/sessions/session-1/branch', {
+            method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+        })
+        expect((await post({ ...options, agent: 'arbitrary-executable' })).status).toBe(400)
+        expect((await post({ ...options, requestId: 'invalid' })).status).toBe(400)
+        expect((await post({ ...options, instruction: '  ' })).status).toBe(400)
+        expect((await post({ ...options, nativeSessionId: 'do-not-reuse' })).status).toBe(400)
+        const response = await post(options)
+        expect(response.status).toBe(200)
+        expect(await response.json()).toEqual({ sessionId: 'branch-child', warning: 'Inspect uncertain launch' })
+        expect(calls).toBe(1)
+    })
+
     it('forks via POST /sessions/:id/fork and returns the child session id', async () => {
         const calls: Array<{ sessionId: string; namespace: string; messageLocalId?: string }> = []
         const session = createSession({
@@ -2248,6 +2303,135 @@ describe('sessions routes', () => {
         expect(response.status).toBe(200)
         const body = await response.json() as { sessions: Array<{ id: string }> }
         expect(body.sessions.map((s) => s.id)).toEqual(['new-inactive'])
+    })
+
+    describe('POST /sessions/:id/model-error/acknowledge', () => {
+        it('forwards eventId to the engine when body is valid', async () => {
+            const calls: Array<[string, string]> = []
+            const { app } = createApp(createSession(), {
+                acknowledgeModelError: async (sessionId, eventId) => {
+                    calls.push([sessionId, eventId])
+                }
+            })
+
+            const response = await app.request('/api/sessions/session-1/model-error/acknowledge', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ eventId: 'evt-ack-1' })
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+            expect(calls).toEqual([['session-1', 'evt-ack-1']])
+        })
+
+        it('returns 400 when eventId is missing', async () => {
+            let called = false
+            const { app } = createApp(createSession(), {
+                acknowledgeModelError: async () => { called = true }
+            })
+
+            const response = await app.request('/api/sessions/session-1/model-error/acknowledge', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({})
+            })
+
+            expect(response.status).toBe(400)
+            expect(called).toBe(false)
+        })
+
+        it('returns 409 when the displayed error no longer matches', async () => {
+            const { app } = createApp(createSession(), {
+                acknowledgeModelError: async () => {
+                    throw new Error('Model error changed; refresh before acknowledging.')
+                }
+            })
+
+            const response = await app.request('/api/sessions/session-1/model-error/acknowledge', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ eventId: 'evt-stale' })
+            })
+
+            expect(response.status).toBe(409)
+            expect(await response.json()).toEqual({
+                error: 'Model error changed; refresh before acknowledging.'
+            })
+        })
+    })
+
+    describe('POST /sessions/:id/model-error/bridge', () => {
+        it('returns 409 session_inactive when the session is not active', async () => {
+            const { app } = createApp(createSession({
+                active: false,
+                metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+            }))
+
+            const response = await app.request('/api/sessions/session-1/model-error/bridge', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ eventId: 'evt-1' })
+            })
+
+            expect(response.status).toBe(409)
+            expect(await response.json()).toEqual({
+                error: 'Session is inactive',
+                code: 'session_inactive'
+            })
+        })
+
+        it('returns 400 when eventId is missing', async () => {
+            const { app } = createApp(createSession({
+                metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+            }))
+
+            const response = await app.request('/api/sessions/session-1/model-error/bridge', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({})
+            })
+
+            expect(response.status).toBe(400)
+        })
+    })
+
+    describe('POST /sessions/:id/model-error/auto-bridge-setting', () => {
+        it('rejects non-default namespaces with 403 and does not apply config', async () => {
+            const { app, applySessionConfigCalls } = createApp(createSession({
+                metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+            }), { namespace: 'tenant-a' })
+
+            const response = await app.request('/api/sessions/session-1/model-error/auto-bridge-setting', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ enabled: true })
+            })
+
+            expect(response.status).toBe(403)
+            expect(await response.json()).toEqual({
+                error: 'Model error auto-bridge is only available to the hub owner'
+            })
+            expect(applySessionConfigCalls).toEqual([])
+        })
+
+        it('applies the setting for the default namespace', async () => {
+            const { app, applySessionConfigCalls } = createApp(createSession({
+                metadata: { path: '/tmp/project', host: 'localhost', flavor: 'cursor' }
+            }))
+
+            const response = await app.request('/api/sessions/session-1/model-error/auto-bridge-setting', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ enabled: true })
+            })
+
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ ok: true })
+            expect(applySessionConfigCalls).toEqual([
+                ['session-1', { autoBridgeTransientModelErrors: true }]
+            ])
+        })
     })
 
     it('active=true filters inactive sessions before limit truncation', async () => {

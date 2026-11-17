@@ -30,9 +30,12 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
             await page.locator(attachment('first.png')).getByTitle('Click to zoom').click()
             await page.evaluate(() => window.__composerImagePreview!.setDisabled(true))
             await expect(page.getByRole('dialog', { name: 'first.png' })).toBeVisible()
-            await expect(page.getByRole('button', { name: 'Reorder attachment first.png' })).toHaveCount(0)
+            // The modal hides its background from the accessibility tree, so
+            // inspect the handle's presence even while the preview is open.
+            const reorderHandle = page.getByRole('button', { name: 'Reorder attachment first.png', includeHidden: true })
+            await expect(reorderHandle).toHaveCount(0)
             await page.evaluate(() => window.__composerImagePreview!.setDisabled(false))
-            await expect(page.getByRole('button', { name: 'Reorder attachment first.png' })).toHaveCount(1)
+            await expect(reorderHandle).toHaveCount(1)
             await expect(page.getByRole('dialog', { name: 'first.png' })).toBeVisible()
             await page.evaluate(() => window.__composerImagePreview!.clearAttachments())
             await expect(page.getByRole('dialog')).toBeHidden()

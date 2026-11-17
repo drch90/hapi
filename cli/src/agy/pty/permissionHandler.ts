@@ -64,7 +64,7 @@ export class AgyPtyPermissionHandler extends BasePermissionHandler<Response, voi
         const request: Request = { step, menu, signature: signature(step) };
         this.requests.set(id, request);
         const tool = presentation(step);
-        this.addPendingRequest(id, tool.name, tool.input, { resolve: () => {}, reject: () => {} }, { toolCallId: step.tool!.id });
+        this.addPendingRequest(id, tool.name, tool.input, { resolve: () => {}, reject: () => {} }, step.tool!.id);
         if (this.sessionApprovals.has(this.grantKey(step))) {
             this.pendingRequests.delete(id);
             void this.handlePermissionResponse({ id, approved: true, decision: 'approved_for_session' },

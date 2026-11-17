@@ -46,6 +46,7 @@ import app.hapi.protocol.catalog.PermissionModes
 @Composable
 fun SessionConfigSheet(
     config: SessionConfigUi,
+    contextUsage: ContextUsageIndicator?,
     onDismiss: () -> Unit,
     onSetPermissionMode: (PermissionMode) -> Unit,
     onSetModel: (String?) -> Unit,
@@ -62,6 +63,7 @@ fun SessionConfigSheet(
     ModalBottomSheet(onDismissRequest = onDismiss) {
         SessionConfigSheetContent(
             config = config,
+            contextUsage = contextUsage,
             onSetPermissionMode = onSetPermissionMode,
             onSetModel = onSetModel,
             onSetEffort = onSetEffort,
@@ -85,6 +87,7 @@ internal fun SessionConfigSheetContent(
     onCollaborationMode: (String) -> Unit = {},
     onServiceTier: (String) -> Unit = {},
     onCopilotAgentMode: (String) -> Unit = {},
+    contextUsage: ContextUsageIndicator? = null,
 ) {
     var modelQuery by remember { mutableStateOf("") }
     Column(
@@ -125,6 +128,12 @@ internal fun SessionConfigSheetContent(
                     onClick = { onCopilotAgentMode(mode.wireId) }, enabled = config.active && !config.configurationDisabled)
             }
         }
+        // Context details are also available from session settings.
+        if (contextUsage != null) {
+            SectionTitle(stringResource(R.string.chat_config_context))
+            ContextUsageChip(indicator = contextUsage, modifier = Modifier.padding(vertical = 6.dp))
+        }
+
         // Web parity: the permission section disappears only when the switch
         // callback is withheld — copilot sessions under local terminal
         // control (SessionChat.tsx:2159-2163 hides it via

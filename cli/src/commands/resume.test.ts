@@ -7,6 +7,7 @@ const {
     listResumableSessionsMock,
     getLocalResumeTargetMock,
     handoffSessionToLocalMock,
+    prepareSessionForLocalResumeMock,
     renderMock,
     runCodexMock,
     runClaudeMock,
@@ -14,6 +15,7 @@ const {
     runPiMock,
     runAgyMock,
     runDshMock,
+    runHermesMock,
     assertCodexLocalSupportedMock,
     existsSyncMock
 } = vi.hoisted(() => ({
@@ -23,6 +25,7 @@ const {
     listResumableSessionsMock: vi.fn(),
     getLocalResumeTargetMock: vi.fn(),
     handoffSessionToLocalMock: vi.fn(async () => {}),
+    prepareSessionForLocalResumeMock: vi.fn(async () => {}),
     renderMock: vi.fn(),
     runCodexMock: vi.fn(async () => {}),
     runClaudeMock: vi.fn(async () => {}),
@@ -30,6 +33,7 @@ const {
     runPiMock: vi.fn(async () => {}),
     runAgyMock: vi.fn(async () => {}),
     runDshMock: vi.fn(async () => {}),
+    runHermesMock: vi.fn(async () => {}),
     assertCodexLocalSupportedMock: vi.fn(),
     existsSyncMock: vi.fn(() => true)
 }))
@@ -42,7 +46,8 @@ vi.mock('@/api/api', () => ({
         create: async () => ({
             listResumableSessions: listResumableSessionsMock,
             getLocalResumeTarget: getLocalResumeTargetMock,
-            handoffSessionToLocal: handoffSessionToLocalMock
+            handoffSessionToLocal: handoffSessionToLocalMock,
+            prepareSessionForLocalResume: prepareSessionForLocalResumeMock
         })
     }
 }))
@@ -56,6 +61,7 @@ vi.mock('@/grok/runGrok', () => ({ runGrok: runGrokMock }))
 vi.mock('@/pi/runPi', () => ({ runPi: runPiMock }))
 vi.mock('@/agy/runAgy', () => ({ runAgy: runAgyMock }))
 vi.mock('@/dsh/runDsh', () => ({ runDsh: runDshMock }))
+vi.mock('@/hermes/runHermes', () => ({ runHermes: runHermesMock }))
 vi.mock('@/codex/utils/codexVersion', () => ({ assertCodexLocalSupported: assertCodexLocalSupportedMock }))
 vi.mock('node:fs', () => ({ existsSync: existsSyncMock }))
 
@@ -77,6 +83,7 @@ describe('resumeCommand', () => {
         listResumableSessionsMock.mockReset()
         getLocalResumeTargetMock.mockReset()
         handoffSessionToLocalMock.mockClear()
+        prepareSessionForLocalResumeMock.mockClear()
         renderMock.mockReset()
         renderMock.mockImplementation((element: { props?: { onSelect?: (sessionId: string) => void } }) => {
             queueMicrotask(() => element.props?.onSelect?.('picked-session'))
@@ -88,6 +95,7 @@ describe('resumeCommand', () => {
         runPiMock.mockClear()
         runAgyMock.mockClear()
         runDshMock.mockClear()
+        runHermesMock.mockClear()
         assertCodexLocalSupportedMock.mockClear()
         existsSyncMock.mockReturnValue(true)
     })
@@ -152,6 +160,49 @@ describe('resumeCommand', () => {
             consoleErrorSpy.mockRestore()
             exitSpy.mockRestore()
         }
+    })
+
+    it('preserves an active Hermes process instead of handing it off', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+            throw new Error(`process.exit:${code}`)
+        }) as never)
+        getLocalResumeTargetMock.mockResolvedValue({
+            sessionId: 'hapi-hermes', flavor: 'hermes', directory: '/tmp/project',
+            machineId: 'machine-1', active: true, thinking: false, controlledByUser: false,
+            agentSessionId: 'native-hermes', permissionMode: 'default'
+        })
+
+        try {
+            await expect(resumeCommand.run(createContext(['hapi-hermes']))).rejects.toThrow('process.exit:1')
+            expect(handoffSessionToLocalMock).not.toHaveBeenCalled()
+            expect(prepareSessionForLocalResumeMock).not.toHaveBeenCalled()
+            expect(runHermesMock).not.toHaveBeenCalled()
+            expect(consoleErrorSpy).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('Hermes is already active'))
+        } finally {
+            consoleErrorSpy.mockRestore()
+            exitSpy.mockRestore()
+        }
+    })
+
+    it('prepares an inactive Hermes target before reopening its original conversation', async () => {
+        getLocalResumeTargetMock.mockResolvedValue({
+            sessionId: 'hapi-hermes', flavor: 'hermes', directory: '/tmp/project',
+            machineId: 'machine-1', active: false, thinking: false, controlledByUser: false,
+            agentSessionId: 'native-hermes', permissionMode: 'acceptEdits', model: 'custom:lab:model'
+        })
+
+        await resumeCommand.run(createContext(['hapi-hermes']))
+
+        expect(handoffSessionToLocalMock).not.toHaveBeenCalled()
+        expect(prepareSessionForLocalResumeMock).toHaveBeenCalledWith('hapi-hermes')
+        expect(runHermesMock).toHaveBeenCalledWith({
+            existingSessionId: 'hapi-hermes', workingDirectory: '/tmp/project',
+            resumeSessionId: 'native-hermes', startedBy: 'terminal', startingMode: 'remote',
+            permissionMode: 'acceptEdits', model: 'custom:lab:model'
+        })
+        expect(prepareSessionForLocalResumeMock.mock.invocationCallOrder[0])
+            .toBeLessThan(runHermesMock.mock.invocationCallOrder[0])
     })
 
     it('resumes an AGY target in remote mode instead of falling through to Cursor', async () => {
@@ -250,6 +301,10 @@ describe('resumeCommand', () => {
         await resumeCommand.run(createContext(['hapi-session-2']))
 
         expect(handoffSessionToLocalMock).not.toHaveBeenCalled()
+        // The hub clears a hub-authored archive before the reopen (#1911 guard).
+        expect(prepareSessionForLocalResumeMock).toHaveBeenCalledWith('hapi-session-2')
+        expect(prepareSessionForLocalResumeMock.mock.invocationCallOrder[0])
+            .toBeLessThan(runClaudeMock.mock.invocationCallOrder[0]!)
         expect(runClaudeMock).toHaveBeenCalledWith({
             existingSessionId: 'hapi-session-2',
             workingDirectory: '/tmp/project',

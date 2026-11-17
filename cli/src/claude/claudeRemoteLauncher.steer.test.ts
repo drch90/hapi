@@ -10,7 +10,8 @@ const harness = vi.hoisted(() => ({
     steered: [] as string[],
     deliveries: [] as Array<(delivered: boolean) => void>,
     endTurn: null as (() => void) | null,
-    signal: null as AbortSignal | null
+    signal: null as AbortSignal | null,
+    denyPendingForSteer: vi.fn()
 }))
 
 vi.mock('./claudeRemote', () => ({
@@ -49,6 +50,7 @@ vi.mock('./utils/permissionHandler', () => ({
         reset(): void {}
         isAborted(): boolean { return false }
         handleModeChange(): void {}
+        denyPendingForSteer = harness.denyPendingForSteer
     }
 }))
 
@@ -146,6 +148,7 @@ describe('claudeRemoteLauncher steer', () => {
         harness.deliveries = []
         harness.endTurn = null
         harness.signal = null
+        harness.denyPendingForSteer.mockClear()
     })
 
     it('writes the queued row into the running turn and acks it once Claude picks it up', async () => {
@@ -155,6 +158,7 @@ describe('claudeRemoteLauncher steer', () => {
 
             await expect(steer('steer-1')).resolves.toEqual({ steered: true })
             expect(harness.steered).toEqual(['Also run lint'])
+            expect(harness.denyPendingForSteer).toHaveBeenCalledOnce()
             expect(client.setSteerDeliveryState).toHaveBeenCalledWith(['steer-1'], 'dispatching')
             expect(queue.size()).toBe(0)
             expect(client.emitMessagesConsumed).not.toHaveBeenCalledWith(['steer-1'], { steered: true })
@@ -178,6 +182,7 @@ describe('claudeRemoteLauncher steer', () => {
             })
             await expect(steer('missing')).resolves.toEqual({ steered: false, error: 'Message is no longer queued or is already being steered' })
             expect(harness.steered).toEqual([])
+            expect(harness.denyPendingForSteer).not.toHaveBeenCalled()
             expect(queue.pendingLocalIds()).toEqual(['command'])
         } finally {
             await stop()

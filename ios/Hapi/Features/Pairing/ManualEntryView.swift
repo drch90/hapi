@@ -3,20 +3,36 @@ import SwiftUI
 
 /// Manual pairing path for hubs without `--relay` (nothing to scan): type or
 /// paste the hub URL and the access token the hub prints at startup, then
-/// pair directly with inline progress and error states.
+/// pair directly with inline progress and error states. The `.passkey` mode
+/// asks only for the hub URL and signs in with a native passkey.
 struct ManualEntryView: View {
+    enum Mode {
+        case accessToken
+        case passkey
+    }
+
+    var mode: Mode = .accessToken
+
     @Environment(\.dismiss) private var dismiss
     @Environment(AppModel.self) private var model
     @State private var attempt = PairingAttempt()
 
     var body: some View {
         NavigationStack {
-            ManualPairingFormView(isPairing: attempt.isPairing, failure: attempt.failure) {
+            ManualPairingFormView(
+                isPairing: attempt.isPairing,
+                failure: attempt.failure,
+                passkeyOnly: mode == .passkey
+            ) {
                 attempt.failure = nil
             } onPair: { submission in
                 attempt.pair(model, hubUrl: submission.hubURL, accessToken: submission.accessToken)
+            } onPasskeySignIn: { hubURL in
+                attempt.signInWithPasskey(model, hubUrl: hubURL)
             }
-            .navigationTitle("Enter Hub Details")
+            .navigationTitle(mode == .passkey
+                ? String(localized: "Sign in with a Passkey")
+                : String(localized: "Enter Hub Details"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -36,8 +52,13 @@ struct ManualEntryView: View {
 struct ManualPairingFormView: View {
     let isPairing: Bool
     let failure: PairingFailure?
+    /// Hub URL only: hides the access token and Pair button, and makes the
+    /// passkey button the submit action.
+    var passkeyOnly = false
     var onEdit: () -> Void
     var onPair: (ManualPairingForm.Submission) -> Void
+    /// URL-only native passkey sign-in (shown in `passkeyOnly` mode).
+    var onPasskeySignIn: ((String) -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.locale) private var locale
@@ -93,44 +114,83 @@ struct ManualPairingFormView: View {
                 }
             }
 
-            Section {
-                input(.accessToken)
-                inputError(for: .accessToken)
-            } header: {
-                Text("Access token")
-            } footer: {
-                Text("Printed by the hub at startup, or available in web Settings → Companion Pairing. You can also paste a pairing link here.")
-            }
-
-            if form.didImportLink {
-                Section {
-                    Label("Pairing details filled in. Review them, then tap Pair.", systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("pairing.imported")
-                }
+            if !passkeyOnly {
+                tokenSections
             }
 
             if let failure {
                 Section { PairingErrorView(failure: failure) }
             }
 
-            Section {
-                Button(action: pairNow) {
-                    if isPairing {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                            Text("Pairing…")
-                        }
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        Text(failure == nil ? LocalizedStringKey("Pair") : LocalizedStringKey("Try Again"))
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .accessibilityIdentifier("pairing.submit")
-                .disabled(form.submission == nil || isPairing)
+            if !passkeyOnly {
+                pairSection
             }
+
+            if passkeyOnly, onPasskeySignIn != nil {
+                passkeySection
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tokenSections: some View {
+        Section {
+            input(.accessToken)
+            inputError(for: .accessToken)
+        } header: {
+            Text("Access token")
+        } footer: {
+            Text("Printed by the hub at startup, or available in web Settings → Companion Pairing. You can also paste a pairing link here.")
+        }
+
+        if form.didImportLink {
+            Section {
+                Label("Pairing details filled in. Review them, then tap Pair.", systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("pairing.imported")
+            }
+        }
+    }
+
+    private var pairSection: some View {
+        Section {
+            Button(action: pairNow) {
+                if isPairing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                        Text("Pairing…")
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Text(failure == nil ? LocalizedStringKey("Pair") : LocalizedStringKey("Try Again"))
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .accessibilityIdentifier("pairing.submit")
+            .disabled(form.submission == nil || isPairing)
+        }
+    }
+
+    private var passkeySection: some View {
+        Section {
+            Button(action: signInWithPasskey) {
+                if isPairing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                        Text("Signing in…")
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Label("Sign in with a Passkey", systemImage: "person.badge.key")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .accessibilityIdentifier("pairing.passkey")
+            .disabled(form.passkeyHubURL == nil || isPairing)
+        } footer: {
+            Text("Uses a passkey you added for this hub in Settings → Passkeys. No access token needed.")
         }
     }
 
@@ -162,7 +222,9 @@ struct ManualPairingFormView: View {
             },
             onReturn: {
                 guard !isPairing else { return }
-                if field == .address {
+                if field == .address && passkeyOnly {
+                    signInWithPasskey()
+                } else if field == .address {
                     form.finishEditing(field)
                     focusedField = .accessToken
                 } else {
@@ -187,6 +249,14 @@ struct ManualPairingFormView: View {
         }
     }
 
+    private func signInWithPasskey() {
+        guard !isPairing else { return }
+        form.finishEditing(.address)
+        guard let hubURL = form.passkeyHubURL else { return }
+        focusedField = nil
+        onPasskeySignIn?(hubURL)
+    }
+
     private func pairNow() {
         guard !isPairing else { return }
         form.finishEditing(.address)
@@ -194,5 +264,67 @@ struct ManualPairingFormView: View {
         guard let submission = form.submission else { return }
         focusedField = nil
         onPair(submission)
+    }
+}
+
+/// Discovery is a locator-only local ceremony. Confirm before contacting the
+/// recovered Hub, then obtain a separate, Hub-bound authentication challenge.
+struct PasskeyDiscoveryView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
+    @State private var attempt = PairingAttempt()
+    @State private var discoveredHub: String?
+    @State private var finding = false
+    @State private var discoveryError: String?
+    @State private var showManual = false
+
+    private var busy: Bool { finding || attempt.isPairing }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Choose a passkey to find its Hub. This step does not sign you in.")
+                    Button("Find Hub with a Passkey") {
+                        finding = true
+                        discoveredHub = nil
+                        discoveryError = nil
+                        attempt.failure = nil
+                        Task {
+                            defer { finding = false }
+                            do {
+                                discoveredHub = try await NativePasskeys.discoverHub(authenticator: PlatformPasskeyAuthenticator())
+                            } catch PasskeyError.canceled {
+                                // Silent; no Hub request has been made.
+                            } catch {
+                                discoveryError = String(localized: "Could not find the Hub. Try again or enter its address manually.")
+                            }
+                        }
+                    }
+                    .disabled(busy)
+                }
+                if let hub = discoveredHub {
+                    Section {
+                        Text(hub).textSelection(.enabled)
+                        Text("Confirm this Hub before connecting. A separate passkey check will sign you in.")
+                        Button("Sign in with a Passkey") { attempt.signInWithPasskey(model, hubUrl: hub) }
+                            .disabled(busy)
+                    }
+                }
+                if busy { ProgressView() }
+                if let discoveryError { Text(discoveryError).foregroundStyle(.red) }
+                if let failure = attempt.failure { PairingErrorView(failure: failure) }
+                Section {
+                    Button("Enter Hub address manually") { showManual = true }.disabled(busy)
+                }
+            }
+            .navigationTitle("Sign in with a Passkey")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
+            }
+            .interactiveDismissDisabled(busy)
+            .sheet(isPresented: $showManual) { ManualEntryView(mode: .passkey).macSheetSizing() }
+        }
     }
 }

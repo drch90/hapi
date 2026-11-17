@@ -38,7 +38,9 @@ import app.hapi.companion.feature.chat.composer.DictationController
 import app.hapi.companion.ui.markdown.LocalMarkdownLinkHandler
 import app.hapi.companion.ui.markdown.LocalMarkdownRenderCache
 import app.hapi.companion.ui.theme.HapiTypography
+import app.hapi.companion.ui.theme.NeutralChatSurfaces
 import app.hapi.companion.ui.theme.ReadingColumn
+import app.hapi.companion.ui.theme.hapi
 import app.hapi.protocol.chat.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -144,55 +146,57 @@ internal fun ChatHost(
         ChatInteractions(state.flavor, state.permissionOverrides, viewModel::resolvePermission, viewModel::retryFailedMessage)
     }
     val openFile: (String, Int?) -> Unit = { path, line -> pauseReading(); onOpenFile(path, line) }
-    app.hapi.companion.feature.chat.media.ChatImageGallery(state.blocks, media) {
-        CompositionLocalProvider(
-            LocalChatInspection provides actions,
-            LocalChatInteractions provides interactions,
-            LocalChatMedia provides media,
-            LocalMarkdownRenderCache provides viewModel.markdownCache,
-            LocalMarkdownLinkHandler provides rememberChatLinkHandler(
-                onOpenFile = openFile, onOpenSession = viewModel::openReference, workspacePath = state.basePath,
-            ),
-        ) {
-            Box(Modifier.fillMaxSize()) {
-                NavHost(navigation, startDestination = "thread") {
-                    composable("thread") {
-                        ChatScreen(
-                            viewModel, media, onBack, snackbarHostState = snackbar,
-                            dictation = dictation, onOpenFiles = { pauseReading(); onOpenFiles() }, onOpenFile = openFile,
-                            onOpenScratchlist = onOpenScratchlist?.let { open -> { pauseReading(); open() } },
-                            onNewInDirectory = onNewInDirectory,
-                            transcriptList = transcriptList, readingState = reading,
-                        )
-                    }
-                    for (kind in listOf("group", "tool", "process", "message")) {
-                        composable("$kind/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { destination ->
-                            val id = destination.arguments?.getString("id").orEmpty()
-                            val revision by viewModel.inspection.revision.collectAsState()
-                            val back = { navigation.popBackStack(); Unit }
-                            val close = { navigation.popBackStack("thread", false); Unit }
-                            when (kind) {
-                                "group" -> {
-                                    val group = remember(id, revision) { viewModel.inspection.group(id) }
-                                    if (group == null) MissingInspection(back, close)
-                                    else ToolGroupBrowser(group, state.basePath, openFile, back, close)
-                                }
-                                "message" -> {
-                                    val message = remember(id, revision) { viewModel.inspection.message(id) }
-                                    if (message == null) MissingInspection(back, close)
-                                    else MessageReader(message.value.text, message.stale, back, close)
-                                }
-                                else -> {
-                                    val tool = remember(id, revision) { viewModel.inspection.tool(id) }
-                                    if (tool == null) MissingInspection(back, close)
-                                    else ToolReader(tool, kind == "process", state.basePath, openFile, back, close)
+    NeutralChatSurfaces {
+        app.hapi.companion.feature.chat.media.ChatImageGallery(state.blocks, media) {
+            CompositionLocalProvider(
+                LocalChatInspection provides actions,
+                LocalChatInteractions provides interactions,
+                LocalChatMedia provides media,
+                LocalMarkdownRenderCache provides viewModel.markdownCache,
+                LocalMarkdownLinkHandler provides rememberChatLinkHandler(
+                    onOpenFile = openFile, onOpenSession = viewModel::openReference, workspacePath = state.basePath,
+                ),
+            ) {
+                Box(Modifier.fillMaxSize()) {
+                    NavHost(navigation, startDestination = "thread") {
+                        composable("thread") {
+                            ChatScreen(
+                                viewModel, media, onBack, snackbarHostState = snackbar,
+                                dictation = dictation, onOpenFiles = { pauseReading(); onOpenFiles() }, onOpenFile = openFile,
+                                onOpenScratchlist = onOpenScratchlist?.let { open -> { pauseReading(); open() } },
+                                onNewInDirectory = onNewInDirectory,
+                                transcriptList = transcriptList, readingState = reading,
+                            )
+                        }
+                        for (kind in listOf("group", "tool", "process", "message")) {
+                            composable("$kind/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) { destination ->
+                                val id = destination.arguments?.getString("id").orEmpty()
+                                val revision by viewModel.inspection.revision.collectAsState()
+                                val back = { navigation.popBackStack(); Unit }
+                                val close = { navigation.popBackStack("thread", false); Unit }
+                                when (kind) {
+                                    "group" -> {
+                                        val group = remember(id, revision) { viewModel.inspection.group(id) }
+                                        if (group == null) MissingInspection(back, close)
+                                        else ToolGroupBrowser(group, state.basePath, openFile, back, close)
+                                    }
+                                    "message" -> {
+                                        val message = remember(id, revision) { viewModel.inspection.message(id) }
+                                        if (message == null) MissingInspection(back, close)
+                                        else MessageReader(message.value.text, message.stale, back, close)
+                                    }
+                                    else -> {
+                                        val tool = remember(id, revision) { viewModel.inspection.tool(id) }
+                                        if (tool == null) MissingInspection(back, close)
+                                        else ToolReader(tool, kind == "process", state.basePath, openFile, back, close)
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                if (entry?.destination?.route != "thread") {
-                    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+                    if (entry?.destination?.route != "thread") {
+                        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+                    }
                 }
             }
         }
@@ -364,7 +368,11 @@ internal fun ToolReader(
     val interactions = LocalChatInteractions.current.takeUnless { inspected.stale }
     InspectionScaffold(stringResource(if (process) R.string.chat_agent_process else R.string.chat_tool_details), back, close) { padding ->
         ReadingColumn(Modifier.padding(padding)) {
-            LazyColumn(Modifier.fillMaxSize().testTag("inspection-detail"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize().testTag("inspection-detail"),
+                contentPadding = PaddingValues(top = 16.dp, bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 item("notice") { InspectionNotice(inspected.stale) }
                 items(rows, key = { it.id }, contentType = { it.kind }) { row ->
                     CompositionLocalProvider(LocalChatInteractions provides interactions) {

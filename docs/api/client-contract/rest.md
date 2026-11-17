@@ -8,7 +8,7 @@ does not mean the app offers that feature.
 
 ## Conventions
 
-- All paths below are relative to the hub base URL. `/api` routes require `Authorization: Bearer <JWT>` except the `/api/auth` exchange and Telegram `/api/bind` ([Auth](./auth.md)).
+- All paths below are relative to the hub base URL. `/api` routes require `Authorization: Bearer <JWT>` except the `/api/auth` exchange, Telegram `/api/bind`, and the native passkey sign-in (`/api/passkey/login/*`) and browser sign-in/completion/exchange (`/api/passkey/browser/login/start`, `/api/passkey/browser/complete`, `/api/passkey/browser/exchange`) ([Auth](./auth.md)).
 - Path params (`:id`, `:messageId`, …) must be URL-encoded (the web client uses `encodeURIComponent` throughout).
 - Request bodies are JSON (`content-type: application/json`) with **one exception**: `POST /api/voice/transcription` is `multipart/form-data`. Responses are JSON unless noted (generated images and scratchlist attachments return raw bytes).
 - Bodies are validated with Zod; failures return `400` (see [Errors](./errors.md)).
@@ -61,14 +61,14 @@ Source: `hub/src/web/routes/sessions.ts`; request schemas in `shared/src/apiType
 | `POST /api/sessions/:id/resume` | `{permissionMode?}` (`ResumeSessionRequestSchema`) | `{type: 'success', sessionId}` |
 | `POST /api/sessions/:id/reopen` | `{}` | `{ok: true, sessionId, resumed: boolean, cursorSessionProtocol?}` (`ReopenSessionResponseSchema`); `422 {error, missing[]}` if metadata is incomplete |
 | `POST /api/sessions/:id/abort` | `{}` | `{ok: true}` (active sessions only) |
-| `POST /api/sessions/:id/archive` | `{}` | `{ok: true}` or `{ok: true, alreadyArchived: true}`; 409 for a plain inactive session |
+| `POST /api/sessions/:id/archive` | `{}` | `{ok: true}` or `{ok: true, alreadyArchived: true}`; 409 for a plain inactive session; unconfirmed Runner cleanup returns 409 `archive-cleanup-unconfirmed` or 503 `archive-cleanup-unavailable` / `archive-cleanup-timeout` |
 | `DELETE /api/sessions/:id` | — | `{ok: true}`; 409 while active (archive first) |
 | `PATCH /api/sessions/:id` | `{name?, titleLocked?}` (at least one; name: 1–255 chars; lock: boolean) | `{ok: true}` (rename) |
 | `PATCH /api/sessions/:id/summary` | `{text, titleLocked?}` (text: 1–255 chars; lock: boolean) | `{ok: true}` |
 | `PUT /api/sessions/:id/pin` | `{mode: 'none'\|'project'\|'global'}` | `{ok: true}` |
 | `POST /api/sessions/:id/switch` | `{}` | `{ok: true}` — hands terminal-controlled session over to remote control |
 | `POST /api/sessions/:id/clear` | `{}` | `{sessionId}` — shared sessions only; resume inactive sessions through the Runner first, then create a new root; navigate only the initiating view |
-| `POST /api/sessions/:id/title-suggestion` | — | `{title}`; errors pass through 422/429/502/503 |
+| `POST /api/sessions/:id/title-suggestion` | — | `{title}`; errors pass through 422/429/500/503 |
 | `GET /api/sessions/:id/slash-commands` | — | `SlashCommandsResponse` `{success, commands?, error?}` |
 | `GET /api/sessions/:id/skills` | — | `SkillsResponse`-shaped `{success, ...}` |
 
@@ -77,6 +77,18 @@ Both endpoints return the id of the session that now carries the conversation �
 :::
 
 Additional session APIs without a current native UI: `POST /api/sessions/:id/fork` `{messageLocalId?}` → `{sessionId}`, `POST /api/sessions/:id/rewind` `{messageLocalId}` → `{success: true}`, `GET /api/sessions/:id/export` (413 when too large). Availability also depends on session history capabilities.
+
+### Portable conversation branches (proposal)
+
+`POST /api/sessions/:id/branch` accepts `{requestId, messageLocalId?, boundary?: 'before'|'after', agent: 'claude'|'codex', model?, workspace?: 'current'|'worktree', worktreeName?, instruction}`.
+
+- `requestId` is a UUID. Reusing it with identical options returns the same child, including after a hub restart; different options are rejected. Keep it when retrying a lost response.
+- The source may be active or inactive, but must be idle, have no queued input, and belong to the authenticated namespace. Its machine must be online for a new launch. Initial sources and targets are Claude Code and Codex.
+- `messageLocalId` identifies an invoked user message. `before` excludes it; `after` includes it and subsequent output up to the next invoked user message. Omitting the id selects the idle tail.
+- A fresh target receives one queued user prompt containing allowlisted visible prose/tool observations and the required new `instruction`. Native session ids, reasoning, private system events and pending input are not copied. Attachments and references larger than 256 KiB are rejected rather than silently omitted/truncated.
+- Files are not rewound. `current` shares the source directory; `worktree` uses the existing runner worktree behavior at current Git HEAD and does not copy uncommitted changes.
+- Response: `{sessionId, warning?}`. Navigate to that child even when `warning` reports an uncertain launch; inspect it before creating another branch. Ambiguous launches retain the child and its instruction. A confirmed pre-exec rejection returns 409 and removes the unused stub.
+- `metadata.forkedFrom` and `metadata.conversationBranch` record provenance, cutoff, import mode and launch state. Existing native `/fork` semantics are unchanged; this proposed endpoint deliberately uses portable reference context even when targeting the same harness.
 
 ### Messages
 
@@ -143,7 +155,7 @@ tool-call id; `null` withdraws actions without removing content. The CLI
 validates the latest completed Plan-mode turn, switches to Default, and queues
 `Implement the plan.` with a stable submission id. Repeating an accepted
 action does not enqueue it again. This is separate from tool permissions.
-Errors include HTTP 409 (`stale_plan` / `unavailable`), 502 (`failed`) and 503
+Errors include HTTP 409 (`stale_plan` / `unavailable`), 500 (`failed`) and 503
 (`indeterminate`); error bodies have `{ok: false, code, error}`. Do not
 automatically resend after an unconfirmed result. "Continue planning" is a
 local composer-focus action and does not submit a native approval or message.
@@ -169,7 +181,23 @@ Source: `hub/src/web/routes/machines.ts`; schemas `SpawnSessionRequestSchema`, `
 | `POST /api/machines/:id/spawn` | `{directory, agent?, model?, effort?, modelReasoningEffort?, yolo?, permissionMode?, sessionType?: 'simple'\|'worktree', worktreeName?, serviceTier?, collaborationMode?, copilotAgentMode?, startingMode?: 'remote'\|'pty'}` | `{type: 'success', sessionId}` \| `{type: 'error', message, code?, agent?}` (agy accepts only `remote`) |
 | `POST /api/machines/:id/list-directory` | `{path, includeHidden?}` | `{success, entries?: (DirectoryEntry & {isGitRepo?})[], error?}` |
 | `POST /api/machines/:id/paths/exists` | `{paths: string[]}` (≤ 1000) | `{exists: Record<string, boolean>, outsideWorkspaceRoots?: string[]}` |
-| `POST /api/machines/:id/restart-runner` | `{}` | `{message}`; errors carry `code: 'machine_not_found' \| 'machine_offline'` |
+| `POST /api/machines/:id/restart-runner` | `{}` | `{message}`; errors carry `code`: 404 `machine_not_found`, 503 `machine_offline`, other Runner failures 500 |
+
+Agent quota queries are optional machine-scoped RPCs. The Runner resolves the
+selected Claude Code/Codex/Kimi credentials locally; these endpoints never
+return credential values. They return `409 runner_upgrade_required` when the
+connected Runner predates the usage-query capability.
+
+| Method & path | Request | Response |
+|---|---|---|
+| `GET /api/machines/:id/usage-query/settings?agent=claude\|codex\|kimi` | — | `{agent, enabled, templateId, template, credentials: {baseUrl, apiKey}}`; credential entries contain only `configured` and `source` |
+| `PUT /api/machines/:id/usage-query/settings` | `{agent, enabled, templateId, template}` | Same sanitized settings response |
+| `POST /api/machines/:id/usage-query/test` | `{agent, template}` | Sanitized `UsageQueryResult`; provider/test failures use `{status: 'error', error}` |
+| `POST /api/machines/:id/usage-query/query` | `{agent, force?}` | Sanitized `UsageQueryResult`; Runner cache TTL is five minutes and `force=true` bypasses it |
+
+An error result keeps the last successful windows when one exists and marks the
+result `stale: true`; a failed attempt is still recorded in `queriedAt`. The
+Runner suppresses automatic retries for 30 seconds after a failed refresh.
 
 Note the spawn response is discriminated on `type`, not HTTP status — a failed
 spawn is still HTTP 200. Stable spawn failure codes are
@@ -218,14 +246,18 @@ The image id is an immutable content fingerprint, so it doubles as the ETag: sen
 
 ### Uploads (message attachments)
 
-Source: `hub/src/web/routes/sessions.ts` (`UploadFileRequestSchema`).
+Source: `hub/src/web/routes/sessions.ts` (`UploadFileRequestSchema`, `InitChunkedUploadRequestSchema`).
 
 | Method & path | Request | Response |
 |---|---|---|
 | `POST /api/sessions/:id/upload` | JSON `{filename, content, mimeType}` — `content` is **base64**; decoded size limit 50 MB → `413` | `{success, path?, error?}` — pass the resulting metadata in `attachments` of send-message |
+| `POST /api/sessions/:id/uploads` | JSON `{filename, size, mimeType}` (`size ≥ 0`) — starts a chunked upload session; oversized `size` → `413` (`upload_too_large`), older CLI runner → `503` (`rpc_target_missing`) | `{success, uploadId?, chunkSize?, maxUploadBytes?, error?, code?}` |
+| `POST /api/sessions/:id/uploads/:uploadId/chunk?index=<n>` | Raw binary body (`Content-Type: application/octet-stream`, `1 B – 8 MB`) for zero-based sequential chunk index `n` | `{success, receivedBytes?, error?, code?}` (`413` `upload_chunk_too_large`, `400` `upload_invalid_chunk`, `409` `upload_size_mismatch`/`upload_conflict`, `404` `upload_not_found`) |
+| `POST /api/sessions/:id/uploads/:uploadId/finalize` | — | `{success, path?, error?, code?}` (`409` `upload_incomplete`) |
+| `POST /api/sessions/:id/uploads/:uploadId/abort` | — | `{success, error?, code?}` (idempotent when already aborted/missing) |
 | `POST /api/sessions/:id/upload/delete` | `{path}` | `{success, error?}` |
 
-Uploads are JSON+base64, **not** multipart. Both require an active session.
+All upload endpoints require an active session. Small files (`≤ 8 MB` in the web client) use single-request `POST /api/sessions/:id/upload`, while larger files stream sequentially via `/uploads` to avoid whole-file base64 memory amplification and Socket.IO's 48 MB RPC frame limit. Set `HAPI_MAX_UPLOAD_BYTES` on both Hub and CLI runner to configure the chunked upload ceiling (default `536870912` = 512 MiB, clamped to 10 GiB).
 
 ### Scratchlist
 

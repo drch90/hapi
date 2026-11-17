@@ -110,6 +110,18 @@ describe('bootstrapExistingSession', () => {
         delete process.env[HAPI_SESSION_ID_ENV]
     })
 
+    it.each([false, true])('refuses unsafe attached session bootstrap before creating a socket (diverged=%s)', async diverged => {
+        const session = createSession();
+        const codexRuntime = { kind: 'attached', bindingId: '11111111-1111-4111-8111-111111111111', state: 'detached' } as const;
+        session.metadata = { ...session.metadata!, codexRuntime, conversationHistoryDiverged: diverged };
+        getSessionMock.mockResolvedValue(session);
+        getOrCreateMachineMock.mockResolvedValue({ id: 'machine-1' });
+        readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
+        await expect(bootstrapExistingSession({ sessionId: session.id, flavor: 'codex', workingDirectory: '/tmp/project',
+            ...(diverged ? { metadataOverrides: { codexRuntime } } : {}) })).rejects.toThrow(diverged ? 'history changed' : 'hapi attach');
+        expect(sessionSyncClientMock).not.toHaveBeenCalled();
+    });
+
     it('refuses local Codex resume of a CLI-archived source with a pending fork before creating a socket or changing metadata', async () => {
         const session = createSession()
         session.metadata = { ...session.metadata!, lifecycleState: 'archived', archivedBy: 'cli',
@@ -250,6 +262,7 @@ describe('bootstrapExistingSession', () => {
     })
 
     it('preserves existing native resume metadata when reactivating a session', async () => {
+        const checkpoint = { sessionId: 'native-child', messageIds: ['m1'], userMessageIds: ['m1'], localMessageIds: ['m2'], localPublicationPending: true as const }
         const session = createSession()
         const existingMetadata = session.metadata
         if (!existingMetadata) throw new Error('expected test session metadata')
@@ -283,6 +296,8 @@ describe('bootstrapExistingSession', () => {
             tools: ['read_file'],
             slashCommands: ['/compact'],
             conversationHistoryPoints: { 'local-user-1': true },
+            opencodeHistoryCheckpoint: checkpoint,
+            opencodeForkPending: true,
             conversationHistoryEntryIds: { 'local-user-1': 'pi-entry-1' },
             capabilities: {
                 terminal: true,
@@ -332,6 +347,8 @@ describe('bootstrapExistingSession', () => {
             tools: ['read_file'],
             slashCommands: ['/compact'],
             conversationHistoryPoints: { 'local-user-1': true },
+            opencodeHistoryCheckpoint: checkpoint,
+            opencodeForkPending: true,
             conversationHistoryEntryIds: { 'local-user-1': 'pi-entry-1' },
             capabilities: {
                 terminal: true,
@@ -344,7 +361,9 @@ describe('bootstrapExistingSession', () => {
             acpManualTitle: true,
             codexSessionId: 'codex-thread-1',
             grokSessionId: 'grok-thread-1',
-            conversationHistoryEntryIds: { 'local-user-1': 'pi-entry-1' }
+            conversationHistoryEntryIds: { 'local-user-1': 'pi-entry-1' },
+            opencodeHistoryCheckpoint: checkpoint,
+            opencodeForkPending: true
         }))
         expect(notifyRunnerSessionStartedMock).toHaveBeenCalledWith(
             'hapi-session-1',

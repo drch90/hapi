@@ -4,6 +4,55 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-17: upstream v0.36.4
+
+Merged [upstream v0.36.4](https://github.com/tiann/hapi/releases/tag/v0.36.4)
+(`825af9ba`) into `android-session-parity` from the local `9b4149d7` tip.
+Both histories and all 121 files added locally since v0.34.6 are retained.
+The pre-merge tip is also saved as `backup/pre-upstream-v0.36.4-20261117`.
+This update is a local source merge; no push or service deployment was performed.
+
+### Preserved local capabilities
+
+| Area | Integration retained in this merge |
+| --- | --- |
+| Agents | Hermes creation, resume, model/provider discovery and permission controls remain integrated with upstream lazy command loading and resume checks. Antigravity keeps its native terminal, commands, context/quota reporting and steering. |
+| Delivery and steering | Claude retains UUID/native-receipt reconciliation and isolated queue consumption; successful steering also dismisses upstream pending permissions. OpenCode retains model equivalence and its v2 steering version gate alongside upstream rewind gating. Dispatching, uncertain delivery, cancellation and explicit retry remain distinct. |
+| Web and Android | Session grouping, pins, search/filter preferences, unread state, media and workspace actions remain available. Android retains native reference editing, scheduling, stop controls, transcript navigation, tool details and background notifications with the upstream composer and visual updates. |
+| Android distribution | Only the fork's Android APK workflow is retained. Its fixed signing certificate and increasing workflow version-code override are preserved alongside upstream git-count fallback for other builds. |
+
+### Verification
+
+Checks and the source build used the pinned **Bun 1.4.4**.
+
+| Check | Result |
+| --- | --- |
+| Frozen dependency install and root typecheck | Passed; CLI, Web, hub and relay typechecks passed. |
+| Hub, Web, shared and relay suites | 2,105 / 4,698 / 499 / 118 passed. Three optional hub tests were skipped; Web retained one expected failure. |
+| CLI suite | 5,926 passed in the full run. All 89 focused command/resume, Claude launcher/steering and Cursor permission tests passed after reconciliation; the remaining host limitations are described below. |
+| Runner integration | 25 passed, one skipped, using temporary processes and a temporary hub. |
+| Browser regressions | 196 distinct Chromium scenarios passed across the full run and focused follow-up. Modal-background queries and the scratchlist fixture were reconciled with upstream interfaces. Two history-loading failures also reproduce on the isolated pre-merge source. |
+| Passkeys | Real Chromium WebAuthn registration, browser-to-native login, native-to-browser discovery, redirect callback and PKCE passed. The test now intercepts the actual 303 callback through CDP because Playwright routes omit redirected requests. |
+| Fixtures | 91 chat, 14 SSE and 15 pagination fixtures plus catalogs regenerated; final generation had no drift. |
+| Build | CLI, Web, embedded assets and hub build passed. |
+| Android static checks | Changed Kotlin syntax, XML/resources and local integrations inspected; all three locales have 870 matching resource keys with no duplicates or placeholder mismatches. Seven signing-helper tests passed. |
+
+The bundled difftastic still requires unavailable `GLIBC_2.32`, `GLIBC_2.33`
+and `GLIBC_2.34`, leaving four CLI cases failing on this host. The unchanged
+OpenCode storage-scanner tests also have timing-sensitive failures on this
+filesystem, where immediate writes can share the same modification time.
+Cursor permission tests passed with root DAC override capabilities removed.
+
+The two existing browser failures concern an upward history gesture during
+cached re-entry and staged touch-pull feedback. They failed identically on
+the pre-merge source with the same relevant dependency versions; this merge
+does not claim the full browser suite is green.
+
+Android compilation, unit tests, lint and device execution were not run on
+this service host. The new stop-control regression and native conformance
+remain for remote verification under the repository's Android policy.
+iOS compilation and other platform-specific checks were not run.
+
 ## 2026-11-11: Android-only Actions
 
 After re-enabling Actions on the fork, the workflow configuration was reduced

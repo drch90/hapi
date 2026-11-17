@@ -76,6 +76,7 @@ vi.mock('./utils/permissionHandler', () => ({
         reset(): void {}
         isAborted(): boolean { return false }
         handleModeChange(): void {}
+        denyPendingForSteer(): void {}
     }
 }))
 

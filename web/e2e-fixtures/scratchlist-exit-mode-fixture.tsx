@@ -9,6 +9,7 @@ import ReactDOM from 'react-dom/client'
 import '../src/index.css'
 import { I18nProvider } from '../src/lib/i18n-context'
 import { useScratchlist } from '../src/lib/use-scratchlist'
+import type { ScratchlistEntry } from '../src/lib/scratchlist'
 import { ScratchlistDrawer } from '../src/components/AssistantChat/ScratchlistPanel'
 
 declare global {
@@ -65,8 +66,8 @@ function App() {
     }, [])
 
     // Mirror ScratchlistDrawerHost.handlePromoteToQueue (SessionChat.tsx).
-    const handlePromoteToQueue = React.useCallback(async (text: string) => {
-        const accepted = await handleSend(text)
+    const handlePromoteToQueue = React.useCallback(async (entry: ScratchlistEntry) => {
+        const accepted = await handleSend(entry.text)
         if (accepted) {
             setScratchlistMode(false)
         }

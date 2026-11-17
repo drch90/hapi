@@ -159,6 +159,23 @@ The app supports multiple hubs with one active selection. See the
   an already-paired hub can be selected directly.
 - **Simulator:** use manual entry because `DataScannerViewController` is
   unavailable. Camera pairing is optional on physical devices too.
+- **Passkeys:** Settings → Hubs → Passkeys manages this namespace's credentials.
+  Web and App credentials share RP ID `auth.hapi.run`: a credential created in
+  either client signs in to the same Hub from both. Configure the Hub's
+  `HAPI_PUBLIC_URL` as its canonical HTTPS origin. Native sign-in uses
+  `/health` → `POST /api/passkey/login/options {client:"native"}` → validate
+  RP/Hub/operation/channel → system sheet → verify. The allowlist limits the
+  sheet to this Hub's valid credentials; `404 no_passkeys` falls back to pairing.
+  A passkey session replaces the access token in secure per-Hub storage;
+  silent re-auth exchanges `{passkeySession}` and treats its 401 as terminal.
+  Registration also validates the Hub-bound user handle before system UI.
+  Ceremonies need a signed build with Associated Domains enabled and
+  `webcredentials:auth.hapi.run`, backed by
+  `https://auth.hapi.run/.well-known/apple-app-site-association` (source:
+  `web/passkey-site/.well-known/`). No association file is needed on a user's
+  Hub domain. `PasskeysTests`, `PasskeyAuthTests`, and `PasskeyHubBindingTests`
+  cover the wire flow and isolation rules. Discoverable-handle registration tests also run on non-Apple platforms;
+  opaque-handle SHA-256 validation fails closed without CryptoKit.
 - **Hubs:** Settings → Hubs switches between paired hubs and adds another.
 - **Sign out:** Settings → Hubs → Sign Out removes that hub's credentials and
   falls back to another paired hub or pairing. A rejected access token, or a freshly
@@ -708,7 +725,7 @@ Home keeps a fixed Sessions title: hub switching on the leading edge,
 the web sort and filter menu: **Sort By** last message (default) or date
 created, **Active First** (on by default: connected sessions lead the pinned
 and recent sections, below manual pins), **Show** all / active only / archived
-only, an **Unread Only** lens, machine single-selection (two or more machines)
+only, an **Unread Only** lens, a **Machine** submenu (two or more machines)
 and **Mark All as Read** (shared read state, confirmed first). Only applied
 filters add a summary line; a non-default order just tints the menu button.
 The status and unread filters keep the iPad's selected chat listed.
@@ -758,3 +775,15 @@ TEST_RUNNER_HAPI_HOME_CAPTURE=/tmp/hapi-home-review \
 Unread state uses the hub’s [revision read-state contract](../docs/api/client-contract/read-state.md).
 Only a foreground transcript laid out at the latest tail acknowledges content.
 Local pending reads persist before the dot clears and retry when connectivity returns.
+
+### Address-free Passkey sign-in
+
+The pairing Passkey entry first runs a local resident-credential selection to
+recover the Hub from its v2 user handle, without HTTP requests. Confirm the
+recovered HTTPS origin, then run the existing health/options/Hub-bound assertion
+flow. The discovery assertion is never sent to the Hub and never authorizes a
+session. Registration validates the handle's Hub origin (or hash for long
+addresses) before opening system UI. The handle reserves 16 bytes for a stable
+account tag and fits 46 ASCII authority bytes; longer addresses retain manual
+sign-in. Re-register credentials to enable discovery. No central server is
+required; the credential must be available through the local/synced provider.

@@ -41,6 +41,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ToastContainer } from '@/components/ToastContainer'
 import { PwaUpdateProvider } from '@/lib/pwa-update-context'
 import { ToastProvider, useToast } from '@/lib/toast-context'
+import { getNotificationClickHref, NOTIFICATION_CLICK_ACK_TYPE } from '@/lib/notificationClick'
 import type { SyncEvent } from '@/types/api'
 
 type ToastEvent = Extract<SyncEvent, { type: 'toast' }>
@@ -71,7 +72,7 @@ export function App() {
 function AppInner() {
     const { t } = useTranslation()
     const { serverUrl, baseUrl, setServerUrl, clearServerUrl } = useServerUrl()
-    const { authSource, isLoading: isAuthSourceLoading, setAccessToken } = useAuthSource(baseUrl)
+    const { authSource, isLoading: isAuthSourceLoading, setAccessToken, setPasskeySession } = useAuthSource(baseUrl)
     const { token, api, isLoading: isAuthLoading, error: authError, needsBinding, bind } = useAuth(authSource, baseUrl)
     const [titleSuggestionAvailable, setTitleSuggestionAvailable] = useState(false)
     const goBack = useAppGoBack()
@@ -108,6 +109,27 @@ function AppInner() {
         initializeThemeColors()
         initializeChatSurfaceColors()
     }, [])
+
+    useEffect(() => {
+        if (!('serviceWorker' in navigator)) {
+            return
+        }
+
+        const handleServiceWorkerMessage = (event: MessageEvent<unknown>) => {
+            const href = getNotificationClickHref(event.data, window.location.origin)
+            if (!href) return
+            const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`
+            if (currentHref !== href) {
+                router.history.push(href)
+            }
+            event.ports[0]?.postMessage({ type: NOTIFICATION_CLICK_ACK_TYPE })
+        }
+
+        navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage)
+        return () => {
+            navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage)
+        }
+    }, [router])
 
     // Track visual viewport height for mobile keyboard avoidance (see useViewportHeight.ts)
     useViewportHeight()
@@ -453,6 +475,7 @@ function AppInner() {
         return withPwaBanner(
             <LoginPrompt
                 onLogin={setAccessToken}
+                onPasskeyLogin={setPasskeySession}
                 baseUrl={baseUrl}
                 serverUrl={serverUrl}
                 setServerUrl={setServerUrl}
@@ -488,11 +511,12 @@ function AppInner() {
 
     // Auth error
     if (authError || !token || !api) {
-        // If using access token and auth failed, show login again
-        if (authSource.type === 'accessToken') {
+        // If using an access token or passkey and auth failed, show login again
+        if (authSource.type === 'accessToken' || authSource.type === 'passkey') {
             return withPwaBanner(
                 <LoginPrompt
                     onLogin={setAccessToken}
+                    onPasskeyLogin={setPasskeySession}
                     baseUrl={baseUrl}
                     serverUrl={serverUrl}
                     setServerUrl={setServerUrl}
