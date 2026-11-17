@@ -53,6 +53,8 @@ import app.hapi.protocol.chat.ToolCallBlock
 import app.hapi.protocol.chat.ToolGroupBlock
 import app.hapi.protocol.chat.UserTextBlock
 import app.hapi.protocol.chat.VisibleChatBlock
+import app.hapi.protocol.chat.buildMessageMetadataLabels
+import app.hapi.protocol.chat.messageMetadataForBlock
 import app.hapi.protocol.wire.SessionReadState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first

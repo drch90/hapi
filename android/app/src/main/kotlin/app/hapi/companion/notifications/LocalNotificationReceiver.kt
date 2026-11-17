@@ -170,10 +170,23 @@ internal class LocalNotificationReceiver(
             PushType.READY, null -> R.string.local_notifications_ready
             PushType.PERMISSION_REQUEST -> R.string.local_notifications_approval
             PushType.INPUT_REQUEST -> R.string.local_notifications_question
+            PushType.MODEL_ERROR -> R.string.channel_model_errors
         })
-        return PushPayload(type, type?.wire ?: "task-notification", sessionId, sessionName, null, title,
-            body?.let(LocalNotificationPolicy::preview) ?: localized.getString(R.string.local_notifications_view_session),
-            null, PushSeverity.INFO, null, null)
+        return PushPayload(
+            type = type,
+            rawType = type?.wire ?: "task-notification",
+            sessionId = sessionId,
+            sessionName = sessionName,
+            url = null,
+            title = title,
+            body = body?.let(LocalNotificationPolicy::preview)
+                ?: localized.getString(R.string.local_notifications_view_session),
+            requestId = null,
+            severity = if (type == PushType.MODEL_ERROR) PushSeverity.ERROR else PushSeverity.INFO,
+            contractVersion = null,
+            notifySummary = null,
+            tag = null,
+        )
     }
 
     private fun show(type: PushType?, sessionId: String, sessionName: String?, body: String?, quiet: Boolean = false) {

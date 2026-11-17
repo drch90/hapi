@@ -48,8 +48,20 @@ class LocalNotificationsTest {
 
     @Test fun localNotificationsArePrivateHaveNoActionsAndKeepHubIdentity() {
         grantNotifications()
-        val payload = PushPayload(PushType.PERMISSION_REQUEST, "permission-request", "same-session", "Example session",
-            null, "Approval needed", "Read a file", "request", null, "1", null)
+        val payload = PushPayload(
+            type = PushType.PERMISSION_REQUEST,
+            rawType = "permission-request",
+            sessionId = "same-session",
+            sessionName = "Example session",
+            url = null,
+            title = "Approval needed",
+            body = "Read a file",
+            requestId = "request",
+            severity = null,
+            contractVersion = "1",
+            notifySummary = null,
+            tag = null,
+        )
         val hubs = listOf("http://127.0.0.1:3006", "http://127.0.0.1:3007")
         try {
             compose.setContent { HapiTheme { androidx.compose.material3.Text("Notification test") } }
