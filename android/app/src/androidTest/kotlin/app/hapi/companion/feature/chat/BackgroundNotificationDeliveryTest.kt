@@ -77,7 +77,12 @@ class BackgroundNotificationDeliveryTest {
             }
         }
         try {
-            graph.credentialStore.set(HubCredentials(hub, "test-only", "e30.$claims.signature", System.currentTimeMillis()))
+            graph.credentialStore.set(HubCredentials(
+                hubUrl = hub,
+                accessToken = "test-only",
+                jwt = "e30.$claims.signature",
+                jwtObtainedAtMs = System.currentTimeMillis(),
+            ))
             graph.hubRegistry.addHub(hub)
             graph.localNotifications.setEnabled(true)
             scenario = ActivityScenario.launch(MainActivity::class.java)
