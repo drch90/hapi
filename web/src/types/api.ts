@@ -81,6 +81,11 @@ export type {
     AttachmentMetadata,
     BackgroundTask,
     CodexCollaborationMode,
+    ExternalRef,
+    GithubPrChecks,
+    GithubPrExternalRef,
+    GithubPrMerge,
+    GithubPrOpenState,
     CopilotAgentMode,
     Metadata,
     PermissionMode,
@@ -108,6 +113,8 @@ export type {
     HapiSessionExportResponse,
     HapiSessionExportWarning
 } from '@hapi/protocol/sessionExport'
+
+export type { ForkBoundary, ForkPreviewResponse } from '@hapi/protocol/forkBoundary'
 
 export type SessionMetadataSummary = {
     path: string

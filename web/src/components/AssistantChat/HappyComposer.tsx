@@ -299,6 +299,7 @@ export function HappyComposer(props: {
     /** False when SessionChat has no attachment adapter for this session. */
     attachmentsEnabled?: boolean
     disabled?: boolean
+    isAborting?: boolean
     permissionMode?: PermissionMode
     collaborationMode?: CodexCollaborationMode
     copilotAgentMode?: CopilotAgentMode
@@ -605,7 +606,7 @@ export function HappyComposer(props: {
     // Anchored settings sheet: the model/effort value buttons open only their
     // own section; the gear (null) opens the full sheet.
     const [settingsSection, setSettingsSection] = useState<'model' | 'effort' | null>(null)
-    const [isAborting, setIsAborting] = useState(false)
+    const isAborting = props.isAborting ?? false
     const [isSwitching, setIsSwitching] = useState(false)
     const [showContinueHint, setShowContinueHint] = useState(false)
     // pendingSchedule is controlled externally when onSchedule prop is provided; otherwise local state
@@ -1027,12 +1028,6 @@ export function HappyComposer(props: {
     const terminalLabel = terminalUnsupported ? t('terminal.unsupportedWindows') : t('composer.terminal')
 
     useEffect(() => {
-        if (!isAborting) return
-        if (threadIsRunning) return
-        setIsAborting(false)
-    }, [isAborting, threadIsRunning])
-
-    useEffect(() => {
         if (!isSwitching) return
         if (controlledByUser) return
         setIsSwitching(false)
@@ -1041,7 +1036,6 @@ export function HappyComposer(props: {
     const handleAbort = useCallback(() => {
         if (abortDisabled) return
         haptic('error')
-        setIsAborting(true)
         api.thread().cancelRun()
     }, [abortDisabled, api, haptic])
 

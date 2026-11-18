@@ -49,8 +49,6 @@ export type AcpModelDescriptor = {
     reasoningEfforts?: Array<{ value: string; name?: string; isDefault?: boolean }>;
 };
 
-export type AcpCommandDescriptor = { name: string; description?: string; inputHint?: string };
-
 export type AcpSessionModelsMetadata = {
     availableModels: AcpModelDescriptor[];
     currentModelId: string | null;
@@ -66,6 +64,12 @@ export type AcpConfigOptionDescriptor = {
     category?: string;
     currentValue?: string;
     options: Array<{ value: string; name?: string }>;
+};
+
+export type AcpAvailableCommand = {
+    name: string;
+    description?: string;
+    inputHint?: string;
 };
 
 /**
@@ -123,10 +127,9 @@ export class AcpSdkBackend implements AgentBackend {
     private readonly sessionModelsMetadata = new Map<string, AcpSessionModelsMetadata>();
     private readonly sessionConfigOptions = new Map<string, AcpConfigOptionDescriptor[]>();
     private readonly sessionInfoRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    private readonly initialAvailableCommands = new Set<string>();
-    private readonly sessionAvailableCommands = new Map<string, Set<string>>();
-    private readonly commandDescriptors = new Map<string, AcpCommandDescriptor[]>();
-    private commandsListener: ((sessionId: string, commands: AcpCommandDescriptor[]) => void) | null = null;
+    private initialAvailableCommands: Map<string, AcpAvailableCommand> | null = null;
+    private readonly sessionAvailableCommands = new Map<string, Map<string, AcpAvailableCommand>>();
+    private availableCommandsUpdateListener: ((sessionId: string | null, commands: AcpAvailableCommand[]) => void) | null = null;
     private autoPermissionModeEnabled: boolean | null = null;
     private messageHandler: AcpMessageHandler | null = null;
     private activeSessionId: string | null = null;
@@ -695,15 +698,26 @@ export class AcpSdkBackend implements AgentBackend {
             return true;
         }
         return this.sessionAvailableCommands.get(sessionId)?.has(command)
-            ?? this.initialAvailableCommands.has(command);
+            ?? this.initialAvailableCommands?.has(command)
+            ?? false;
     }
 
-    getAvailableCommands(sessionId: string): AcpCommandDescriptor[] | undefined {
-        return this.commandDescriptors.get(sessionId);
+    /**
+     * Returns the slash commands negotiated via ACP `available_commands_update`
+     * (or `initialize` / `session/new` / `session/resume` metadata) for the
+     * given session, falling back to commands advertised during `initialize`.
+     * Undefined means no catalog was advertised; an empty list withdraws commands.
+     */
+    getAvailableCommands(sessionId?: string | null): AcpAvailableCommand[] | undefined {
+        const sessionCommands = sessionId ? this.sessionAvailableCommands.get(sessionId) : undefined;
+        const source = sessionCommands ?? this.initialAvailableCommands;
+        return source ? Array.from(source.values(), (command) => ({ ...command })) : undefined;
     }
 
-    setAvailableCommandsListener(listener: ((sessionId: string, commands: AcpCommandDescriptor[]) => void) | null): void {
-        this.commandsListener = listener;
+    setAvailableCommandsUpdateListener(
+        listener: ((sessionId: string | null, commands: AcpAvailableCommand[]) => void) | null
+    ): void {
+        this.availableCommandsUpdateListener = listener;
     }
 
     /** Forwards ACP `usage_update` to the web status bar when no prompt is active (e.g. session resume). */
@@ -1283,10 +1297,9 @@ export class AcpSdkBackend implements AgentBackend {
         this.foregroundPromptRequests = 0;
         this.isProcessingMessage = false;
         this.sessionModelsMetadata.clear();
-        this.initialAvailableCommands.clear();
+        this.initialAvailableCommands = null;
         this.sessionAvailableCommands.clear();
-        this.commandDescriptors.clear();
-        this.commandsListener = null;
+        this.availableCommandsUpdateListener = null;
         this.autoPermissionModeEnabled = null;
         this.notifyResponseComplete();
         this.settlePendingElicitations();
@@ -1846,29 +1859,30 @@ export class AcpSdkBackend implements AgentBackend {
                 : null;
         if (!rawCommands) return;
 
-        const commands = new Set(
-            rawCommands
-                .filter((entry): entry is Record<string, unknown> => isObject(entry))
-                .map((entry) => asString(entry.name) ?? '')
-                .filter((name) => name.length > 0)
-        );
+        const commands = new Map<string, AcpAvailableCommand>();
+        for (const entry of rawCommands) {
+            if (!isObject(entry)) continue;
+            const rawName = asString(entry.name)?.trim() ?? '';
+            const name = rawName.startsWith('/') ? rawName.slice(1).trim() : rawName;
+            if (!name) continue;
+            const description = asString(entry.description)?.trim() || undefined;
+            const inputHint = isObject(entry.input) ? asString(entry.input.hint)?.trim() || undefined : undefined;
+            commands.set(name, { name, ...(description ? { description } : {}), ...(inputHint ? { inputHint } : {}) });
+        }
         if (sessionId) {
             this.sessionAvailableCommands.set(sessionId, commands);
-            const descriptors = rawCommands.filter(isObject).flatMap((entry) => {
-                const name = asString(entry.name);
-                if (!name) return [];
-                return [{ name, description: asString(entry.description) ?? undefined,
-                    inputHint: isObject(entry.input) ? asString(entry.input.hint) ?? undefined : undefined }];
-            });
-            this.commandDescriptors.set(sessionId, descriptors);
-            this.commandsListener?.(sessionId, descriptors);
+            this.availableCommandsUpdateListener?.(
+                sessionId,
+                Array.from(commands.values(), (command) => ({ ...command }))
+            );
             return;
         }
 
-        this.initialAvailableCommands.clear();
-        for (const command of commands) {
-            this.initialAvailableCommands.add(command);
-        }
+        this.initialAvailableCommands = commands;
+        this.availableCommandsUpdateListener?.(
+            null,
+            Array.from(commands.values(), (command) => ({ ...command }))
+        );
     }
 
     private captureSessionConfigOptions(sessionId: string, response: unknown): void {

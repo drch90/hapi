@@ -12,15 +12,22 @@ describe('Hermes ACP native resume contract', () => {
     it('publishes advertised command descriptions and input hints, including withdrawal', async () => {
         const backend = new AcpSdkBackend({ command: 'hermes', flavor: 'hermes' })
         const listener = vi.fn()
-        backend.setAvailableCommandsListener(listener)
+        backend.setAvailableCommandsUpdateListener(listener)
         await backend.initialize()
+        expect(backend.getAvailableCommands('original')).toBeUndefined()
         h.notify!('session/update', { sessionId: 'original', update: { sessionUpdate: 'available_commands_update', availableCommands: [
-            { name: 'steer', description: 'Guide the agent', input: { hint: 'guidance' } }
+            { name: '/steer', description: 'Guide the agent', input: { hint: 'guidance' } }
         ] } })
         expect(backend.getAvailableCommands('original')).toEqual([{ name: 'steer', description: 'Guide the agent', inputHint: 'guidance' }])
         expect(listener).toHaveBeenCalledWith('original', backend.getAvailableCommands('original'))
+        expect(backend.hasAvailableCommand('original', 'steer')).toBe(true)
+        const commands = backend.getAvailableCommands('original')!
+        commands[0].inputHint = 'changed by caller'
+        expect(backend.getAvailableCommands('original')![0].inputHint).toBe('guidance')
         h.notify!('session/update', { sessionId: 'original', update: { sessionUpdate: 'available_commands_update', availableCommands: [] } })
         expect(backend.getAvailableCommands('original')).toEqual([])
+        expect(listener).toHaveBeenLastCalledWith('original', [])
+        expect(backend.hasAvailableCommand('original', 'steer')).toBe(false)
         await backend.disconnect()
         expect(backend.getAvailableCommands('original')).toBeUndefined()
     })

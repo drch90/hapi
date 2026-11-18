@@ -1,5 +1,19 @@
 import type { SlashCommand } from './apiTypes'
 
+// The retained ACP transport has a different command catalog from the native terminal.
+export const AGY_ACP_FALLBACK_COMMANDS: SlashCommand[] = [
+    { name: 'goal', description: 'Run until the specified goal is completely finished.', source: 'builtin' },
+    { name: 'compact', description: 'Compact the conversation now (summarize history to free up the context window).', source: 'builtin' },
+    { name: 'schedule', description: 'Run an instruction on a recurring schedule or as a one-time timer.', source: 'builtin' },
+    { name: 'browser', description: 'Invoke a browser agent for web tasks.', source: 'builtin' },
+    { name: 'plan', description: 'Plan carefully before executing a task.', source: 'builtin' },
+    { name: 'grill-me', description: 'Interview me to align on a plan.', source: 'builtin' },
+    { name: 'teamwork', description: 'Invoke a team of agents to autonomously tackle large projects.', source: 'builtin' },
+    { name: 'learn', description: 'Reflect on recent successes or corrections to capture reusable skills or rules.', source: 'builtin' },
+    { name: 'boost', description: 'Invoke the Boost multi-agent orchestrator for complex tasks.', source: 'builtin' },
+    { name: 'swarm', description: '(Preview & Quota Heavy) Run a swarm: several agents working in parallel on one task, each in its own conversation, collaborating through a shared message board.', source: 'builtin' },
+]
+
 export const BUILTIN_SLASH_COMMANDS = {
     agy: [
         { name: 'help', description: 'Show supported Antigravity commands', source: 'builtin' },

@@ -130,7 +130,7 @@ export class HermesRemoteLauncher extends RemoteLauncherBase {
         this.backend = backend
         const publishCommands = () => session.client.updateMetadata(metadata => ({ ...metadata,
             slashCommands: hermesCommands(backend.getAvailableCommands(session.sessionId ?? '')).map(command => command.name) }))
-        backend.setAvailableCommandsListener(() => publishCommands())
+        backend.setAvailableCommandsUpdateListener(() => publishCommands())
         registerAcpSessionTitleSync(backend, session.client)
         backend.setUsageUpdateListener(message => {
             const converted = convertAgentMessage(message)

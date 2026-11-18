@@ -1,3 +1,4 @@
+import { AGY_ACP_FALLBACK_COMMANDS } from '@hapi/protocol/slashCommands'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -315,5 +316,25 @@ describe('listSlashCommands', () => {
         expect(names).not.toContain('fix-issue')
         expect(commands.find((command) => command.name === 'rubber-duck')?.source).toBe('builtin')
         expect(commands.find((command) => command.name === 'plan')?.source).toBe('builtin')
+    })
+
+    it('keeps the ACP fallback catalog separate from native-terminal commands', () => {
+        const commands = AGY_ACP_FALLBACK_COMMANDS
+        const names = commands.map((command) => command.name)
+
+        expect(names).toEqual(expect.arrayContaining([
+            'goal',
+            'compact',
+            'schedule',
+            'browser',
+            'plan',
+            'grill-me',
+            'teamwork',
+            'learn',
+            'boost',
+            'swarm',
+        ]))
+        expect(names).not.toContain('doctor')
+        expect(names).not.toContain('cost')
     })
 })

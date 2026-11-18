@@ -594,6 +594,14 @@ export async function claudeRemote(opts: {
             );
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
 
+            // Autonomous rounds (background tasks, scheduled follow-ups) stream
+            // assistant messages after the previous result flipped thinking off;
+            // the SDK never re-fires its own thinking signal for them. Re-bump
+            // here so the hub renders the round as working, not waiting.
+            if (message.type === 'assistant') {
+                updateThinking(true);
+            }
+
             if (message.type === 'result') {
                 // Written guidance may start the next native turn after this
                 // result. Keep its input channel available until all pending

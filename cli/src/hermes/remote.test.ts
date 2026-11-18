@@ -34,7 +34,7 @@ describe('Hermes remote lifecycle', () => {
         h.backend = Object.fromEntries(['initialize', 'setSessionInfoUpdateListener', 'setUsageUpdateListener', 'onStderrError', 'onPermissionRequest', 'cancelPrompt', 'disconnect', 'setMode', 'setModel'].map(key => [key, vi.fn(async () => {})]))
         h.backend.supportsLoadSession = vi.fn(() => true)
         h.backend.getAvailableCommands = vi.fn(() => undefined)
-        h.backend.setAvailableCommandsListener = vi.fn()
+        h.backend.setAvailableCommandsUpdateListener = vi.fn()
         h.backend.newSession = vi.fn(async () => 'native-new')
         h.backend.loadSession = vi.fn(async ({ sessionId }) => sessionId)
         h.backend.getSessionModelsMetadata = vi.fn(() => ({ currentModelId: 'provider:model', availableModels: [{ modelId: 'provider:model' }] }))
