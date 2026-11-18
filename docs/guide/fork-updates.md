@@ -4,6 +4,86 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-19: upstream v0.36.5
+
+Merged [upstream v0.36.5](https://github.com/tiann/hapi/releases/tag/v0.36.5)
+(`590a9533`) into `android-session-parity` from the local `aa8e6bf8` tip.
+Merge commit `a3e4bd12` was pushed to the fork. Both histories and all 122
+files added locally since v0.36.4 are retained; the pre-merge tip remains at
+`backup/pre-upstream-v0.36.5-20261119`.
+
+### Preserved local capabilities
+
+| Area | Integration retained in this merge |
+| --- | --- |
+| Agents and commands | Antigravity keeps its native terminal as the default transport and a separate fallback command catalog for the retained ACP transport. Hermes keeps native resume, model/provider discovery, command input hints and the distinction between an unadvertised and an explicitly withdrawn command catalog. |
+| Delivery and steering | Claude keeps UUID/native-echo steering reconciliation. The shared queue retains local batch limits, dequeue hooks and waiter/reset behavior alongside upstream abort guards, deferred acknowledgements and in-flight cancellation tracking. |
+| Web and Android | Local session grouping, search, pins, read state, references, scheduling, workspace/media actions, stop controls and notifications remain. Upstream passkey sign-in and Japanese support are integrated; Japanese includes the local extensions. Android's malformed-address test uses an incomplete URL so it preserves the fork's HTTP pairing behavior. |
+| Distribution | Only the existing Android APK workflow remains, with the same fixed signing certificate and increasing version-code sequence. |
+
+### Verification
+
+Checks and builds used the pinned **Bun 1.4.4**. Passing results from the
+initial merge were retained when the relevant source and dependencies were
+unchanged.
+
+| Check | Result |
+| --- | --- |
+| Frozen dependency install and typechecks | Passed for CLI, Web, hub, relay and website. |
+| Web, shared and relay suites | 4,769 / 565 / 118 passed; Web retained one expected failure. |
+| Hub suite | 2,229 passed in the full run. The three files affected by sandbox home/socket restrictions passed all 29 tests when rerun on the host. |
+| CLI suite | 6,207 passed and 46 skipped in the full run; five failures remain as described below. The focused Hermes follow-up passed. |
+| Runner integration | 25 passed, one skipped, with temporary processes and a temporary hub. |
+| Browser regressions | 205 Chromium scenarios passed; staged touch-pull feedback failed. The current baseline attempt failed earlier while waiting for its viewport, so it does not establish a same-assertion reproduction. |
+| Passkeys | Chromium WebAuthn registration, browser/native sign-in, callback and PKCE checks passed. |
+| Fixtures | 91 chat, 14 SSE and 15 pagination fixtures plus catalogs regenerated without drift. |
+| Builds | CLI, Web, embedded assets, hub, Linux all-in-one executable, website, documentation and static passkey site passed. |
+| Android static checks | Four locales have 869 matching resource keys, no duplicate names, matching per-quantity placeholders and valid XML. Seven signing-helper tests passed. |
+| Android remote preflight and APK | [Actions run 68](https://github.com/drch90/hapi/actions/runs/44351908296) passed on `a3e4bd12`: app, unit-test and instrumentation-test sources compiled; protocol/data/app unit tests and lint passed before APK assembly. APK identity, version code 68 and fixed certificate verification passed before upload. |
+
+Four CLI failures are the unchanged bundled difftastic's requirements for
+unavailable `GLIBC_2.32`, `GLIBC_2.33` and `GLIBC_2.34`. The unchanged OpenCode
+storage scanner had one timeout in the full run and two timing-sensitive
+failures in its focused rerun; these limitations were also recorded for
+v0.36.4. The staged touch-pull browser failure was previously recorded, but
+this update does not claim that the full CLI or browser suite is green.
+
+No Android Gradle tasks, SDK setup or emulator execution ran on the service
+host. Actions compiled instrumentation sources without running device tests;
+device behavior and iOS compilation remain unverified.
+
+### Service deployment
+
+The source-built Linux executable was first checked on an isolated loopback
+hub with a database copy, fresh test token and disabled push/tunnel services.
+It preserved all 307 sessions and 173,464 messages in that earlier snapshot;
+authentication, sample histories, embedded assets and SQLite integrity passed.
+
+The production hub and supervised runner were upgraded from **0.36.4 to
+0.36.5**. Persistent rollback material, including the final consistent database
+backup, original executables/package metadata, settings, JWT secret and owner
+identity, is stored on the service host at
+`/root/.hapi/deployments/v0.36.5-a3e4bd122ceb/` with private directory access.
+The database stayed at schema 36.
+
+The hub passed health and existing-JWT checks about four seconds after the
+switch began; the new runner was ready in about five seconds. The executable's
+mtime was preserved during the controlled swap to prevent a competing runner
+handoff. The runner exited through its local control endpoint and PM2 started
+the replacement. Its workspace root and custom Codex launcher were retained.
+
+All five active sessions reconnected. Their four wrappers, four native agent
+processes and three MCP processes retained their PIDs, start markers and
+executable device/inode identities. All five runner registrations, including
+both Codex roots sharing a wrapper, were restored from verified live metadata.
+Every one of the 173,901 message IDs in the final pre-switch backup remained
+present. Settings, JWT/owner keys, custom launchers and the PM2 dump were
+unchanged; both services remained under PM2 supervision.
+
+Existing wrappers continue running their original code; new sessions use
+the updated CLI. The deployed executable SHA-256 is
+`19ca40ea70eec433c2ed2124d0045d03f8e3a560ecdcda5ebd91d03dcb4b5425`.
+
 ## 2026-11-17: upstream v0.36.4
 
 Merged [upstream v0.36.4](https://github.com/tiann/hapi/releases/tag/v0.36.4)

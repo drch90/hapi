@@ -14,7 +14,7 @@ separate service from the network tunnels described here.
 ## Upgrading a source build with PM2
 
 Build this fork from source to retain its local extensions. Use the Bun version
-pinned in the root `package.json` (`bun@1.4.4` for v0.34.6):
+pinned in the root `package.json` (`bun@1.4.4` for v0.36.5):
 
 ```bash
 bun install --frozen-lockfile
@@ -24,15 +24,17 @@ bun run build:single-exe
 The all-in-one executable embeds the Web app. On Linux x64 the output is
 `cli/dist-exe/bun-linux-x64-baseline/hapi`; check its `--version` before replacing
 the installed binary. The [fork update record](./fork-updates.md) describes the
-v0.34.6 source verification and deployment, alongside earlier deployments.
+v0.36.5 source verification and deployment, alongside earlier deployments.
 
 For an existing PM2 installation:
 
 1. Record the hub and runner's actual executable paths, arguments and environment.
    Preserve custom launchers, workspace roots and `HAPI_RUNNER_SUPERVISED=1`.
-2. Back up the installed executable, launcher/package metadata, settings and
-   credentials outside the repository. Use SQLite's backup API for a consistent
-   database copy; copying a live `hapi.db` alone can miss committed WAL contents.
+2. Back up the installed executable, launcher/package metadata, settings,
+   credentials, `jwt-secret.json` and `owner-id.json` outside the repository.
+   Record live session registrations and process identities. Use SQLite's
+   backup API for a consistent database copy; copying a live `hapi.db` alone
+   can miss committed WAL contents.
 3. Start the new executable on a separate loopback port with a separate `HAPI_HOME`
    and `DB_PATH` pointing to the database copy. Use fresh test settings, a separate
    test token and disabled push/tunnel integrations. Check migrations, existing
@@ -41,16 +43,29 @@ For an existing PM2 installation:
    binaries. Replace the executable by renaming a staged file on the same
    filesystem, then start the hub and check `/health`. For an npm launcher,
    install the matching launcher and keep its package version and the platform
-   package version aligned; mismatched versions are rejected.
+   package version aligned; mismatched versions are rejected. During this
+   controlled replacement, preserve the installed executable's existing mtime
+   so the old runner's version watchdog cannot race the explicit restart.
+   Record the new version, source commit and executable hash separately.
 5. Once the hub is healthy, request the supervised runner's graceful shutdown
-   with `hapi runner stop`; PM2's `autorestart` starts the updated executable.
+   through `POST /stop` on its loopback control port (the `httpPort` in
+   `runner.state.json`), with an empty JSON body. PM2's `autorestart` starts
+   the updated executable. Observe the new runner state if the response is
+   unconfirmed; do not escalate to a process-tree kill. `hapi runner stop`
+   includes a force-kill fallback, so use the direct control request when
+   preserving every existing session is required.
    PM2 restarts configured to kill a process tree can also terminate detached
    agent sessions, so use HAPI's runner shutdown for this step. Confirm the new
    runner remains a child of its PM2 supervisor.
 6. Check the runner's version, workspace roots, session registrations and live
-   connections, along with message history and Web assets. Existing agent
-   wrappers keep running their original code; newly launched sessions use the
-   updated CLI. Preserve the rollback copy until verification is complete.
+   connections, along with message history and Web assets. If the runner's
+   in-memory list is empty after restart, verify each live session's PID and
+   `hostStartMarker`, then restore its registration through
+   `POST /session-started` with its unchanged session ID and current metadata.
+   Shared Codex roots each need their own registration even when they share a
+   wrapper PID. Existing agent wrappers keep running their original code;
+   newly launched sessions use the updated CLI. Preserve the rollback copy
+   until verification is complete.
 
 Database migrations can prevent an older executable from opening the upgraded
 database. A rollback therefore needs a matching database backup as well as the
