@@ -4,6 +4,7 @@ import {
     getUsageEvents,
     getUsageScanStates,
     recordUsageScan,
+    recordNativeUsageEvents,
     transferUsageSession,
     type UsageEvent,
     type UsageScanState
@@ -24,6 +25,10 @@ export class UsageStore {
 
     getEvents(sessionIds: string[]): UsageEvent[] {
         return getUsageEvents(this.db, sessionIds)
+    }
+
+    recordNativeEvents(events: Omit<UsageEvent, 'sourceSeq'>[]): void {
+        recordNativeUsageEvents(this.db, events)
     }
 
     getScanStates(sessionIds: string[]): Map<string, UsageScanState> {

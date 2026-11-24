@@ -13,6 +13,7 @@ import {
     ArchiveCodexSessionRpcResponseSchema,
     AgentAvailabilityResponseSchema,
     AgentQuotasResponseSchema,
+    AgyNativeUsagePageSchema,
     CursorChatStoreStatusSchema,
     ListCodexSessionsRpcResponseSchema,
     ListOpencodeSessionsRpcResponseSchema,
@@ -26,6 +27,8 @@ import type {
     ClaudeModelsResponse,
     AgentAvailabilityResponse,
     AgentQuotasResponse,
+    AgyNativeUsageRequest,
+    AgyNativeUsagePage,
     CodexModelSummary,
     CodexModelsResponse,
     CommandResponse,
@@ -476,6 +479,10 @@ export class RpcGateway {
         const params = options?.refresh ? { refresh: true } : {}
         const result = await this.machineRpc(machineId, RPC_METHODS.AgentQuotas, params, 20_000)
         return AgentQuotasResponseSchema.parse(result)
+    }
+
+    async getAgyNativeUsage(machineId: string, request: AgyNativeUsageRequest): Promise<AgyNativeUsagePage> {
+        return AgyNativeUsagePageSchema.parse(await this.machineRpc(machineId, RPC_METHODS.AgyNativeUsage, request, 5_000))
     }
 
     async checkPathsExist(machineId: string, paths: string[]): Promise<PathExistsResponse> {

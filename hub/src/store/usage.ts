@@ -5,6 +5,7 @@ export type UsageEventKind = 'delta' | 'cumulative'
 export type UsageEvent = {
     sessionId: string
     sourceKey: string
+    /** Zero marks a durable native observation, independent of chat message epochs. */
     sourceSeq: number
     createdAt: number
     agent: string
@@ -66,6 +67,96 @@ function toUsageEvent(row: UsageEventRow): UsageEvent {
     }
 }
 
+function upsertUsageEvents(db: Database, events: UsageEvent[]): void {
+    if (events.length > 0) {
+        const statement = db.prepare(`
+            INSERT INTO usage_events (
+                session_id,
+                source_key,
+                source_seq,
+                created_at,
+                agent,
+                model,
+                kind,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                last_input_tokens,
+                last_output_tokens,
+                last_cache_read_tokens,
+                last_cache_creation_tokens
+            ) VALUES (
+                @session_id,
+                @source_key,
+                @source_seq,
+                @created_at,
+                @agent,
+                @model,
+                @kind,
+                @input_tokens,
+                @output_tokens,
+                @cache_read_tokens,
+                @cache_creation_tokens,
+                @last_input_tokens,
+                @last_output_tokens,
+                @last_cache_read_tokens,
+                @last_cache_creation_tokens
+            )
+            ON CONFLICT(session_id, source_key)
+            DO UPDATE SET
+                source_seq = CASE WHEN usage_events.source_seq = 0 OR excluded.source_seq = 0
+                    THEN 0 ELSE excluded.source_seq END,
+                created_at = CASE
+                    WHEN excluded.source_seq = 0 THEN excluded.created_at
+                    WHEN usage_events.source_seq = 0 THEN usage_events.created_at
+                    ELSE excluded.created_at END,
+                agent = excluded.agent,
+                model = COALESCE(excluded.model, usage_events.model),
+                kind = excluded.kind,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                cache_read_tokens = excluded.cache_read_tokens,
+                cache_creation_tokens = excluded.cache_creation_tokens,
+                last_input_tokens = excluded.last_input_tokens,
+                last_output_tokens = excluded.last_output_tokens,
+                last_cache_read_tokens = excluded.last_cache_read_tokens,
+                last_cache_creation_tokens = excluded.last_cache_creation_tokens
+            WHERE usage_events.kind = 'delta'
+        `)
+        const updateCumulativeModel = db.prepare(`
+            UPDATE usage_events
+            SET model = ?
+            WHERE session_id = ?
+                AND source_key = ?
+                AND kind = 'cumulative'
+        `)
+
+        for (const event of events) {
+            statement.run({
+                session_id: event.sessionId,
+                source_key: event.sourceKey,
+                source_seq: event.sourceSeq,
+                created_at: event.createdAt,
+                agent: event.agent,
+                model: event.model,
+                kind: event.kind,
+                input_tokens: event.inputTokens,
+                output_tokens: event.outputTokens,
+                cache_read_tokens: event.cacheReadTokens,
+                cache_creation_tokens: event.cacheCreationTokens,
+                last_input_tokens: event.lastInputTokens,
+                last_output_tokens: event.lastOutputTokens,
+                last_cache_read_tokens: event.lastCacheReadTokens,
+                last_cache_creation_tokens: event.lastCacheCreationTokens
+            })
+            if (event.kind === 'cumulative' && event.model !== null) {
+                updateCumulativeModel.run(event.model, event.sessionId, event.sourceKey)
+            }
+        }
+    }
+}
+
 export function recordUsageScan(
     db: Database,
     sessionId: string,
@@ -76,92 +167,10 @@ export function recordUsageScan(
 ): void {
     db.transaction(() => {
         if (replaceEvents) {
-            db.prepare('DELETE FROM usage_events WHERE session_id = ?').run(sessionId)
+            db.prepare('DELETE FROM usage_events WHERE session_id = ? AND source_seq > 0').run(sessionId)
         }
 
-        if (events.length > 0) {
-            const statement = db.prepare(`
-                INSERT INTO usage_events (
-                    session_id,
-                    source_key,
-                    source_seq,
-                    created_at,
-                    agent,
-                    model,
-                    kind,
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cache_creation_tokens,
-                    last_input_tokens,
-                    last_output_tokens,
-                    last_cache_read_tokens,
-                    last_cache_creation_tokens
-                ) VALUES (
-                    @session_id,
-                    @source_key,
-                    @source_seq,
-                    @created_at,
-                    @agent,
-                    @model,
-                    @kind,
-                    @input_tokens,
-                    @output_tokens,
-                    @cache_read_tokens,
-                    @cache_creation_tokens,
-                    @last_input_tokens,
-                    @last_output_tokens,
-                    @last_cache_read_tokens,
-                    @last_cache_creation_tokens
-                )
-                ON CONFLICT(session_id, source_key)
-                DO UPDATE SET
-                    source_seq = excluded.source_seq,
-                    created_at = excluded.created_at,
-                    agent = excluded.agent,
-                    model = excluded.model,
-                    kind = excluded.kind,
-                    input_tokens = excluded.input_tokens,
-                    output_tokens = excluded.output_tokens,
-                    cache_read_tokens = excluded.cache_read_tokens,
-                    cache_creation_tokens = excluded.cache_creation_tokens,
-                    last_input_tokens = excluded.last_input_tokens,
-                    last_output_tokens = excluded.last_output_tokens,
-                    last_cache_read_tokens = excluded.last_cache_read_tokens,
-                    last_cache_creation_tokens = excluded.last_cache_creation_tokens
-                WHERE usage_events.kind = 'delta'
-            `)
-            const updateCumulativeModel = db.prepare(`
-                UPDATE usage_events
-                SET model = ?
-                WHERE session_id = ?
-                    AND source_key = ?
-                    AND kind = 'cumulative'
-            `)
-
-            for (const event of events) {
-                statement.run({
-                    session_id: event.sessionId,
-                    source_key: event.sourceKey,
-                    source_seq: event.sourceSeq,
-                    created_at: event.createdAt,
-                    agent: event.agent,
-                    model: event.model,
-                    kind: event.kind,
-                    input_tokens: event.inputTokens,
-                    output_tokens: event.outputTokens,
-                    cache_read_tokens: event.cacheReadTokens,
-                    cache_creation_tokens: event.cacheCreationTokens,
-                    last_input_tokens: event.lastInputTokens,
-                    last_output_tokens: event.lastOutputTokens,
-                    last_cache_read_tokens: event.lastCacheReadTokens,
-                    last_cache_creation_tokens: event.lastCacheCreationTokens
-                })
-                if (event.kind === 'cumulative' && event.model !== null) {
-                    updateCumulativeModel.run(event.model, event.sessionId, event.sourceKey)
-                }
-            }
-        }
+        upsertUsageEvents(db, events)
 
         db.prepare(`
             INSERT INTO usage_scan_state (session_id, message_epoch, last_seq, parser_version)
@@ -179,6 +188,12 @@ export function recordUsageScan(
                 OR usage_scan_state.parser_version < excluded.parser_version
         `).run(sessionId, messageEpoch, lastSeq, USAGE_SCAN_PARSER_VERSION)
     })()
+}
+
+/** Native scans never advance or invalidate the chat-message scan cursor. */
+export function recordNativeUsageEvents(db: Database, events: Omit<UsageEvent, 'sourceSeq'>[]): void {
+    if (events.length === 0) return
+    db.transaction(() => upsertUsageEvents(db, events.map(event => ({ ...event, sourceSeq: 0 }))))()
 }
 
 export function getUsageEvents(db: Database, sessionIds: string[]): UsageEvent[] {
@@ -268,6 +283,11 @@ export function transferUsageSession(db: Database, fromSessionId: string, toSess
             FROM usage_events
             WHERE session_id = ?
         `).run(toSessionId, fromSessionId)
+        // Promote native observations on conflicts without changing the merge
+        // policy for ordinary message-derived events.
+        upsertUsageEvents(db, getUsageEvents(db, [fromSessionId])
+            .filter(event => event.sourceSeq === 0)
+            .map(event => ({ ...event, sessionId: toSessionId })))
         db.prepare('DELETE FROM usage_events WHERE session_id = ?').run(fromSessionId)
         db.prepare('DELETE FROM usage_scan_state WHERE session_id IN (?, ?)').run(fromSessionId, toSessionId)
     })()

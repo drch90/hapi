@@ -532,9 +532,14 @@ the prompt is loaded by DSH through its own `skill` tool and catalog.
   Other native dialogs and terminal-only commands require continuing directly in
   `agy`. Completed native model calls report input/output tokens and cache
   reads/writes to Usage and the response details. Calls are deduplicated by
-  native request identity; resuming does not replay historical usage. Context
-  occupancy remains a separate snapshot. Output includes native thinking
-  tokens, and monetary costs are not reported.
+  native request identity. The Usage dashboard also recovers completed calls
+  from linked native conversations through an online, updated runner, including
+  older HAPI sessions, without restarting agents or replaying chat messages.
+  Recovery starts at the HAPI session's creation time and retains original call
+  timestamps; unavailable historical model names remain unknown. The dashboard
+  refreshes every 30 seconds while open. Context occupancy remains a separate
+  snapshot. Output includes native thinking tokens, and monetary costs are not
+  reported.
   Account quotas reuse recent native observations when available, with a
   bounded CLI query as fallback. The composer selects the Gemini or Claude/GPT
   quota group for the current model, showing both when the model is unknown.

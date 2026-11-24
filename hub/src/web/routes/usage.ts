@@ -9,14 +9,16 @@ import type { WebAppEnv } from '../middleware/auth'
 import type { Store } from '../../store'
 import type { SyncEngine } from '../../sync/syncEngine'
 import { getUsageSummary } from '../../sync/usageService'
+import { AgyNativeUsageSync } from '../../sync/agyNativeUsage'
 
 export function createUsageRoutes(
     store: Store,
     getSyncEngine?: () => SyncEngine | null
 ): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
+    const nativeUsage = new AgyNativeUsageSync(store, () => getSyncEngine?.() ?? null)
 
-    app.get('/usage/summary', (c) => {
+    app.get('/usage/summary', async (c) => {
         if (c.get('namespace') !== 'default') {
             return c.json({ error: 'Usage summary is only available to the hub owner' }, 403)
         }
@@ -30,6 +32,7 @@ export function createUsageRoutes(
         } catch {
             return c.json({ error: 'Invalid timeZone' }, 400)
         }
+        await nativeUsage.refresh()
         const response: UsageSummaryResponse = getUsageSummary(store, c.get('namespace'), range, timeZone)
         c.header('Cache-Control', 'no-store')
         return c.json(response)

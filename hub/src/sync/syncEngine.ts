@@ -23,7 +23,7 @@ import type { AgentFlavor, BackgroundTask, CodexCollaborationMode, CopilotAgentM
 import { hasConversationMessageContent, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import { createHash, randomUUID } from 'node:crypto'
-import type { BranchConversationRequest, BranchConversationResponse } from '@hapi/protocol/apiTypes'
+import type { AgyNativeUsageRequest, BranchConversationRequest, BranchConversationResponse } from '@hapi/protocol/apiTypes'
 import { branchSessionId, buildBranchPrompt } from './branchTranscript'
 import type { Store, CancelQueuedMessageResult } from '../store'
 import type { StoredMessage } from '../store/types'
@@ -6669,6 +6669,10 @@ export class SyncEngine {
 
     async getAgentQuotas(machineId: string, options?: { refresh?: boolean }): ReturnType<RpcGateway['getAgentQuotas']> {
         return await this.rpcGateway.getAgentQuotas(machineId, options)
+    }
+
+    async getAgyNativeUsage(machineId: string, request: AgyNativeUsageRequest): ReturnType<RpcGateway['getAgyNativeUsage']> {
+        return await this.rpcGateway.getAgyNativeUsage(machineId, request)
     }
 
     async listMachineDirectory(machineId: string, path: string, includeHidden?: boolean): Promise<RpcListDirectoryResponse> {

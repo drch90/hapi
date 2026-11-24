@@ -393,7 +393,24 @@ export function getUsageSummary(
     const cumulativeFingerprints = new Set<string>()
     const dayFormatter = createDayFormatter(timeZone)
 
+    // Resuming/merging may retain the same native request in several HAPI
+    // rows. Prefer its original timestamp over a later chat replay and keep
+    // a known model when native history does not provide one.
+    const agyRequests = new Map<string, UsageEvent>()
     for (const event of events) {
+        if (event.agent !== 'agy' || !event.sourceKey.startsWith('agy|')) continue
+        const previous = agyRequests.get(event.sourceKey)
+        if (!previous) {
+            agyRequests.set(event.sourceKey, event)
+            continue
+        }
+        const preferred = event.sourceSeq === 0 && previous.sourceSeq !== 0 ? event : previous
+        preferred.model ??= (preferred === previous ? event : previous).model
+        agyRequests.set(event.sourceKey, preferred)
+    }
+
+    for (const event of events) {
+        if (event.agent === 'agy' && event.sourceKey.startsWith('agy|') && agyRequests.get(event.sourceKey) !== event) continue
         let inputTokens = event.inputTokens
         let outputTokens = event.outputTokens
         let cacheReadTokens = event.cacheReadTokens

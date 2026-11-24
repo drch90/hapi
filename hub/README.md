@@ -187,6 +187,9 @@ for request/response shapes and error semantics, and `src/web/routes/` for all e
 ### Usage (`src/web/routes/usage.ts`)
 
 - `GET /api/usage/summary` - Get cache-aware token usage for the owner namespace (`range=7d|30d|all`).
+  Updated online runners also recover Antigravity usage from linked native stores,
+  without resuming sessions. Native request identities deduplicate recovery and
+  live summaries; original call times determine the date range.
 
 ### Activity (`src/web/routes/activity.ts`)
 

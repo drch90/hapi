@@ -1,21 +1,59 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, mock } from 'bun:test'
 import { Hono } from 'hono'
 import { MACHINE_CAPABILITIES } from '@hapi/protocol'
 import { Store } from '../../store'
 import type { WebAppEnv } from '../middleware/auth'
 import { createUsageRoutes } from './usage'
 
-function createApp(store: Store, namespace: string): Hono<WebAppEnv> {
+function createApp(store: Store, namespace: string, getSyncEngine?: Parameters<typeof createUsageRoutes>[1]): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
     app.use('*', async (c, next) => {
         c.set('namespace', namespace)
         await next()
     })
-    app.route('/api', createUsageRoutes(store))
+    app.route('/api', createUsageRoutes(store, getSyncEngine))
     return app
 }
 
 describe('GET /api/usage/summary', () => {
+    it('shows recovered Antigravity usage without changing a running session or adding chat messages', async () => {
+        const store = new Store(':memory:')
+        try {
+            const conversationId = '91a533b7-d0ae-4466-8c1e-9dc5bcf29bac'
+            const saved = store.sessions.getOrCreateSession('old-agy-wrapper', {
+                path: '/tmp', host: 'test', flavor: 'agy', machineId: 'machine', agySessionId: conversationId
+            }, null, 'default')
+            store.sessions.setSessionActive(saved.id, true, saved.createdAt, 'default')
+            const activeSession = store.sessions.getSessionByNamespace(saved.id, 'default')
+            const runner = {
+                getOnlineMachinesByNamespace: () => [{ id: 'machine', metadata: { capabilities: [MACHINE_CAPABILITIES.AgyNativeUsage] } }],
+                getAgyNativeUsage: mock(async () => ({ conversationId, nextIndex: 1, pendingIndex: null,
+                    hasMore: false, reset: false, calls: [{ requestId: 'native-request', createdAt: saved.createdAt,
+                        model: null, inputTokens: 10, outputTokens: 2, cacheReadTokens: 80, cacheCreationTokens: 8 }] }))
+            }
+            const app = createApp(store, 'default', () => runner as never)
+            for (let refresh = 0; refresh < 2; refresh++) {
+                const response = await app.request('/api/usage/summary?range=7d')
+                expect(response.status).toBe(200)
+                expect((await response.json() as { byAgent: unknown[] }).byAgent).toEqual([
+                    expect.objectContaining({ key: 'agy', requests: 1, totalTokens: 100 })
+                ])
+            }
+            expect(runner.getAgyNativeUsage).toHaveBeenCalledTimes(1)
+            expect(store.sessions.getSessionByNamespace(saved.id, 'default')).toEqual(activeSession)
+            expect(store.messages.getMessagesAfterSeq(saved.id, 0)).toEqual([])
+
+            runner.getAgyNativeUsage.mockClear()
+            const refused = await createApp(store, 'tenant', () => runner as never).request('/api/usage/summary')
+            const invalid = await app.request('/api/usage/summary?timeZone=Mars/Olympus')
+            expect(refused.status).toBe(403)
+            expect(invalid.status).toBe(400)
+            expect(runner.getAgyNativeUsage).not.toHaveBeenCalled()
+        } finally {
+            store.close()
+        }
+    })
+
     it('returns a no-store summary for the hub owner', async () => {
         const store = new Store(':memory:')
         try {

@@ -17,6 +17,7 @@ export const RPC_METHODS = {
     PathExists: 'path-exists',
     AgentAvailability: 'agent-availability',
     AgentQuotas: 'agent-quotas',
+    AgyNativeUsage: 'agy-native-usage',
     CursorChatStoreStatus: 'cursor-chat-store-status',
     GitStatus: 'git-status',
     GitDiffNumstat: 'git-diff-numstat',

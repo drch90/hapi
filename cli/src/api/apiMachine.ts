@@ -18,6 +18,8 @@ import {
     type AgentAvailabilityResponse,
     type AgentQuotasRequest,
     type AgentQuotasResponse,
+    type AgyNativeUsageRequest,
+    type AgyNativeUsagePage,
     type ListCodexSessionsRpcResponse,
     type ListOpencodeSessionsRpcResponse,
     type ListPiSessionsRpcResponse,
@@ -95,6 +97,7 @@ import {
 } from '@hapi/protocol/usageQuery'
 import { UsageQueryService } from '@/usageQuery/service'
 import { getAgentQuotasResponse } from '@/agent/agentQuotas'
+import { readAgyNativeUsage } from '@/agy/pty/nativeUsage'
 
 export { normalizeWindowsDriveRoot } from './machinePathPolicy'
 
@@ -260,6 +263,11 @@ export class ApiMachineClient {
         this.rpcHandlerManager.registerHandler<AgentQuotasRequest, AgentQuotasResponse>(
             RPC_METHODS.AgentQuotas,
             async (params) => await getAgentQuotasResponse({ refresh: params?.refresh === true })
+        )
+
+        this.rpcHandlerManager.registerHandler<AgyNativeUsageRequest, AgyNativeUsagePage>(
+            RPC_METHODS.AgyNativeUsage,
+            async params => await readAgyNativeUsage(params)
         )
 
         this.rpcHandlerManager.registerHandler<PathExistsRequest, PathExistsResponse>(RPC_METHODS.PathExists, async (params) => {

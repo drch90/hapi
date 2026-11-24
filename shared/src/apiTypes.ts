@@ -1031,6 +1031,33 @@ export const AgentQuotasResponseSchema = z.object({
 })
 export type AgentQuotasResponse = z.infer<typeof AgentQuotasResponseSchema>
 
+/** Read-only native usage pages; no conversation text or credentials cross this RPC. */
+export const AgyNativeUsageRequestSchema = z.object({
+    conversationId: z.string().uuid(),
+    fromIndex: z.number().int().nonnegative().safe(),
+    since: z.number().int().nonnegative().safe()
+})
+export type AgyNativeUsageRequest = z.infer<typeof AgyNativeUsageRequestSchema>
+
+const NativeUsageCountSchema = z.number().int().nonnegative().safe()
+export const AgyNativeUsagePageSchema = z.object({
+    conversationId: z.string().uuid(),
+    nextIndex: NativeUsageCountSchema,
+    pendingIndex: NativeUsageCountSchema.nullable(),
+    hasMore: z.boolean(),
+    reset: z.boolean(),
+    calls: z.array(z.object({
+        requestId: z.string().min(1).max(512),
+        createdAt: NativeUsageCountSchema,
+        model: z.string().max(512).nullable(),
+        inputTokens: NativeUsageCountSchema,
+        outputTokens: NativeUsageCountSchema,
+        cacheReadTokens: NativeUsageCountSchema,
+        cacheCreationTokens: NativeUsageCountSchema
+    })).max(512)
+})
+export type AgyNativeUsagePage = z.infer<typeof AgyNativeUsagePageSchema>
+
 export const UsageMachineQuotasEntrySchema = z.object({
     machineId: z.string(),
     machineName: z.string(),

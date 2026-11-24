@@ -128,7 +128,7 @@ function AccountQuotaCard(props: { account: AgentQuotaAccount; machineLabel?: st
     )
 }
 
-function UsageBarList(props: { rows: UsageSummaryBucket[]; empty: string }) {
+function UsageBarList(props: { rows: UsageSummaryBucket[]; empty: string; labels?: Record<string, string> }) {
     const { t } = useTranslation()
     const max = props.rows[0]?.totalTokens ?? 0
     if (props.rows.length === 0) return <div className="px-3 py-4 text-sm text-[var(--app-hint)]">{props.empty}</div>
@@ -137,7 +137,7 @@ function UsageBarList(props: { rows: UsageSummaryBucket[]; empty: string }) {
             {props.rows.slice(0, 8).map((row) => (
                 <div key={row.key} className="px-3 py-3">
                     <div className="flex items-center justify-between gap-3 text-sm">
-                        <span className="min-w-0 truncate font-medium text-[var(--app-fg)]">{row.key}</span>
+                        <span className="min-w-0 truncate font-medium text-[var(--app-fg)]">{props.labels?.[row.key] ?? row.key}</span>
                         <span className="shrink-0 text-[var(--app-hint)]">{formatTokens(row.totalTokens)}</span>
                     </div>
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--app-subtle-bg)]">
@@ -173,6 +173,7 @@ export default function SettingsUsagePage() {
         },
         enabled: Boolean(api),
         staleTime: 30_000,
+        refetchInterval: 30_000,
         refetchOnWindowFocus: false,
         retry: false
     })
@@ -357,7 +358,7 @@ export default function SettingsUsagePage() {
                     </SettingsSection>
                     <div className="grid gap-5 md:grid-cols-2">
                         <SettingsSection title={t('settings.usage.agent.title')}>
-                            <UsageBarList rows={query.data.byAgent} empty={t('settings.usage.empty')} />
+                            <UsageBarList rows={query.data.byAgent} empty={t('settings.usage.empty')} labels={AGENT_LABELS} />
                         </SettingsSection>
                         <SettingsSection title={t('settings.usage.model.title')}>
                             <UsageBarList rows={query.data.byModel} empty={t('settings.usage.empty')} />
