@@ -180,6 +180,9 @@ android {
         // Robolectric specimens resolve fonts, drawables and strings.
         unitTests.isIncludeAndroidResources = true
         unitTests.all { test ->
+            // Robolectric resolves its Android runtime outside Gradle; use
+            // the same canonical Maven Central endpoint as mavenCentral().
+            test.systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
             // Chat pipeline smoke tests replay golden fixtures from the repo
             // root (same wiring as :core:protocol / :core:data).
             test.systemProperty(
