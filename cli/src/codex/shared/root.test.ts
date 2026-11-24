@@ -69,9 +69,10 @@ afterEach(async () => {
 });
 
 async function fixture(opts?: { hubArchived?: boolean; end?: RootHost['end']; create?: RootHost['create'];
-    attached?: boolean; beforeSubscribe?: RootHost['beforeSubscribe']; validateHistory?: RootHost['validateHistory'] }) {
+    attached?: boolean; beforeSubscribe?: RootHost['beforeSubscribe']; validateHistory?: RootHost['validateHistory']; initialState?: AgentState;
+    resumeSettings?: Record<string, unknown> }) {
     const directory = await mkdtemp(join(tmpdir(), 'hapi-shared-root-'));
-    let state: AgentState = { steeringActive: true };
+    let state: AgentState = opts?.initialState ?? { steeringActive: true };
     let metadata: Metadata = { path: directory, host: 'test', flavor: 'codex' };
     if (opts?.attached) metadata.codexRuntime = { kind: 'attached', bindingId: '11111111-1111-4111-8111-111111111111', state: 'attached' };
     let reconnect: (() => void) | null = null;
@@ -103,7 +104,7 @@ async function fixture(opts?: { hubArchived?: boolean; end?: RootHost['end']; cr
         sendSessionDeath() {}, async flush() {}, close() {}
     } as unknown as ApiSessionClient;
     const end = opts?.end ?? (async () => { throw new Error('Unexpected root archive'); });
-    const root = new SharedCodexRoot({ session, workingDirectory: directory } as SessionBootstrapResult, {
+    const root = new SharedCodexRoot({ session, sessionInfo: { agentState: state }, workingDirectory: directory } as SessionBootstrapResult, {
         directory, generation: 'test', endpoint: 'mock', settingsFor: () => undefined,
         create: opts?.create ?? (async () => { throw new Error('Unexpected root creation'); }),
         attached: opts?.attached, beforeSubscribe: opts?.beforeSubscribe, validateHistory: opts?.validateHistory,
@@ -111,7 +112,7 @@ async function fixture(opts?: { hubArchived?: boolean; end?: RootHost['end']; cr
     } satisfies RootHost);
     cleanups.push(async () => { await root.close(false); await rm(directory, { recursive: true, force: true }); });
     await root.prepare();
-    await root.bind('thread', { model: 'mock', thread: { turns: [] } }, opts?.attached ?? false);
+    await root.bind('thread', { model: 'mock', thread: { turns: [] }, ...opts?.resumeSettings }, opts?.attached ?? false);
     const native = root.client as unknown as {
         initialized: boolean;
         thread: { id: string; turns: NativeTurn[] };
@@ -133,6 +134,26 @@ session, root, native, rpc, send, events, consumed, uncertain, sessionReady,
         end,
     };
 }
+
+describe('shared root startup collaboration mode', () => {
+    it.each(['default', 'plan'] as const)('keeps the reported %s mode without sending another update', async mode => {
+        const f = await fixture({ resumeSettings: { collaborationMode: { mode } } });
+        const request = vi.spyOn(f.root.client, 'request');
+        await f.root.activate({ collaborationMode: mode });
+        expect(request.mock.calls.some(([method]) => method === 'thread/settings/update')).toBe(false);
+        expect(f.sessionReady).toHaveBeenCalledOnce();
+    });
+
+    it.each(['plan', null])('requests Default when the resume response reports %s', async mode => {
+        const f = await fixture({ resumeSettings: { collaborationMode: mode ? { mode } : null } });
+        const request = vi.spyOn(f.root.client, 'request');
+        await f.root.activate({ collaborationMode: 'default' });
+        expect(request).toHaveBeenCalledWith('thread/settings/update', expect.objectContaining({
+            collaborationMode: expect.objectContaining({ mode: 'default' })
+        }));
+        expect(f.sessionReady).toHaveBeenCalledOnce();
+    });
+});
 
 describe('externally attached root', () => {
     it('skips MCP, instructions and initial settings injection, and disables lifecycle actions', async () => {
@@ -247,6 +268,21 @@ describe('async question delivery', () => {
             expect(f.state().requests![q.id]).toBeUndefined();
             expect(f.state().completedRequests![q.id]).toMatchObject({ status: 'resolved' });
         } finally { request.mockRestore(); }
+    });
+
+    it('preserves an explicit dismissal when a new root replays the same native thread', async () => {
+        const before = await fixture(); await before.root.activate();
+        before.native.notify('item/completed', { threadId: 'thread', turnId: 'turn', item });
+        await before.drain();
+        const q = asyncQuestionsForItem('thread', item)[0];
+        await before.rpc.get(RPC_METHODS.Permission)!({ id: q.id, approved: false });
+        await before.root.close(false);
+
+        const after = await fixture({ initialState: before.state() });
+        after.native.thread.turns = [{ id: 'turn', status: 'completed', items: [item] }];
+        await after.root.refresh();
+        expect(after.state().requests?.[q.id]).toBeUndefined();
+        expect(after.state().completedRequests?.[q.id]).toMatchObject({ status: 'canceled', decision: 'denied' });
     });
 
     it('retains unanswered questions across turn completion and native reconnect', async () => {

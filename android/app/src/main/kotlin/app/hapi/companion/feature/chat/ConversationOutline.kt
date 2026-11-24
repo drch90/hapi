@@ -11,13 +11,14 @@ import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
 import app.hapi.protocol.chat.UserTextBlock
 import app.hapi.protocol.chat.VisibleChatBlock
+import app.hapi.protocol.chat.translatedFrom
 
 internal data class OutlineItem(val id: String, val label: String, val createdAt: Long)
 
 internal fun conversationOutline(blocks: List<VisibleChatBlock>): List<OutlineItem> = blocks.filterIsInstance<UserTextBlock>()
     .filter { it.invokedAt != null || it.status == "failed" }
     .map { block ->
-        val label = block.text.replace(Regex("\\s+"), " ").trim()
+        val label = (block.translatedFrom ?: block.text).replace(Regex("\\s+"), " ").trim()
         OutlineItem(block.stableId, if (label.length > 96) label.take(93).trimEnd() + "..." else label, block.createdAt)
     }
 

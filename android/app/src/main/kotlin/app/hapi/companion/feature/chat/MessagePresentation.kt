@@ -20,7 +20,7 @@ internal data class ShareMessage(
 )
 
 internal fun shareMessage(block: VisibleChatBlock): ShareMessage? = when (block) {
-    is UserTextBlock -> ShareMessage(block.id, block.createdAt, true, block.text,
+    is UserTextBlock -> ShareMessage(block.id, block.createdAt, true, block.translatedFrom ?: block.text,
         block.attachments.orEmpty().map { it.filename })
     is AgentTextBlock -> ShareMessage(block.id, block.createdAt, false, block.text, emptyList())
     else -> null

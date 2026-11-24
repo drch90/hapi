@@ -91,6 +91,7 @@ fun HomeScreen(
     if (filterDestination == FilterDestination.Filters) {
         SessionFilterSheet(
             state = state,
+            onSetGrouped = viewModel::setGrouped,
             onSelectSort = viewModel::setSort,
             onSetActiveFirst = viewModel::setActiveFirst,
             onSelectStatus = viewModel::setStatusFilter,

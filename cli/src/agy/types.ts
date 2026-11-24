@@ -1,9 +1,9 @@
-import type { AgyPermissionMode } from '@hapi/protocol/types';
+import type { PermissionModeOf, Flavors } from '@hapi/protocol/types';
 import type { SessionEffort, SessionModel } from '@/api/types';
 
 // The public native-terminal catalog retains Auto. Upstream ACP/stream-json
 // modules additionally understand acceptEdits; it is not a native-terminal mode.
-export type PermissionMode = AgyPermissionMode | 'acceptEdits';
+export type PermissionMode = PermissionModeOf<typeof Flavors.agy> | 'acceptEdits';
 
 /**
  * Per-batch launch config captured at enqueue time. MessageQueue2 batches

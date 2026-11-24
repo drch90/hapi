@@ -5,7 +5,7 @@ import { registerSessionConfigRpc } from '@/agent/sessionConfigRpc'
 import { buildHapiMcpBridge } from '@/codex/utils/buildHapiMcpBridge'
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext } from '@/modules/common/remote/RemoteLauncherBase'
 import { RemoteModeDisplay } from '@/ui/ink/RemoteModeDisplay'
-import { RPC_METHODS, type HermesPermissionMode } from '@hapi/protocol'
+import { RPC_METHODS, type PermissionModeOf, type Flavors } from '@hapi/protocol'
 import { createHermesBackend } from './backend'
 import { HermesPermissionHandler } from './permissionHandler'
 import type { HermesSession } from './session'
@@ -175,7 +175,7 @@ export class HermesRemoteLauncher extends RemoteLauncherBase {
             return { ...hermesModels(backend.getSessionModelsMetadata(id)), currentModelId: session.getModel() ?? null,
                 ...(this.modelSyncError ? { success: false, error: this.modelSyncError } : {}) }
         })
-        registerSessionConfigRpc<HermesPermissionMode>({
+        registerSessionConfigRpc<PermissionModeOf<typeof Flavors.hermes>>({
             rpcHandlerManager: session.client.rpcHandlerManager,
             flavor: 'hermes', modelMode: 'nullable',
             onApply: config => {

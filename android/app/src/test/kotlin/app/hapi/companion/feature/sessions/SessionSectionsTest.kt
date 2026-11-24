@@ -1,5 +1,6 @@
 package app.hapi.companion.feature.sessions
 
+import app.hapi.protocol.wire.AttachedJob
 import app.hapi.protocol.wire.SessionSummary
 import app.hapi.protocol.wire.SessionListOrder
 import app.hapi.protocol.wire.SessionListSort
@@ -44,6 +45,22 @@ class SessionSectionsTest {
         assertEquals(rows.map { it.id }.sorted(), sections.flatMap { it.rows }.map { it.id }.sorted())
         assertTrue(sections.take(3).none { it.collapsed })
         assertTrue(sections.last().collapsed)
+    }
+
+    @Test fun attachedJobsOnlyPromoteUnarchivedSessionsWithRunningWork() {
+        val job = AttachedJob(key = "import", label = "Import", heartbeatAt = 0, startedAt = 0, updatedAt = 0)
+        val rows = listOf(
+            row("running") { it.copy(attachedJob = job) },
+            row("archived") {
+                it.copy(attachedJob = job, metadata = it.metadata!!.copy(lifecycleState = "archived"))
+            },
+            row("finished") { it.copy(attachedJob = job.copy(status = "completed")) },
+        )
+        val sections = buildSessionSections(rows)
+        assertEquals(listOf(SessionSectionKind.IN_PROGRESS, SessionSectionKind.WORKSPACE), sections.map { it.kind })
+        assertEquals(listOf("running"), sections.first().rows.map { it.id })
+        assertEquals(listOf("archived", "finished"), sections.last().rows.map { it.id })
+        assertEquals(job, sections.last().rows.first().runningJob)
     }
 
     @Test fun `worktrees share their base workspace and machine identity separates identical paths`() {
@@ -138,6 +155,37 @@ class SessionSectionsTest {
             assertEquals(listOf("/repo/first", "/repo/second"), directories(listOf(nextPrompt, rows.last())))
         }
     }
+    @Test fun flatModeKeepsBothPinKindsAndEverySessionWithoutCollapsedGroups() {
+        val rows = listOf(
+            row("global") { it.copy(globalPinned = true) },
+            row("project") { it.copy(pinned = true) },
+            row("working", active = true) { it.copy(thinking = true) },
+            row("history"),
+        )
+        val grouped = buildSessionSections(rows)
+        val overrides = grouped.associate { it.id to true }
+        val flat = buildSessionSections(rows, overrides, grouped = false)
+        assertEquals(listOf(SessionSectionKind.PINNED, SessionSectionKind.RECENT), flat.map { it.kind })
+        assertEquals(listOf("global", "project"), flat.first().rows.map { it.id })
+        assertEquals(listOf("working", "history"), flat.last().rows.map { it.id })
+        assertTrue(flat.none { it.collapsed })
+        assertEquals(grouped.map { it.id }, buildSessionSections(rows, overrides).map { it.id })
+        assertTrue(buildSessionSections(rows, overrides).all { it.collapsed })
+    }
+
+    @Test fun windowsPathVariantsShareAWorkspaceAndCollidingLabelsKeepParentContext() {
+        val sections = buildSessionSections(listOf(
+            row("windows", path = "C:\\team-a\\src\\app"),
+            row("git-path", path = "C:/team-a/src/app"),
+            row("other", path = "C:/team-b/src/app"),
+        ))
+        assertEquals(2, sections.size)
+        val first = sections.single { it.directory == "C:/team-a/src/app" }
+        assertEquals(listOf("windows", "git-path"), first.rows.map { it.id })
+        assertEquals("team-a/src/app", first.title)
+        assertEquals("team-b/src/app", sections.single { it.directory == "C:/team-b/src/app" }.title)
+    }
+
     @Test fun disablingActiveFirstKeepsLiveRowsInTheirWorkspace() {
         val rows = listOf(row("live", active = true), row("history"))
         val sections = buildSessionSections(rows, order = SessionListOrder.Base)

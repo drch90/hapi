@@ -3,6 +3,7 @@ import type {
     CopilotAgentMode,
     DecryptedMessage as ProtocolDecryptedMessage,
     Machine,
+    Metadata,
     RunnerState,
     Session,
     SessionSummary,
@@ -68,6 +69,7 @@ export type {
     SessionContentMatch,
     SessionContentMatchesResponse,
     SessionTitleSuggestionResponse,
+    ScratchlistSessionIdsResponse,
     SessionsResponse,
     SessionContentSearchResponse,
     SpawnResponse,
@@ -140,6 +142,7 @@ export type SessionMetadataSummary = {
     conversationHistoryIndexes?: Record<string, number>
     conversationHistoryTurns?: Record<string, string>
     conversationHistoryEntryIds?: Record<string, string>
+    claudeRewind?: Metadata['claudeRewind']
     conversationHistoryDiverged?: boolean
     worktree?: WorktreeMetadata
 }

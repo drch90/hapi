@@ -215,7 +215,8 @@ export class SharedCodexRoot {
         if (!this.host.attached) this.bridge = await buildHapiMcpBridge(this.session, { exportSessionEnv: false, emitTitleSummary: false,
             skillLookup: { workingDirectory: this.bootstrap.workingDirectory, flavor: 'codex' } });
         await initializeSharedClient(this.client);
-        this.asyncQuestions = new SharedCodexAsyncQuestions(this.session, (threadId, text, id) => this.submitQuestionAnswer(threadId, text, id));
+        this.asyncQuestions = new SharedCodexAsyncQuestions(this.session, (threadId, text, id) => this.submitQuestionAnswer(threadId, text, id),
+            this.bootstrap.sessionInfo.agentState?.completedRequests);
         this.permissions = new SharedCodexPermissions(this.session, this.client, this.host.generation, reply => this.asyncQuestions.answer(reply), this.userWaitFor);
         this.client.setServerRequestHandler(request => { void this.receiveRequest(request); });
     }
@@ -615,7 +616,10 @@ export class SharedCodexRoot {
         } finally { clearTimeout(timer); this.settingsListeners.delete(changed); }
     }
     async initialSettings(options: SharedLaunchOptions): Promise<void> {
-        if (options.collaborationMode) await this.applySettings({ collaborationMode: options.collaborationMode });
+        const mode = options.collaborationMode;
+        const nativeMode = record(this.settingsNative.collaborationMode).mode;
+        // Codex may acknowledge a no-op without broadcasting a settings update.
+        if (mode && mode !== nativeMode) await this.applySettings({ collaborationMode: mode });
     }
     private async implementPlan(planId: string): Promise<ImplementCodexPlanResult> {
         const unavailable = (): ImplementCodexPlanResult => ({ ok: false, code: 'unavailable', error: 'Codex is disconnected or stopping. Reconnect before implementing the plan.' });

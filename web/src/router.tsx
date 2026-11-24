@@ -49,7 +49,7 @@ import type { ComposerSendError } from '@/components/AssistantChat/HappyComposer
 import { ApiError } from '@/api/client'
 import type { MessageDeliveryMode } from '@hapi/protocol'
 import { queryKeys } from '@/lib/query-keys'
-import { useToast } from '@/lib/toast-context'
+import { useAddToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { seedMessageWindowFromSession, syncTailMessages } from '@/lib/message-window-store'
 import { clearDraftsAfterSend } from '@/lib/clearDraftsAfterSend'
@@ -151,7 +151,7 @@ function SessionsPage() {
     const pathname = useLocation({ select: location => location.pathname })
     const matchRoute = useMatchRoute()
     const { t } = useTranslation()
-    const { addToast } = useToast()
+    const addToast = useAddToast()
     const { sessions, isLoading, error, refetch } = useSessions(api)
     const [initializedHub, setInitializedHub] = useState<string | null>(null)
     const { machines } = useMachines(api, true)
@@ -304,7 +304,7 @@ function SessionsPage() {
                 className={`${shouldShowSidebar ? (isSessionsIndex ? 'flex' : 'hidden split:flex') : 'hidden'} min-w-0 w-full shrink-0 flex-col bg-[var(--app-bg)]`}
                 style={{ '--sidebar-w': `${sidebar.width}px` } as React.CSSProperties}
             >
-                <div className="flex min-h-0 flex-1 flex-col pt-[env(safe-area-inset-top)]">
+                <div className="flex min-h-0 flex-1 flex-col pt-[var(--route-safe-area-top,env(safe-area-inset-top))]">
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -374,7 +374,7 @@ function SessionsPage() {
 
             <div className={`${isSessionsIndex ? 'hidden split:flex' : 'flex'} relative min-w-0 flex-1 flex-col bg-[var(--app-bg)]`}>
                 {isSessionsIndex ? (
-                    <div className="absolute right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-10 hidden split:block">
+                    <div className="absolute right-3 top-[calc(var(--route-safe-area-top,env(safe-area-inset-top))+0.75rem)] z-10 hidden split:block">
                         <NativeAppPromoButton />
                     </div>
                 ) : null}
@@ -428,7 +428,7 @@ function SessionPage() {
     const goBack = useAppGoBack()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const { addToast } = useToast()
+    const addToast = useAddToast()
     const { sessionId } = useParams({ from: '/sessions/$sessionId' })
     const { outline, messageId, messageQuery, pendingRequestId } = useSearch({ from: '/sessions/$sessionId' })
     const {
@@ -444,6 +444,7 @@ function SessionPage() {
     const {
         session,
         error: sessionError,
+        isFetching: checkingSession,
         refetch: refetchSession,
     } = useSession(api, sessionId)
     const {
@@ -457,6 +458,7 @@ function SessionPage() {
         warning: messagesWarning,
         isSyncingTail: messagesSyncingTail,
         isCatchingUpFromCache: messagesCatchingUpFromCache,
+        cachedTailFirstFrame: messagesCachedTailFirstFrame,
         isLoadingMore: messagesLoadingMore,
         hasMore: messagesHasMore,
         hasMoreNewer: messagesHasMoreNewer,
@@ -955,6 +957,7 @@ function SessionPage() {
 
     return (
         <SessionChat
+            checkingSession={checkingSession}
             readThroughRevision={readThroughRevision}
             api={api}
             titleSuggestionAvailable={titleSuggestionAvailable}
@@ -968,6 +971,7 @@ function SessionPage() {
             hasMoreNewerMessages={messagesHasMoreNewer}
             isSyncingTail={messagesSyncingTail}
             isCatchingUpFromCache={messagesCatchingUpFromCache}
+            cachedTailFirstFrame={messagesCachedTailFirstFrame}
             isLoadingMoreMessages={messagesLoadingMore}
             isSending={isSending}
             viewMode={messagesViewMode}
@@ -1155,7 +1159,7 @@ function NewSessionPage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+var(--route-safe-area-top,env(safe-area-inset-top)))]">
                 {!isTelegramApp() && (
                     <button
                         type="button"
@@ -1212,7 +1216,7 @@ function BrowsePage() {
 
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+env(safe-area-inset-top))]">
+            <div className="flex items-center gap-2 border-b border-[var(--app-border)] bg-[var(--app-bg)] p-3 pt-[calc(0.75rem+var(--route-safe-area-top,env(safe-area-inset-top)))]">
                 {!isTelegramApp() && (
                     <button
                         type="button"

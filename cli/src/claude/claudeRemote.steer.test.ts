@@ -161,6 +161,7 @@ describe('claudeRemote steering', () => {
         expect(fake.stdin[1]!.message.content).toBe('Also run lint');
         expect(fake.stdin[1]!.uuid).toEqual(expect.any(String));
         expect(fake.stdin[1]!.uuid).not.toBe(fake.stdin[0]!.uuid);
+        expect(delivery.message.uuid).toBe(fake.stdin[1]!.uuid);
 
         fake.replay(fake.stdin[1]!);
         await waitFor(() => remote.onSteerEcho.mock.calls.length === 1);
@@ -273,7 +274,7 @@ describe('claudeRemote steering', () => {
     it('does not offer a steer target for a slash command turn', async () => {
         const remote = await startRemote('/compact');
         restore = remote.restore;
-        expect(remote.targets).toEqual([]);
+        expect(remote.targets.filter(Boolean)).toEqual([]);
         remote.fake.close();
         await remote.run;
     });

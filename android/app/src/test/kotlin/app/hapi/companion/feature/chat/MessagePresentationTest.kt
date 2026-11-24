@@ -2,6 +2,8 @@ package app.hapi.companion.feature.chat
 
 import app.hapi.protocol.chat.*
 import java.time.ZoneId
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -57,5 +59,11 @@ class MessagePresentationTest {
         ), null, null, null)
         assertEquals(listOf("photo.png"), shareMessage(user)!!.filenames)
         assertNull(shareMessage(ToolCallBlock("tool", null, 1, null, tool = tool(), children = emptyList(), meta = null)))
+    }
+
+    @Test fun translatedUserExportsKeepTheOriginalPrompt() {
+        val user = UserTextBlock("user", null, 1234, 1234, "Review this change", null, "sent", null,
+            JsonObject(mapOf("translatedFrom" to JsonPrimitive("检查这次修改"))))
+        assertEquals("检查这次修改", shareMessage(user)!!.text)
     }
 }

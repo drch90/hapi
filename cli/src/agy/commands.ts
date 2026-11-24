@@ -1,4 +1,4 @@
-import { AGY_EFFORT_LEVELS, AGY_PERMISSION_MODES, getAgyModelChoices, type AgyModelSummary } from '@hapi/protocol';
+import { AGY_EFFORT_LEVELS, Flavors, getAgyModelChoices, type AgyModelSummary } from '@hapi/protocol';
 import { getBuiltinSlashCommands } from '@hapi/protocol/slashCommands';
 import type { AgyMode } from './types';
 import type { AgyNativeStatus } from './pty/nativeStatus';
@@ -43,7 +43,7 @@ export function resolveAgyCommand(text: string): AgyCommand | null {
     if (name === 'permissions' || name === 'permission') {
         if (!args) return { kind: 'query', name: 'permissions' };
         const permissionMode = args === 'default' ? 'request-review' : args;
-        if (!(AGY_PERMISSION_MODES as readonly string[]).includes(permissionMode)) return error(`/permissions <${AGY_PERMISSION_MODES.join('|')}>`);
+        if (!(Flavors.agy.permissionModes as readonly string[]).includes(permissionMode)) return error(`/permissions <${Flavors.agy.permissionModes.join('|')}>`);
         return { kind: 'config', updates: { permissionMode: permissionMode as AgyMode['permissionMode'] } };
     }
     if (name === 'compact' || name === 'clear' || name === 'new') {

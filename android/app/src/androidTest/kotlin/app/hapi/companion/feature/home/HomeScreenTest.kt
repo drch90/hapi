@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.ime
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
@@ -103,7 +104,7 @@ class HomeScreenTest {
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
-    private fun Content() {
+    private fun Content(model: SessionListViewModel = viewModel) {
         val showingKeyboard = WindowInsets.isImeVisible
         val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
         SideEffect {
@@ -112,7 +113,7 @@ class HomeScreenTest {
         }
         HapiTheme(dynamicColor = false) {
             HomeScreen(
-                viewModel = viewModel,
+                viewModel = model,
                 activeHubUrl = "https://hub.example",
                 pairedHubs = listOf("https://hub.example"),
                 onSwitchHub = {}, onPairAnotherHub = {}, onSignOut = {}, onOpenSession = {},
@@ -127,6 +128,44 @@ class HomeScreenTest {
             compose.onAllNodesWithContentDescription(label(R.string.sessions_filters))
                 .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
         }
+    }
+
+    @Test fun manualFolderCollapseHidesOnlyItsOwnRowsAndSurvivesARefresh() {
+        val prefix = "/very/long/shared/parent/project/workspaces"
+        sessions.sessions.value = sessions.sessions.value.map { row ->
+            when (row.id) {
+                "build" -> row.copy(active = false, metadata = row.metadata!!.copy(path = "$prefix/team-a/src/app"))
+                "fix" -> row.copy(active = false, metadata = row.metadata!!.copy(path = "$prefix/team-b/src/app"))
+                "research" -> row.copy(active = false, metadata = row.metadata!!.copy(path = "$prefix/team-a/src/app", machineId = "laptop"))
+                else -> row
+            }
+        }
+        mount()
+        // Local workspace history starts folded; live sessions have separate sections.
+        compose.onNode(hasClickAction() and hasText("team-a/src/app", substring = true)).performClick()
+        compose.onNode(hasClickAction() and hasText("team-b/src/app", substring = true)).performClick()
+        capture("projects-expanded")
+        val folder = compose.onNode(hasClickAction() and hasText("team-a/src/app", substring = true) and hasStateDescription(label(R.string.sessions_group_expanded)))
+        folder.performClick()
+        compose.onNodeWithText("Build API").assertDoesNotExist()
+        compose.onNodeWithText("Fix Android").assertIsDisplayed()
+        val other = compose.onNode(hasClickAction() and hasText("team-b/src/app", substring = true))
+        other.performClick()
+        compose.onNodeWithText("Fix Android").assertDoesNotExist()
+        capture("project-folded")
+        other.performClick()
+        sessions.sessions.value = sessions.sessions.value.map { it.copy(contentRevision = 10) }
+        compose.waitUntil(10_000) { viewModel.uiState.value.rows.all { it.summary.contentRevision == 10L } }
+        compose.onNodeWithContentDescription(label(R.string.sessions_search_open)).performClick()
+        compose.onNodeWithTag("home-search-input").performTextInput("zznomatchzz")
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithText(label(R.string.sessions_search_no_results_hint)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithContentDescription(label(R.string.sessions_search_close)).performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Fix Android").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Build API").assertDoesNotExist()
+        compose.onNode(hasClickAction() and hasStateDescription(label(R.string.sessions_group_collapsed))).performClick()
+        compose.onNodeWithText("Build API").assertIsDisplayed()
     }
 
     private fun label(id: Int) = context.getString(id)
@@ -247,6 +286,30 @@ class HomeScreenTest {
         compose.onNodeWithContentDescription(label(R.string.sessions_filters)).assertIsDisplayed()
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, label(R.string.sessions_filter_all)))
         assertNull(viewModel.uiState.value.activeMachineFilter)
+    }
+
+    @Test fun manualSectionCollapseSurvivesRecreatingTheViewModel() {
+        var currentModel: SessionListViewModel? = null
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            val model = remember { SessionListViewModel(sessions, HomeMachines(), LastSeenStore(scope), scope) }
+            SideEffect { currentModel = model }
+            Content(model)
+        }
+        compose.waitUntil(10_000) { currentModel?.uiState?.value?.rows?.size == 3 }
+        compose.onNode(hasClickAction() and hasText(label(R.string.sessions_section_active))
+            and hasStateDescription(label(R.string.sessions_group_expanded))).performClick()
+        compose.onNodeWithText("Build API").assertDoesNotExist()
+        val previousModel = currentModel
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitUntil(10_000) {
+            currentModel !== previousModel && currentModel?.uiState?.value?.sections
+                ?.any { it.id == "active" && it.collapsed } == true
+        }
+        compose.onNodeWithText("Build API").assertDoesNotExist()
+        compose.onNode(hasClickAction() and hasText(label(R.string.sessions_section_active))
+            and hasStateDescription(label(R.string.sessions_group_collapsed))).performClick()
+        compose.onNodeWithText("Build API").assertIsDisplayed()
     }
 
     @Test fun searchExpansionAndQuerySurviveStateRestoration() {

@@ -67,10 +67,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -145,6 +147,13 @@ fun SessionListScreen(
     onNewInDirectory: ((String?, String) -> Unit)? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
+    var savedCollapseOverrides by rememberSaveable(viewModel.hubKey) {
+        mutableStateOf(HashMap(viewModel.sectionCollapseOverrides.value))
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.restoreSectionCollapseOverrides(savedCollapseOverrides)
+        viewModel.sectionCollapseOverrides.collect { savedCollapseOverrides = HashMap(it) }
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     var sheetRow by remember { mutableStateOf<SessionRowUi?>(null) }
     var renameRow by remember { mutableStateOf<SessionRowUi?>(null) }
@@ -240,6 +249,7 @@ fun SessionListScreen(
                 } else {
                     SessionRows(
                         sections = state.sections,
+                        grouped = state.grouped,
                         searching = state.filters.query.isNotBlank(),
                         onToggleSection = viewModel::toggleSection,
                         onOpen = { sessionId ->
@@ -353,6 +363,7 @@ fun SessionListScreen(
 internal fun SessionRows(
     sections: List<SessionSectionUi>,
     searching: Boolean,
+    grouped: Boolean = true,
     onToggleSection: (String) -> Unit,
     onOpen: (String) -> Unit,
     onLongPress: (SessionRowUi) -> Unit,
@@ -363,7 +374,7 @@ internal fun SessionRows(
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
         for (section in sections) {
             item(key = "header:${section.id}", contentType = "section") {
-                SectionHeader(section, enabled = !searching, onToggle = { onToggleSection(section.id) },
+                SectionHeader(section, collapsible = grouped, enabled = !searching, onToggle = { onToggleSection(section.id) },
                     onNewInDirectory = onNewInDirectory)
             }
             if (!section.collapsed) {
@@ -379,19 +390,22 @@ internal fun SessionRows(
 @Composable
 private fun SectionHeader(
     section: SessionSectionUi,
+    collapsible: Boolean,
     enabled: Boolean,
     onToggle: () -> Unit,
     onNewInDirectory: ((String?, String) -> Unit)?,
 ) {
     val title = when (section.kind) {
         SessionSectionKind.PINNED -> stringResource(R.string.sessions_section_pinned)
+        SessionSectionKind.RECENT -> stringResource(R.string.sessions_section_recent)
         SessionSectionKind.IN_PROGRESS -> stringResource(R.string.sessions_section_in_progress)
         SessionSectionKind.ACTIVE -> stringResource(R.string.sessions_section_active)
         SessionSectionKind.WORKSPACE -> section.title ?: stringResource(R.string.sessions_section_other_workspace)
     }
     val expansion = stringResource(if (section.collapsed) R.string.sessions_group_collapsed else R.string.sessions_group_expanded)
     val hasRows = section.rows.isNotEmpty()
-    val headerInteraction = if (hasRows) Modifier
+    val canCollapse = collapsible && hasRows
+    val headerInteraction = if (canCollapse) Modifier
         .clickable(enabled = enabled, role = Role.Button, onClick = onToggle)
         .semantics { stateDescription = expansion } else Modifier
     Row(
@@ -406,7 +420,7 @@ private fun SectionHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (hasRows) {
+            if (canCollapse) {
                 Icon(
                     if (section.collapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
                     contentDescription = null,
@@ -415,10 +429,10 @@ private fun SectionHeader(
                 )
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.labelLarge)
                 section.machine?.let { machine ->
                     Text(machineFilterLabel(machine), style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             if (section.rows.any { it.unread }) UnreadDot()

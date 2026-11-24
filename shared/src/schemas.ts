@@ -201,6 +201,9 @@ export const MetadataSchema = z.object({
     // Hub-owned provisional title from the first user prompt. Shown only until
     // `name` or `summary` exists; it never blocks generated/native titles.
     promptTitle: z.string().optional(),
+    // Hub-owned per-session toggle: translate user prompts to English before
+    // they reach the agent (falls back to the original text on failure).
+    translateInput: z.boolean().optional(),
     machineId: z.string().optional(),
     claudeSessionId: z.string().optional(),
     // Earlier Claude session ids of this HAPI session (Claude rotates the id on
@@ -234,6 +237,7 @@ export const MetadataSchema = z.object({
     // 原始 Codex thread id。导入 Codex 历史后，HAPI 会 fork 出自己的续写 thread；
     // codexSessionId 保存 fork 后的 thread，codexSourceSessionId 保留来源 thread 便于同步/展示。
     codexSourceSessionId: z.string().optional(),
+    codexImportedAt: z.number().nullable().optional(),
     geminiSessionId: z.string().optional(),
     opencodeSessionId: z.string().optional(),
     grokSessionId: z.string().optional(),
@@ -353,6 +357,30 @@ export const MetadataSchema = z.object({
     // Pi localId → append-only session entry id mapping. Pi entry ids are the
     // only stable native boundary accepted by its fork API.
     conversationHistoryEntryIds: z.record(z.string(), z.string().min(1)).optional(),
+    // Durable re-arm record for Claude's native rewind (--resume-session-at,
+    // v2.1.223+). Presence means the native branch is still pending: the hub
+    // already truncated at rewind-RPC success, and the CLI derives the
+    // boundary flag on every spawn until the dropped turns leave the native
+    // active chain. History RPCs (fork/rewind) must refuse while this is set.
+    // A malformed value (e.g. an older shape written by a previous hub) parses
+    // as undefined instead of failing MetadataSchema: the hub would otherwise
+    // drop the whole session metadata (flavor, machine, path, lifecycle).
+    claudeRewind: z.object({
+        targetLocalId: z.string().min(1),
+        truncateFromLocalId: z.string().min(1),
+        keepBoundary: z.string().min(1),
+        droppedPrompts: z.array(z.string().min(1)),
+        // Hub-owned confirmation that the transcript cut for this intent was
+        // applied. The CLI's native proof (the re-parented post-rewind input)
+        // only clears the intent once this marker is visible, so a lost RPC
+        // reply leaves the intent in place for the hub's timeout/reconnect
+        // reconcile instead of stranding the transcript mismatched.
+        hubCutApplied: z.boolean().optional(),
+        // Newest transcript seq at dispatch (echoed by the CLI from the RPC
+        // payload): the hub's cut never deletes rows created after it. Absent
+        // on intents written by an older CLI or hub, which cut unbounded.
+        discardedThroughSeq: z.number().int().nonnegative().optional()
+    }).optional().catch(undefined),
     // Latest Pi append-log entry observed by HAPI. Import uses it as the
     // incremental cursor so native history already streamed live is not copied twice.
     piHistoryLeafEntryId: z.string().optional(),
@@ -678,6 +706,8 @@ export const AttachedJobSchema = z.object({
     wakeOnTerminal: z.boolean().optional(),
     /** Optional prescription text appended to the hub wake message. */
     wakePrompt: z.string().max(2000).optional(),
+    /** In list / primary projections, the newest heartbeat across running jobs. */
+    latestRunningHeartbeatAt: z.number().optional(),
     heartbeatAt: z.number(),
     startedAt: z.number(),
     updatedAt: z.number()

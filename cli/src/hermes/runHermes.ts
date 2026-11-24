@@ -6,7 +6,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2'
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter'
 import { getInvokedCwd } from '@/utils/invokedCwd'
 import { logger } from '@/ui/logger'
-import type { HermesPermissionMode } from '@hapi/protocol'
+import type { PermissionModeOf, Flavors } from '@hapi/protocol'
 import { HermesSession, type HermesMode } from './session'
 import { HermesRemoteLauncher } from './remote'
 
@@ -18,7 +18,7 @@ export async function runHermes(opts: {
     resumeSessionId?: string
     workingDirectory?: string
     model?: string
-    permissionMode?: HermesPermissionMode
+    permissionMode?: PermissionModeOf<typeof Flavors.hermes>
 } = {}): Promise<void> {
     const workingDirectory = opts.workingDirectory ?? getInvokedCwd()
     const startedBy = opts.startedBy ?? 'terminal'

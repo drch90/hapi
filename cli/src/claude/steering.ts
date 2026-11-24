@@ -36,7 +36,11 @@ export class ClaudeSteering {
     private readonly deliveries = new Map<string, Delivery>();
     private readonly dispatches = new Set<Promise<ClaudeSteerResult>>();
 
-    constructor(private readonly session: Session, private readonly flush: () => Promise<void>) {}
+    constructor(
+        private readonly session: Session,
+        private readonly flush: () => Promise<void>,
+        private readonly onAcknowledged?: (localId: string, nativePromptUuid: string) => void
+    ) {}
 
     setTarget(target: ClaudeSteerTarget | null): void {
         this.target = target;
@@ -145,6 +149,7 @@ export class ClaudeSteering {
         // user row, and subsequent assistant output follows its consumed ACK.
         await this.flush();
         if (this.session.queue.commitReservation(delivery.reservation)) {
+            this.onAcknowledged?.(localId, uuid);
             this.session.client.emitMessagesConsumed([localId], { steered: true });
         }
     }

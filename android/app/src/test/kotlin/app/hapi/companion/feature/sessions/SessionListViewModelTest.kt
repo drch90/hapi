@@ -238,6 +238,27 @@ class SessionListViewModelTest {
         assertTrue(vm.uiState.first { !it.filters.applied }.sections.single().collapsed)
     }
 
+    @Test fun `restoring home state preserves explicit expansion and collapse choices`() = runTest {
+        val (vm, sessions) = buildViewModel()
+        sessions.set(summary("history", name = "History"), summary("live", active = true, name = "Live"))
+        val initial = vm.uiState.first { it.rows.size == 2 }
+        val workspaceId = initial.sections.single { it.kind == SessionSectionKind.WORKSPACE }.id
+        vm.toggleSection(workspaceId)
+        vm.uiState.first { !it.sections.last().collapsed }
+        vm.toggleSection("active")
+        vm.uiState.first { it.sections.first().collapsed }
+
+        val (restored, restoredSessions) = buildViewModel()
+        restored.restoreSectionCollapseOverrides(vm.sectionCollapseOverrides.value)
+        restoredSessions.set(summary("history", name = "History"), summary("live", active = true, name = "Live"))
+        val state = restored.uiState.first { it.rows.size == 2 }
+        assertFalse(state.sections.single { it.id == workspaceId }.collapsed)
+        assertTrue(state.sections.single { it.id == "active" }.collapsed)
+        restored.setSearchQuery("history")
+        assertFalse(restored.uiState.first { it.searchQuery == "history" }.sections.single().collapsed)
+        assertEquals(vm.sectionCollapseOverrides.value, restored.sectionCollapseOverrides.value)
+    }
+
     @Test fun `session state updates move rows between sections without losing workspace expansion`() = runTest {
         val (vm, sessions) = buildViewModel()
         sessions.set(summary("a", name = "Task"), summary("b", name = "History"))

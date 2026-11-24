@@ -50,6 +50,11 @@ data class SessionMetadata(
     val piSelectedModel: ProviderModel? = null,
     val cursorCliModelSkus: List<AgentModelEntry>? = null,
     val dshSessionId: String? = null,
+    /**
+     * Hub-owned "translate my messages to English" toggle; written only via
+     * `PATCH /api/sessions/:id {translateInput}`. Absent ⇒ off.
+     */
+    val translateInput: Boolean? = null,
 )
 
 /** `metadata.summary` on the detail session (`{text, updatedAt}`). */

@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -236,18 +237,12 @@ fun HapiNavigation() {
     // Handle hub switching and notification navigation in one ordered effect:
     // reset an old chat first, wait for the new graph, then open the destination.
     val pendingOpenSession by graph.pendingOpenSession.collectAsState()
-    var navigationHub by remember { mutableStateOf(registryState.activeHubUrl) }
+    var navigationHub by rememberSaveable { mutableStateOf(registryState.activeHubUrl) }
     LaunchedEffect(registryState.activeHubUrl, activeHubGraph, pendingOpenSession) {
         val active = registryState.activeHubUrl
-        if (navigationHub != active) {
-            navigationHub = active
-            if (active == null) {
-                val onPairing = navController.currentDestination?.hierarchy?.any { it.route == Routes.PAIRING } == true
-                if (!onPairing) navController.navigateClearingBackStack(Routes.PAIRING)
-            } else if (navController.currentDestination?.route in setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST, Routes.WORKSPACE, Routes.NEW_SESSION)) {
-                navController.popBackStack(Routes.HOME, inclusive = false)
-            }
-        }
+        val hubChanged = navigationHub != active
+        navigationHub = active
+        handleActiveHubChange(navController, active, hubChanged)
         val destination = pendingOpenSession ?: return@LaunchedEffect
         val target = destination.hubUrl ?: active
         if (target == null || target !in registryState.hubs) {
@@ -1176,6 +1171,47 @@ private fun NavigateHomeOnSuccess(navController: NavHostController, state: Pairi
         if (state is PairingUiState.Success) {
             graph.pairingNotice.value = null
             navController.navigateClearingBackStack(Routes.HOME)
+        }
+    }
+}
+
+private val hubScopedSessionRoutes = setOf(Routes.CHAT, Routes.FILES, Routes.FILE_VIEWER, Routes.SCRATCHLIST, Routes.WORKSPACE, Routes.NEW_SESSION)
+
+@Composable
+internal fun HandleActiveHubNavigation(navController: NavHostController, activeHubUrl: String?) {
+    var lastHandledHubUrl by rememberSaveable { mutableStateOf(activeHubUrl) }
+    LaunchedEffect(activeHubUrl) {
+        val hubChanged = lastHandledHubUrl != activeHubUrl
+        lastHandledHubUrl = activeHubUrl
+        handleActiveHubChange(navController, activeHubUrl, hubChanged)
+    }
+}
+
+/** Shared by restored navigation and the ordered notification/hub-switch effect. */
+private fun handleActiveHubChange(navController: NavHostController, activeHubUrl: String?, hubChanged: Boolean) {
+    if (activeHubUrl == null) {
+        val onPairing = navController.currentDestination
+            ?.hierarchy?.any { it.route == Routes.PAIRING } == true
+        if (!onPairing) {
+            navController.navigateClearingBackStack(Routes.PAIRING)
+        }
+    } else if (hubChanged) {
+        val currentEntry = navController.currentBackStackEntry
+        val currentRoute = currentEntry?.destination?.route
+        if (currentRoute in hubScopedSessionRoutes) {
+            navController.popBackStack(Routes.HOME, inclusive = false)
+        } else if (
+            currentRoute == Routes.SHARE &&
+            navController.previousBackStackEntry?.destination?.route in hubScopedSessionRoutes
+        ) {
+            // The pending share lives in the inbox. Keep its picker open, but
+            // don't let Cancel or Back reveal a session from the old Hub.
+            val requestId = currentEntry?.arguments?.getString("requestId") ?: return
+            if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                // A notification can open chat directly over pairing, without Home.
+                navController.navigateClearingBackStack(Routes.HOME)
+            }
+            navController.navigate(Routes.share(requestId))
         }
     }
 }

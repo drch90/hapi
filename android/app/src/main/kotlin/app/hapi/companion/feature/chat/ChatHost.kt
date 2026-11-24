@@ -183,7 +183,7 @@ internal fun ChatHost(
                                     "message" -> {
                                         val message = remember(id, revision) { viewModel.inspection.message(id) }
                                         if (message == null) MissingInspection(back, close)
-                                        else MessageReader(message.value.text, message.stale, back, close)
+                                        else MessageReader(message.value.translatedFrom ?: message.value.text, message.stale, back, close)
                                     }
                                     else -> {
                                         val tool = remember(id, revision) { viewModel.inspection.tool(id) }

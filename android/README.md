@@ -660,14 +660,19 @@ Home centers the Sessions title between a **Hubs and settings** icon and a
 **Search** and **Sort & filter** icons, keeping the new-session FAB. The hub menu is the only entry
 for switching/adding hubs, the workspace browser, app settings and sign-out; the active hub is checked.
 The icon carries a dot for any applied filter or a non-default order and opens
-one compact Material 3 sheet that mirrors the web sort and filter menu without
-scrolling: under **Filter**, single "label · value" rows for **Machines** (two or
+one Material 3 sheet: under **Filter**, single "label · value" rows for **Machines** (two or
 more machines; a menu with per-machine session counts), **Activity dates**
 (opens the range picker) and **Show** all / active only / archived only, plus an
 **Unread only** switch; under **Sort**, **Sort by** last message (default) or
 date created and an **Active first** switch (on by default: connected sessions
 lead the pinned and recent sections, below manual pins), both persisted
-app-wide in `hapi_prefs`. **Reset** and **Done** sit in the sheet header. Status and unread
+app-wide in `hapi_prefs`. Home keeps global pins, in-progress and active sessions
+above workspace history, grouped by project folder and machine. Worktrees share
+their repository folder; project pins stay inside it. History starts folded
+unless it has a project pin, and manual expansion choices survive restoration.
+Search temporarily expands the groups and orders matches by relevance. Turn off
+**Group by project folder** for a flat pinned/recent list. The layout preference
+persists across launches. **Reset** and **Done** sit in the sheet header. Status and unread
 filters keep the open session listed; search ranks by relevance with the base
 order as tie-break, as on web. Machine choices come from all sessions, including historical
 machines; names/IDs determine ordering, never counts. Duplicate names include
@@ -681,7 +686,7 @@ solid green pulsing while working, solid blue pulsing when only background
 tasks run, a green ring when connected and waiting, and a power mark when
 stopped or archived. A running [attached job](../docs/guide/session-jobs.md)
 counts as working even when the agent is idle or disconnected, keeps the session
-under **Active only**, and adds a line under the meta line:
+under **Active only** unless the session is archived, and adds a line under the meta line:
 `label · remaining or percent · elapsed` with a thin bar (determinate only for
 an honest fraction), amber with `no heartbeat` after 15 minutes. Job patches are
 versioned like web's: a lagged heartbeat cannot resurrect a cleared job.

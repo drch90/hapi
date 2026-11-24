@@ -66,6 +66,11 @@ export function mergeSessionMetadataForSessionMerge(
         changed = true
     }
 
+    if (typeof oldObj.translateInput === 'boolean' && typeof newObj.translateInput !== 'boolean') {
+        merged.translateInput = oldObj.translateInput
+        changed = true
+    }
+
     const oldSummary = oldObj.summary as { text?: unknown; updatedAt?: unknown } | undefined
     const newSummary = newObj.summary as { text?: unknown; updatedAt?: unknown } | undefined
     const oldUpdatedAt = typeof oldSummary?.updatedAt === 'number' ? oldSummary.updatedAt : null
@@ -366,12 +371,18 @@ export class SessionCache {
     refreshSession(sessionId: string): Session | null {
         let stored = this.store.sessions.getSession(sessionId)
         if (!stored) {
+            // Capture the namespace BEFORE the map delete: the event publisher
+            // resolves namespaces from the live session map, so emitting after
+            // deletion broadcasts without a namespace — and shouldSend drops
+            // the event for every connection (ghost sessions on all clients).
+            const cached = this.sessions.get(sessionId)
+            const namespace = cached?.namespace
             const existed = this.sessions.delete(sessionId)
             this.pendingThinkingUntilBySessionId.delete(sessionId)
             this.runtimeConfigUpdatedAtBySessionId.delete(sessionId)
             this.agentProgressAtBySessionId.delete(sessionId)
             if (existed) {
-                this.publisher.emit({ type: 'session-removed', sessionId })
+                this.publisher.emit({ type: 'session-removed', sessionId, namespace })
             }
             return null
         }
@@ -1123,7 +1134,11 @@ export class SessionCache {
 
         const wasThinking = session.thinking
         session.active = false
-        this.store.sessions.setSessionActive(session.id, false, t, session.namespace)
+        // The end time comes from the CLI host's clock, keepalives from the
+        // hub's; persist, cache and publish the later of the two, so a reloaded
+        // cache keeps the stop time clients ordered by.
+        session.activeAt = Math.max(session.activeAt, t)
+        this.store.sessions.setSessionActive(session.id, false, session.activeAt, session.namespace)
         session.thinking = false
         session.thinkingAt = t
         session.activeTurnStartedAt = null
@@ -1138,6 +1153,7 @@ export class SessionCache {
             sessionId: session.id,
             data: {
                 active: false,
+                activeAt: session.activeAt,
                 thinking: false,
                 activeTurnStartedAt: null,
                 backgroundTaskCount: 0,
@@ -1163,8 +1179,12 @@ export class SessionCache {
             if (now - session.activeAt <= timeoutMs) continue
             const wasThinking = session.thinking
             session.active = false
-            this.store.sessions.setSessionActive(session.id, false, now, session.namespace)
+            // Persist the last keepalive, the value the cache and the inactive
+            // patch carry, not the sweep time: a reloaded cache must keep the
+            // same stop time, or stopped rows reorder after a hub restart.
+            this.store.sessions.setSessionActive(session.id, false, session.activeAt, session.namespace)
             session.thinking = false
+            session.activeTurnStartedAt = null
             // The keepalive died, not the tasks: reset the transient work
             // state like handleSessionEnd does, or a session that expired
             // mid-background-work keeps its stale backgroundTaskCount (and
@@ -1182,6 +1202,11 @@ export class SessionCache {
                 sessionId: session.id,
                 data: {
                     active: false,
+                    thinking: false,
+                    activeTurnStartedAt: null,
+                    // The last keepalive: when the session stopped, for clients
+                    // that only saw an older activeAt.
+                    activeAt: session.activeAt,
                     backgroundTaskCount: 0,
                     backgroundTasks: [],
                     derivedToolWork: false
@@ -1402,6 +1427,45 @@ export class SessionCache {
                 return
             }
 
+            this.refreshSession(sessionId)
+        }
+
+        throw new Error('Session was modified concurrently. Please try again.')
+    }
+
+    /** Hub-owned per-session toggle; written as an explicit boolean so `false` survives carry-forward. */
+    async setSessionTranslateInput(sessionId: string, enabled: boolean): Promise<void> {
+        for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt += 1) {
+            const session = this.sessions.get(sessionId) ?? this.refreshSession(sessionId)
+            if (!session) {
+                throw new Error('Session not found')
+            }
+
+            // Same as mutateSessionExternalRefs: write over the stored blob, never
+            // the `{ path, host }` fallback a schema-invalid cache entry would give.
+            const stored = this.store.sessions.getSessionByNamespace(sessionId, session.namespace)
+            const storedMetadata = stored?.metadata
+            if (!stored || typeof storedMetadata !== 'object' || storedMetadata === null || Array.isArray(storedMetadata)) {
+                throw new Error('Cannot update translation setting while session metadata is invalid')
+            }
+            const currentMetadata = storedMetadata as Record<string, unknown>
+            if (currentMetadata.translateInput === enabled) return
+
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId,
+                { ...currentMetadata, translateInput: enabled },
+                stored.metadataVersion,
+                session.namespace,
+                { touchUpdatedAt: false, preservePreallocation: true }
+            )
+
+            if (result.result === 'error') {
+                throw new Error('Failed to update session metadata')
+            }
+            if (result.result === 'success') {
+                this.refreshSession(sessionId)
+                return
+            }
             this.refreshSession(sessionId)
         }
 

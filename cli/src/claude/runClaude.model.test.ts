@@ -15,6 +15,7 @@ type RunningSession = {
     setEffort: (effort: SessionEffort) => void
     setPermissionMode: (mode: string) => void
     pushKeepAlive: () => void
+    onThinkingChange: (thinking: boolean) => void
     setNativeSkillNames: () => void
     expandSkillReference: (text: string) => string
     steerQueuedMessage: (localId: string) => Promise<{ steered: boolean; error?: string }>
@@ -42,6 +43,8 @@ vi.mock('@/agent/sessionFactory', () => ({
         session: {
             rpcHandlerManager: { registerHandler: (method: string, handler: (payload: unknown) => Promise<unknown>) => harness.handlers.set(method, handler) },
             updateMetadata: vi.fn(),
+            getMetadata: () => ({}),
+            onReconnect: vi.fn(),
             onUserMessage: (handler: typeof harness.receive) => { harness.receive = handler },
             onCancelQueuedMessage: vi.fn(),
             sendSessionEvent: harness.events,
@@ -75,6 +78,10 @@ vi.mock('@/claude/sdk/metadataExtractor', () => ({
     classifyClaudeSlashCatalog: () => ({ commands: ['model'], skills: [] }),
 }))
 vi.mock('@/modules/common/skills', () => ({ listSkills: async () => [] }))
+vi.mock('node:child_process', async (importOriginal) => ({
+    ...await importOriginal<typeof import('node:child_process')>(),
+    execFileSync: () => '2.1.310 (Claude Code)',
+}))
 
 import { runClaude } from './runClaude'
 
@@ -98,6 +105,7 @@ beforeEach(() => {
             setEffort(effort) { this.effort = effort },
             setPermissionMode(mode) { this.permissionMode = mode },
             pushKeepAlive() { harness.keepAlive({ model: this.model, permissionMode: this.permissionMode }) },
+            onThinkingChange() {},
             setNativeSkillNames() {},
             expandSkillReference(text) { return text },
             steerQueuedMessage(localId) {

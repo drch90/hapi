@@ -8,6 +8,7 @@ import type { EnhancedMode } from './loop'
 // ends it, mirroring how the real stream opens/closes the target.
 const harness = vi.hoisted(() => ({
     steered: [] as string[],
+    steerUuids: [] as string[],
     deliveries: [] as Array<(delivered: boolean) => void>,
     endTurn: null as (() => void) | null,
     signal: null as AbortSignal | null,
@@ -25,6 +26,7 @@ vi.mock('./claudeRemote', () => ({
             send: (message: { uuid: string; message: { content: string } }) => {
                 if (!open) return false
                 harness.steered.push(message.message.content)
+                harness.steerUuids.push(message.uuid)
                 harness.deliveries.push((delivered) => {
                     if (delivered) void opts.onSteerEcho(message.uuid)
                 })
@@ -83,6 +85,7 @@ type Handler = (payload?: unknown) => unknown
 function createClientStub() {
     const rpcHandlers = new Map<string, Handler>()
     let agentState: Record<string, unknown> = {}
+    let metadata: Record<string, any> = {}
     return {
         rpcHandlerManager: {
             registerHandler: (method: string, handler: Handler) => {
@@ -93,7 +96,8 @@ function createClientStub() {
         sessionId: 'hapi-session',
         agentState: () => agentState,
         keepAlive: () => {},
-        updateMetadata: (mutator: (metadata: any) => any) => { mutator({}) },
+        getMetadata: () => metadata,
+        updateMetadata: (mutator: (current: any) => any) => { metadata = mutator(metadata) },
         updateAgentState: (mutator: (state: any) => any) => { agentState = mutator(agentState) },
         emitMessagesConsumed: vi.fn(),
         emitSteerIndeterminate: vi.fn(),
@@ -130,6 +134,8 @@ async function startTurn() {
         hookSettingsPath: '/tmp/hook.json',
         permissionMode: 'default'
     })
+    const onNativeInputSubmitted = vi.fn()
+    session.onNativeInputSubmitted = onNativeInputSubmitted
     queue.push('Run the tests', DEFAULT_MODE, 'first')
     const launched = claudeRemoteLauncher(session as any)
     await vi.waitFor(() => expect(client.agentState().steeringActive).toBe(true))
@@ -139,12 +145,13 @@ async function startTurn() {
         await launched
         session.stopKeepAlive()
     }
-    return { client, queue, steer, stop }
+    return { client, queue, steer, stop, onNativeInputSubmitted }
 }
 
 describe('claudeRemoteLauncher steer', () => {
     afterEach(() => {
         harness.steered = []
+        harness.steerUuids = []
         harness.deliveries = []
         harness.endTurn = null
         harness.signal = null
@@ -152,7 +159,7 @@ describe('claudeRemoteLauncher steer', () => {
     })
 
     it('writes the queued row into the running turn and acks it once Claude picks it up', async () => {
-        const { client, queue, steer, stop } = await startTurn()
+        const { client, queue, steer, stop, onNativeInputSubmitted } = await startTurn()
         try {
             queue.push('Also run lint', DEFAULT_MODE, 'steer-1')
 
@@ -162,10 +169,15 @@ describe('claudeRemoteLauncher steer', () => {
             expect(client.setSteerDeliveryState).toHaveBeenCalledWith(['steer-1'], 'dispatching')
             expect(queue.size()).toBe(0)
             expect(client.emitMessagesConsumed).not.toHaveBeenCalledWith(['steer-1'], { steered: true })
+            expect(client.getMetadata().conversationHistoryPoints).toBeUndefined()
+            expect(onNativeInputSubmitted).not.toHaveBeenCalled()
 
             harness.deliveries[0]!(true)
             await vi.waitFor(() => expect(client.emitMessagesConsumed).toHaveBeenCalledWith(['steer-1'], { steered: true }))
             expect(queue.cancelByLocalId('steer-1')).toBe('consumed')
+            expect(client.getMetadata().conversationHistoryPoints).toEqual({ 'steer-1': true })
+            expect(client.getMetadata().conversationHistoryEntryIds).toEqual({ 'steer-1': harness.steerUuids[0] })
+            expect(onNativeInputSubmitted).toHaveBeenCalledWith(harness.steerUuids[0])
         } finally {
             await stop()
         }
@@ -218,7 +230,7 @@ describe('claudeRemoteLauncher steer', () => {
     })
 
     it('holds an unacknowledged steer for explicit resolution after an abort', async () => {
-        const { client, queue, steer, stop } = await startTurn()
+        const { client, queue, steer, stop, onNativeInputSubmitted } = await startTurn()
         try {
             queue.push('Also run lint', DEFAULT_MODE, 'steer-1')
             await expect(steer('steer-1')).resolves.toEqual({ steered: true })
@@ -227,6 +239,9 @@ describe('claudeRemoteLauncher steer', () => {
             await vi.waitFor(() => expect(client.emitSteerIndeterminate).toHaveBeenCalledWith(['steer-1']))
             expect(queue.pendingLocalIds()).not.toContain('steer-1')
             expect(client.emitMessagesConsumed).not.toHaveBeenCalledWith(['steer-1'], { steered: true })
+            expect(client.getMetadata().conversationHistoryPoints).toBeUndefined()
+            expect(client.getMetadata().conversationHistoryEntryIds).toBeUndefined()
+            expect(onNativeInputSubmitted).not.toHaveBeenCalled()
         } finally {
             await stop()
         }

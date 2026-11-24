@@ -14,12 +14,12 @@ afterEach(() => vi.restoreAllMocks());
 
 async function harness() {
     const output = new PushableAsyncIterable<SDKMessage>();
-    const prompts: SDKMessage[] = [];
+    const prompts: SDKUserMessage[] = [];
     const writes: SDKUserMessage[] = [];
     let promptReader: Promise<void> | undefined;
     const query = vi.spyOn(sdk, 'query').mockImplementation(({ prompt }) => {
         promptReader = (async () => {
-            for await (const message of prompt as AsyncIterable<SDKMessage>) prompts.push(message);
+            for await (const message of prompt as AsyncIterable<SDKUserMessage>) prompts.push(message);
         })();
         return {
             [Symbol.asyncIterator]: () => output[Symbol.asyncIterator](),
@@ -73,7 +73,7 @@ describe('Claude active-turn stdin injection', () => {
             expect(h.targets.at(-1)).toBeNull();
             expect(h.target.send(h.steer)).toBe(false);
             h.output.push({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } });
-            h.output.push({ type: 'result', subtype: 'success' });
+            h.output.push({ type: 'result', subtype: 'success', user_message_uuid: h.prompts[1].uuid });
             await vi.waitFor(() => expect(h.prompts).toHaveLength(3));
             expect(h.onReady).toHaveBeenCalledTimes(2);
             expect(h.onThinkingChange.mock.calls.map(call => call[0])).toEqual([true, false, true, false, true]);

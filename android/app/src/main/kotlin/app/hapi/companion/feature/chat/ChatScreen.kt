@@ -332,6 +332,7 @@ internal fun ChatScreen(
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.chat_open_settings))
                     }
                     val scratchlistCount by viewModel.scratchlistCount.collectAsState()
+                    val inputTranslationAvailable by viewModel.inputTranslationAvailable.collectAsState()
                     SessionOverflowMenu(
                         id = viewModel.sessionId, title = state.header.title,
                         pinned = actionSummary?.pinned == true, globalPinned = actionSummary?.globalPinned == true,
@@ -346,6 +347,14 @@ internal fun ChatScreen(
                         scratchlistCount = scratchlistCount,
                         onOpenScratchlist = if (viewModel.scratchlistEnabled) onOpenScratchlist else null,
                         onRename = { renameDialogOpen = true },
+                        translateInputEnabled = state.header.translateInput,
+                        // Web parity: offered when the hub has a provider, or to
+                        // switch off a session that was left translating.
+                        onToggleTranslateInput = if (inputTranslationAvailable || state.header.translateInput) {
+                            viewModel::toggleTranslateInput
+                        } else {
+                            null
+                        },
                         onReopen = viewModel::reopenSession,
                         onDelete = { deleteDialogOpen = true },
                         // Draft-level action, relocated from the composer's
@@ -526,8 +535,8 @@ internal fun ChatScreen(
 
 /**
  * Top-bar ⋮ menu: navigation entries first (Files always, Scratchlist with
- * entry count when enabled), then Rename always; Reopen only for inactive
- * sessions; Delete last.
+ * entry count when enabled), then Rename always; the input-translation toggle
+ * when offered; Reopen only for inactive sessions; Delete last.
  */
 @Composable
 private fun SessionOverflowMenu(
@@ -536,6 +545,8 @@ private fun SessionOverflowMenu(
     onRename: () -> Unit, onReopen: () -> Unit, onDelete: () -> Unit,
     onNewInDirectory: (() -> Unit)?, onOpenFiles: () -> Unit = {}, scratchlistCount: Int = 0,
     onOpenScratchlist: (() -> Unit)? = null, onParkDraft: (() -> Unit)? = null,
+    onToggleTranslateInput: (() -> Unit)? = null,
+    translateInputEnabled: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     IconButton(onClick = { expanded = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.chat_session_actions)) }
@@ -545,6 +556,25 @@ private fun SessionOverflowMenu(
         onOpenScratchlist?.let { action -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_open_scratchlist_count, scratchlistCount)) }, onClick = { expanded = false; action() }) }
         onParkDraft?.let { action -> DropdownMenuItem(text = { Text(stringResource(R.string.chat_park_draft)) }, onClick = { expanded = false; action() }) }
         HorizontalDivider()
+        if (onToggleTranslateInput != null) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(
+                            if (translateInputEnabled) {
+                                R.string.chat_translate_input_off
+                            } else {
+                                R.string.chat_translate_input_on
+                            },
+                        ),
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onToggleTranslateInput()
+                },
+            )
+        }
         SessionActionItems(id, title, active, pinned, globalPinned, { expanded = false }, onRename, onPin,
             onUnread, onArchive, onReopen, onDelete, onNewInDirectory)
     }
@@ -677,4 +707,5 @@ internal fun chatNoticeText(context: Context, notice: ChatNotice): String = when
     is ChatNotice.ModelsLoadFailed -> notice.detail ?: context.getString(R.string.chat_notice_models_failed)
     is ChatNotice.ReadStateFailed -> notice.detail ?: context.getString(R.string.chat_notice_read_state_failed)
     is ChatNotice.ConfigUpdateFailed -> notice.detail ?: context.getString(R.string.chat_notice_config_failed)
+    is ChatNotice.TranslateInputFailed -> notice.detail ?: context.getString(R.string.chat_notice_config_failed)
 }

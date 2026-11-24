@@ -3,7 +3,7 @@ package app.hapi.companion.feature.sessions
 import app.hapi.protocol.wire.SessionListOrder
 import app.hapi.protocol.wire.SessionListSort
 
-enum class SessionSectionKind { PINNED, IN_PROGRESS, ACTIVE, WORKSPACE }
+enum class SessionSectionKind { PINNED, IN_PROGRESS, ACTIVE, WORKSPACE, RECENT }
 
 data class SessionSectionUi(
     val id: String,
@@ -23,8 +23,7 @@ private data class WorkspaceKey(val machineId: String?, val directory: String?) 
 
 private fun workspaceKey(row: SessionRowUi): WorkspaceKey {
     val metadata = row.summary.metadata
-    val directory = metadata?.worktree?.basePath?.takeIf { it.isNotEmpty() }
-        ?: metadata?.path?.takeIf { it.isNotEmpty() }
+    val directory = projectFolderPath(metadata)
     return WorkspaceKey(metadata?.machineId, directory)
 }
 
@@ -34,7 +33,19 @@ internal fun buildSessionSections(
     collapseOverrides: Map<String, Boolean> = emptyMap(),
     searching: Boolean = false,
     order: SessionListOrder = SessionListOrder.Default,
+    grouped: Boolean = true,
 ): List<SessionSectionUi> {
+    if (!grouped) {
+        val (pinned, recent) = rows.partition { it.summary.globalPinned == true || it.summary.pinned == true }
+        return buildList {
+            if (pinned.isNotEmpty()) add(SessionSectionUi("pinned", SessionSectionKind.PINNED, pinned))
+            if (recent.isNotEmpty()) add(SessionSectionUi("recent", SessionSectionKind.RECENT, recent))
+        }
+    }
+    val workspaceLabels = rows.map(::workspaceKey).groupBy { it.machineId }.mapValues { (_, keys) ->
+        projectFolderLabels(keys.mapNotNull { it.directory }.toSet())
+    }
+
     val globalPins = mutableListOf<SessionRowUi>()
     val inProgress = mutableListOf<SessionRowUi>()
     val active = mutableListOf<SessionRowUi>()
@@ -43,8 +54,8 @@ internal fun buildSessionSections(
         val summary = row.summary
         when {
             summary.globalPinned == true -> globalPins.add(row)
-            summary.pinned != true && (summary.active || summary.runningAttachedJob != null) && order.activeFirst -> {
-                if (summary.thinking || summary.backgroundTaskCount > 0 || summary.pendingRequestsCount > 0 || summary.runningAttachedJob != null) {
+            summary.pinned != true && (summary.active || summary.hasUnarchivedJob) && order.activeFirst -> {
+                if (summary.thinking || summary.backgroundTaskCount > 0 || summary.pendingRequestsCount > 0 || summary.hasUnarchivedJob) {
                     inProgress.add(row)
                 } else {
                     active.add(row)
@@ -71,7 +82,8 @@ internal fun buildSessionSections(
                 id = key.id,
                 kind = SessionSectionKind.WORKSPACE,
                 rows = group.sortedByDescending { it.summary.pinned == true },
-                title = SessionListViewModel.projectLabel(group.first().summary),
+                title = workspaceLabels[key.machineId]?.get(key.directory)
+                    ?: SessionListViewModel.projectLabel(group.first().summary),
                 directory = key.directory,
                 machineId = key.machineId,
                 machine = group.first().machine,
@@ -98,7 +110,8 @@ internal fun buildSessionSections(
                 id = key.id,
                 kind = SessionSectionKind.WORKSPACE,
                 rows = emptyList(),
-                title = SessionListViewModel.projectLabel(group.first().summary),
+                title = workspaceLabels[key.machineId]?.get(key.directory)
+                    ?: SessionListViewModel.projectLabel(group.first().summary),
                 directory = key.directory,
                 machineId = key.machineId,
                 machine = group.first().machine,

@@ -1,5 +1,5 @@
 import chalk from 'chalk'
-import { HERMES_PERMISSION_MODES } from '@hapi/protocol'
+import { Flavors } from '@hapi/protocol'
 import { initializeToken } from '@/ui/tokenInit'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
 import { authAndSetupMachineIfNeeded } from '@/ui/auth'
@@ -12,7 +12,7 @@ export function parseHermesCommandOptions(args: string[]) {
         if (!flags.has(args[i])) throw new Error(`Unsupported Hermes option: ${args[i]}`)
         if (!args[i + 1]?.trim() || args[i + 1].startsWith('-')) throw new Error(`Missing ${args[i]} value`)
     }
-    const options = parseRemoteAgentCommandOptions(args, HERMES_PERMISSION_MODES, ['remote'])
+    const options = parseRemoteAgentCommandOptions(args, Flavors.hermes.permissionModes, ['remote'])
     if (options.startedBy && !['terminal', 'runner'].includes(options.startedBy)) throw new Error('Invalid --started-by value')
     if (options.resumeSessionId && !options.existingSessionId) throw new Error('Use hapi resume <hapi-session-id> to resume a Hermes session')
     return { ...options, startingMode: 'remote' as const }

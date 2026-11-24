@@ -111,6 +111,7 @@ function createClientStub() {
         rpcHandlers,
         keepAlive: () => {},
         updateAgentState: () => {},
+        getMetadata: () => ({}),
         updateMetadata: (mutator: (metadata: any) => any) => { mutator({}) },
         emitMessagesConsumed: () => {},
         sendClaudeSessionMessage: () => {},

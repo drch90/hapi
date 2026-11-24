@@ -4,6 +4,49 @@ This page records upstream synchronization and deployment of the local extension
 in this fork. Build from source to include them; see
 [deployment](./deployment.md#upgrading-a-source-build-with-pm2).
 
+## 2026-11-24: upstream v0.36.7
+
+Merged [upstream v0.36.7](https://github.com/tiann/hapi/releases/tag/v0.36.7)
+(`4e36c995`) into `android-session-parity` from local tip `9bd1248a`, including
+the intervening v0.36.6 release. Both histories and all 122 files added locally
+relative to upstream v0.36.5 are retained. The original tip remains at
+`backup/pre-upstream-v0.36.7-20261124`.
+
+This is a local source merge. No push, Actions dispatch or service deployment
+was performed.
+
+### Integrated capabilities
+
+| Area | Integration retained in this merge |
+| --- | --- |
+| Upstream features and fixes | Input translation, Claude conversation history and round accounting, reusable clear/compact turns, ACP tool-call lifetimes, network recovery, read receipts and cached-tail rendering are included. |
+| Agents and permissions | Hermes creation/resume, model/provider discovery, commands and approvals are incorporated into the upstream flavor trait table. Antigravity keeps the native terminal, Auto/Plan modes, steering and the retained ACP fallback. OpenCode keeps the local steering version gate and effective-model comparison. |
+| Claude delivery | Local UUID/native-echo acknowledgement, one-message queue delivery and explicit resolution of uncertain writes remain. Confirmed steered prompts also become upstream fork/rewind history targets. The native terminal manager remains because Antigravity still uses it; unused legacy Codex launchers follow the upstream removal. |
+| Web and native clients | Local pins, grouping, search, references, scheduling, workspace/media actions, transcript inspection and notifications remain. Android adds the upstream grouping toggle, disambiguated Windows/project paths, chat restoration and input translation. Local fold defaults and saved overrides coexist with the new flat layout; archived sessions retain job progress without returning to the in-progress group, and exports and outlines retain the original translated prompt. |
+| Distribution | Only the existing Android APK workflow remains, byte-for-byte identical to the original tip, preserving fixed signing and the increasing version-code sequence. |
+
+### Verification
+
+Checks and builds used the pinned **Bun 1.4.4**.
+
+| Check | Result |
+| --- | --- |
+| Frozen dependency install and typechecks | Passed for CLI, Web, hub and relay. |
+| Hub, Web, shared and relay suites | 2,313 / 4,984 / 642 / 118 passed. Hub skipped three optional real-agent cases; Web retained one expected failure. |
+| CLI suite | 6,311 passed and 46 skipped in the full run. All 12 failures outside difftastic passed after the Claude test doubles were updated, the Codex launcher environment override was removed for its tests, and Cursor permission tests ran without root DAC bypass. Four host-limited difftastic cases remain. |
+| Runner integration | 25 passed, one skipped, using isolated temporary processes and a temporary hub. |
+| Claude wire contract | All 49 tests passed. The 18 generated scenario baselines preserve local initialization/steering state; agent input and decoded chat output match upstream, apart from the additional synchronization step in the CAS fake agent. |
+| Browser regressions | 223 Chromium scenarios passed. The staged touch-pull feedback case fails at the same assertion on the isolated pre-merge `9bd1248a` source with its own frozen dependency install. |
+| Fixtures | 92 chat, 14 SSE and 15 pagination fixtures plus the mode catalog regenerated; a second generation had no drift. |
+| Builds | CLI, Web, embedded assets, hub, the Linux all-in-one executable, website, documentation and static passkey site passed. The executable reports version 0.36.7. |
+| Android static checks | Conflict resolutions, imports, interface calls and regression sources inspected. All four locales have 878 matching resource keys, valid XML, unique names and matching placeholders. The retained APK workflow is unchanged. |
+
+The bundled difftastic is unchanged and requires unavailable `GLIBC_2.32`,
+`GLIBC_2.33` and `GLIBC_2.34`. The full CLI and browser suites are therefore
+not reported as green. No Android Gradle tasks, native compilation, unit tests,
+lint, SDK setup or emulators ran on this service host. Android remote
+preflight/conformance and iOS compilation remain unverified.
+
 ## 2026-11-19: upstream v0.36.5
 
 Merged [upstream v0.36.5](https://github.com/tiann/hapi/releases/tag/v0.36.5)

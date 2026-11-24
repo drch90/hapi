@@ -139,6 +139,7 @@ export { SESSION_KEEP_ALIVE_INTERVAL_MS }
 const MAX_PENDING_DROPPABLE_EVENTS = 256
 const MATERIALIZATION_RETRY_MIN_MS = 1_000
 const MATERIALIZATION_RETRY_MAX_MS = 30_000
+const UPDATE_METADATA_ACK_TIMEOUT_MS = 5_000
 
 function isTransientMaterializationError(error: unknown): boolean {
     if (!axios.isAxiosError(error)) {
@@ -186,8 +187,11 @@ function hasSameJsonValue(left: unknown, right: unknown): boolean {
 }
 
 export class ApiSessionClient extends EventEmitter {
-    private reconnectHandler: (() => void) | null = null
-    onReconnect(handler: (() => void) | null): void { this.reconnectHandler = handler }
+    private reconnectHandler: ((metadataRefreshed?: boolean) => void) | null = null
+    onReconnect(handler: ((metadataRefreshed?: boolean) => void) | null): void { this.reconnectHandler = handler }
+    private metadataAppliedHandler: (() => void) | null = null
+    /** Runs after every applied metadata snapshot: remote update, update ack, refresh, materialization. */
+    onMetadataApplied(handler: (() => void) | null): void { this.metadataAppliedHandler = handler }
     /** When false, socket.io must not keep the CLI immortal after hub archive (#1910). */
     private allowReconnect = true
     /**
@@ -211,6 +215,8 @@ export class ApiSessionClient extends EventEmitter {
     private retryQueuedMessageCallback: ((localId: string) => boolean | Promise<boolean>) | null = null
     private readonly incomingFilter = new IncomingMessageFilter()
     private reconciledRewindOperationId: string | undefined
+    // truncateFromLocalId of the Claude rewind intent last seen in metadata.
+    private observedClaudeRewindId: string | undefined
     private incomingCursorEpoch = 0
     private pendingRewindBackfill: { operationId: string; epoch: number; afterSeq: number } | null = null
     private rewindBackfillScheduled = false
@@ -310,15 +316,21 @@ export class ApiSessionClient extends EventEmitter {
             // Hub may have archived while we were offline (KillSession miss +
             // no live update-session). On reconnect, reconcile metadata before
             // message backfill so hub-archived can stop reconnect immortality (#1910).
+            let metadataRefreshed = false
             const afterMeta = isReconnect
-                ? this.refreshMetadata()
+                ? this.refreshMetadata().then((refreshed) => { metadataRefreshed = refreshed })
                 : Promise.resolve()
             void afterMeta.finally(() => {
+                if (isReconnect && this.observedClaudeRewindId !== undefined) {
+                    this.armRewindBackfill(`claude:${this.observedClaudeRewindId}`)
+                }
                 void this.backfillIfNeeded()
+if (isReconnect) {
+                    this.reconnectHandler?.(metadataRefreshed)
+                }
                 if (this.state === 'active' && this.allowReconnect) this.emit('connected')
             })
             this.hasConnectedOnce = true
-            this.reconnectHandler?.()
             this.socket.emit('session-alive', {
                 sid: this.sessionId,
                 time: Date.now(),
@@ -509,6 +521,11 @@ export class ApiSessionClient extends EventEmitter {
         return this.metadata
     }
 
+    /** The latest agent state this client holds (stored state right after a resume). */
+    getAgentStateSnapshot(): AgentState | null {
+        return this.agentState
+    }
+
     isPending(): boolean {
         return this.state === 'pending' || this.state === 'materializing'
     }
@@ -577,6 +594,7 @@ export class ApiSessionClient extends EventEmitter {
                 this.agentState = materialized.agentState
                 this.agentStateVersion = materialized.agentStateVersion
                 this.state = 'active'
+                this.metadataAppliedHandler?.()
 
                 if (shouldSyncMetadata && latestMetadata) {
                     this.updateMetadata(() => latestMetadata)
@@ -818,6 +836,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private reconcileCommittedRewindCursor(metadata: Metadata | null): void {
+        this.reconcileClaudeRewindCursor(metadata?.claudeRewind?.truncateFromLocalId)
         const operation = metadata?.opencodeRewind
         if (operation?.phase !== 'committed') {
             this.scheduleRewindBackfill()
@@ -828,19 +847,37 @@ export class ApiSessionClient extends EventEmitter {
         // metadata for the committed tombstone must not rewind later deliveries.
         if (operation.operationId !== this.reconciledRewindOperationId) {
             this.reconciledRewindOperationId = operation.operationId
-            // Invocation order can remove rows below the boundary's insertion
-            // seq too. New inputs may reuse those slots, so rescan from zero.
-            this.incomingFilter.rewindCursor(0)
-            // A newer rewind cannot retire an earlier, still-unscanned prefix.
-            const previousFloor = this.pendingRewindBackfill?.afterSeq
-            const cursor = this.incomingFilter.cursorSeq()
-            const afterSeq = previousFloor === undefined ? cursor : Math.min(previousFloor, cursor ?? previousFloor)
-            this.incomingCursorEpoch += 1
-            this.pendingRewindBackfill = afterSeq === null ? null : {
-                operationId: operation.operationId, epoch: this.incomingCursorEpoch, afterSeq
-            }
+            this.armRewindBackfill(operation.operationId)
         }
         this.scheduleRewindBackfill()
+    }
+
+    /**
+     * Claude rewind truncates the Hub tail at RPC success while the intent is
+     * already in metadata, and the native restart keeps this client (and its
+     * cursor). Rescan from zero once the intent is gone (native branch proven,
+     * so Hub truncation is certain) and on each reconnect while it is pending.
+     */
+    private reconcileClaudeRewindCursor(intentId: string | undefined): void {
+        const previous = this.observedClaudeRewindId
+        this.observedClaudeRewindId = intentId
+        if (previous !== undefined && intentId === undefined) {
+            this.armRewindBackfill(`claude:${previous}`)
+        }
+    }
+
+    private armRewindBackfill(operationId: string): void {
+        // Invocation order can remove rows below the boundary's insertion
+        // seq too. New inputs may reuse those slots, so rescan from zero.
+        this.incomingFilter.rewindCursor(0)
+        // A newer rewind cannot retire an earlier, still-unscanned prefix.
+        const previousFloor = this.pendingRewindBackfill?.afterSeq
+        const cursor = this.incomingFilter.cursorSeq()
+        const afterSeq = previousFloor === undefined ? cursor : Math.min(previousFloor, cursor ?? previousFloor)
+        this.incomingCursorEpoch += 1
+        this.pendingRewindBackfill = afterSeq === null ? null : {
+            operationId, epoch: this.incomingCursorEpoch, afterSeq
+        }
     }
 
     private scheduleRewindBackfill(): void {
@@ -887,6 +924,7 @@ export class ApiSessionClient extends EventEmitter {
             && parsed.data.archivedBy === 'hub') {
             this.noteHubArchived()
         }
+        this.metadataAppliedHandler?.()
     }
 
     private noteHubArchived(): void {
@@ -1491,7 +1529,9 @@ export class ApiSessionClient extends EventEmitter {
         })
     }
 
-    updateMetadata(handler: (metadata: Metadata) => Metadata): void {
+    updateMetadata(handler: (metadata: Metadata) => Metadata, options?: { signal?: AbortSignal }): void {
+        const signal = options?.signal
+        if (signal?.aborted) return
         if (this.state !== 'active') {
             if (this.state === 'closed') return
             const current = this.metadata ?? ({} as Metadata)
@@ -1503,6 +1543,7 @@ export class ApiSessionClient extends EventEmitter {
         }
         this.metadataLock.inLock(async () => {
             await backoff(async () => {
+                if (signal?.aborted || this.isClosed()) return
                 // #1911 M1 criterion 6: hub-archived → EXIT (same as applyRemoteMetadata).
                 if (this.metadata?.lifecycleState === 'archived' && this.metadata.archivedBy === 'hub') {
                     this.noteHubArchived()
@@ -1512,12 +1553,22 @@ export class ApiSessionClient extends EventEmitter {
 
                 const current = this.metadata ?? ({} as Metadata)
                 const updated = handler(current)
+                if (!this.socket.connected) {
+                    throw new Error('Socket not connected')
+                }
 
-                const answer = await this.socket.emitWithAck('update-metadata', {
-                    sid: this.sessionId,
-                    expectedVersion: this.metadataVersion,
-                    metadata: updated
-                }) as unknown
+                let answer: unknown
+                try {
+                    answer = await this.socket.timeout(UPDATE_METADATA_ACK_TIMEOUT_MS).emitWithAck('update-metadata', {
+                        sid: this.sessionId,
+                        expectedVersion: this.metadataVersion,
+                        metadata: updated
+                    })
+                } catch (error) {
+                    if (signal?.aborted || this.isClosed()) return
+                    throw error
+                }
+                if (signal?.aborted || this.isClosed()) return
 
                 try {
                     applyVersionedAck(answer, {
@@ -1569,6 +1620,7 @@ export class ApiSessionClient extends EventEmitter {
                     this.noteHubArchived()
                     return
                 }
+                this.metadataAppliedHandler?.()
             })
         })
     }
