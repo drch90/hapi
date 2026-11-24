@@ -16,6 +16,29 @@ const decode = (...parts: Uint8Array[]) => decodeAgyStep({ idx: 3, step_type: 13
     step_payload: Uint8Array.from(parts.flatMap(part => [...part])) });
 
 describe('native Antigravity trajectory', () => {
+    it('decodes per-call input, output, cache and thinking without treating execution as a request id', () => {
+        const step = decode(number(1, 15), number(4, 3), message(5,
+            string(12, 'shared-execution'),
+            message(9, number(2, 120), number(3, 50), number(4, 10), number(5, 40),
+                string(7, 'request-1'), number(9, 20), number(10, 30), string(11, 'response-1'))));
+        expect(step.usage).toEqual({ requestId: 'request-1', inputTokens: 120, outputTokens: 50,
+            cacheWriteTokens: 10, cacheReadTokens: 40, thinkingTokens: 20 });
+        expect(step.executionId).toBe('shared-execution');
+        expect(decode(number(1, 15), message(5, message(9, number(3, 2), string(11, 'response-2')))).usage)
+            .toEqual({ requestId: 'response-2', inputTokens: 0, outputTokens: 2, cacheWriteTokens: 0, cacheReadTokens: 0, thinkingTokens: 0 });
+    });
+
+    it('ignores missing, unsafe and non-model usage while preserving the step', () => {
+        expect(decode(number(1, 15)).usage).toBeUndefined();
+        expect(decode(number(1, 132), message(5, message(9, number(2, 20)))).usage).toBeUndefined();
+        for (const counts of [number(2, Number.MAX_SAFE_INTEGER + 1),
+            Uint8Array.from([...number(2, Number.MAX_SAFE_INTEGER), ...number(3, 1)]), string(2, 'not a count')]) {
+            const step = decode(number(1, 15), message(20, string(1, 'Keep this text')), message(5, message(9, counts)));
+            expect(step.text).toBe('Keep this text');
+            expect(step.usage).toBeUndefined();
+        }
+    });
+
     it('reads a pending approval with the real tool identity before any grant exists', () => {
         const step = decode(number(1, 132), number(4, 9),
             message(5, message(4, string(1, 'call-native'), string(2, 'run_command'), string(3, '{"CommandLine":"echo hello"}'))),

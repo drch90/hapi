@@ -934,6 +934,27 @@ describe('usage service', () => {
         store.close()
     })
 
+    it('counts native Antigravity requests once, includes cache writes and does not add thinking twice', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('agy-native', { path: '/tmp', host: 'test', flavor: 'agy' }, null, 'default')
+        const usage = (conversationId: string, requestId: string, counts = { input_tokens: 120, output_tokens: 50,
+            cache_write_tokens: 10, cache_read_tokens: 40, thinking_tokens: 20 }) => ({ type: 'codex', data: {
+            type: 'round-summary', summary: { provider: 'agy', conversation_id: conversationId, request_id: requestId,
+                model: 'gemini-test', agy_usage: counts },
+        } })
+        addAgentMessage(store, session.id, usage('native-1', 'call-1'))
+        addAgentMessage(store, session.id, usage('native-1', 'call-1'))
+        addAgentMessage(store, session.id, usage('native-1', 'call-2'))
+        addAgentMessage(store, session.id, usage('native-2', 'call-1'))
+        const result = getUsageSummary(store, 'default', 'all')
+        expect(result.totals).toMatchObject({ requests: 3, inputTokens: 510, outputTokens: 150,
+            cacheReadTokens: 120, cacheCreationTokens: 30, totalTokens: 660 })
+        addAgentMessage(store, session.id, usage('native-1', 'cache-only', { input_tokens: 0, output_tokens: 0,
+            cache_write_tokens: 100, cache_read_tokens: 0, thinking_tokens: 0 }))
+        expect(getUsageSummary(store, 'default', 'all').totals).toMatchObject({ requests: 4, totalTokens: 760, cacheCreationTokens: 130 })
+        store.close()
+    })
+
     it('extracts Antigravity (agy) round-summary token usage with inclusive input tokens', () => {
         const store = new Store(':memory:')
         const session = store.sessions.getOrCreateSession(
@@ -972,7 +993,7 @@ describe('usage service', () => {
         store.close()
     })
 
-    it('reindexes historical Antigravity messages when upgrading a pre-parser_version usage_scan_state', () => {
+    it.each(['missing', 'v2'])('reindexes Antigravity cache writes when upgrading a %s usage parser', (version) => {
         const dir = mkdtempSync(join(tmpdir(), 'hapi-agy-upgrade-'))
         const dbPath = join(dir, 'hapi.db')
         try {
@@ -994,37 +1015,44 @@ describe('usage service', () => {
                         agy_usage: {
                             input_tokens: 500,
                             output_tokens: 100,
-                            cache_read_tokens: 300
+                            cache_read_tokens: 300,
+                            cache_write_tokens: 200
                         }
                     }
                 }
             })
+            getUsageSummary(initialStore, 'default', 'all')
             initialStore.close()
 
-            // Simulate a database whose usage_scan_state was created before parser_version existed
-            // and already scanned past seq 1 without indexing the Antigravity round-summary message.
+            // Both a pre-version index and the previous parser must reread
+            // stored summaries rather than keep omitting their cache writes.
             const rawDb = new Database(dbPath, { readwrite: true })
-            rawDb.exec(`
-                DROP TABLE usage_scan_state;
-                CREATE TABLE usage_scan_state (
-                    session_id TEXT PRIMARY KEY,
-                    message_epoch INTEGER NOT NULL DEFAULT 0,
-                    last_seq INTEGER NOT NULL DEFAULT 0
-                );
-                DELETE FROM usage_events;
-            `)
-            rawDb.prepare('INSERT INTO usage_scan_state (session_id, message_epoch, last_seq) VALUES (?, 0, 1)')
-                .run(session.id)
+            if (version === 'missing') {
+                rawDb.exec(`
+                    DROP TABLE usage_scan_state;
+                    CREATE TABLE usage_scan_state (
+                        session_id TEXT PRIMARY KEY,
+                        message_epoch INTEGER NOT NULL DEFAULT 0,
+                        last_seq INTEGER NOT NULL DEFAULT 0
+                    );
+                    DELETE FROM usage_events;
+                `)
+                rawDb.prepare('INSERT INTO usage_scan_state (session_id, message_epoch, last_seq) VALUES (?, 0, 1)')
+                    .run(session.id)
+            } else {
+                rawDb.exec('UPDATE usage_scan_state SET parser_version = 2; UPDATE usage_events SET input_tokens = 800, cache_creation_tokens = 0;')
+            }
             rawDb.close()
 
             const upgradedStore = new Store(dbPath)
             const summary = getUsageSummary(upgradedStore, 'default', 'all')
             expect(summary.totals.requests).toBe(1)
-            expect(summary.totals.inputTokens).toBe(800)
+            expect(summary.totals.inputTokens).toBe(1000)
             expect(summary.totals.outputTokens).toBe(100)
             expect(summary.totals.cacheReadTokens).toBe(300)
-            expect(summary.totals.totalTokens).toBe(900)
-            expect(summary.totals.uncachedTokens).toBe(600)
+            expect(summary.totals.cacheCreationTokens).toBe(200)
+            expect(summary.totals.totalTokens).toBe(1100)
+            expect(summary.totals.uncachedTokens).toBe(800)
             upgradedStore.close()
         } finally {
             rmSync(dir, { recursive: true, force: true })

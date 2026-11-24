@@ -22,10 +22,12 @@ import { withBunRuntimeEnv } from '@/utils/bunRuntime'
 import { killProcessByChildProcess } from '@/utils/process'
 import { getAgentAvailability } from './agentAvailability'
 import { getAgentLaunchCommand } from './agentLaunchCommand'
+import { getAgyQuotaCacheIdentity, readAgyQuotaSnapshot } from './agyQuotaCache'
 
 const CACHE_TTL_MS = 60_000
 const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 5_000
-const AGY_PROBE_TIMEOUT_MS = DEFAULT_PROVIDER_PROBE_TIMEOUT_MS
+// A cold agy invocation can take >7s. Stay below the hub's 20s machine RPC.
+const AGY_PROBE_TIMEOUT_MS = 15_000
 const CLAUDE_PROBE_TIMEOUT_MS = DEFAULT_PROVIDER_PROBE_TIMEOUT_MS
 const CLAUDE_INIT_REQ_ID = 'hapi-claude-quota-init'
 const CLAUDE_STATUS_REQ_ID = 'hapi-claude-quota-status'
@@ -191,8 +193,9 @@ type PersistedLiveQuotaState = {
     agyUpdatedAt?: number
 }
 
-let cachedResponse: { startedAt: number; expiresAt: number; response: AgentQuotasResponse } | null = null
+let cachedResponse: { startedAt: number; expiresAt: number; agyIdentity: string | null; response: AgentQuotasResponse } | null = null
 let inflightPromise: Promise<AgentQuotasResponse> | null = null
+let inflightAgyIdentity: string | null = null
 const liveClaudeBuckets = new Map<string, LiveClaudeBucketRecord>()
 let liveAgyTierLabel: string | null = null
 
@@ -380,7 +383,7 @@ function readPersistedLiveQuotaState(env: NodeJS.ProcessEnv = process.env): Pers
 
 function getLatestLiveQuotaUpdateAt(env: NodeJS.ProcessEnv = process.env): number {
     const persisted = readPersistedLiveQuotaState(env)
-    let latest = Math.max(persisted.codexUpdatedAt ?? 0, persisted.agyUpdatedAt ?? 0)
+    let latest = Math.max(persisted.codexUpdatedAt ?? 0, persisted.agyUpdatedAt ?? 0, readAgyQuotaSnapshot(env)?.updatedAt ?? 0)
     if (persisted.claudeBuckets) {
         for (const entry of Object.values(persisted.claudeBuckets)) {
             if (entry.updatedAt > latest) {
@@ -771,14 +774,17 @@ export async function probeAgyQuota(env: NodeJS.ProcessEnv = process.env): Promi
     }
 
     const executable = getAgentLaunchCommand('agy', env)
+    const nativeQuota = readAgyQuotaSnapshot(env)
     try {
         const [usageOut, creditsOut] = await Promise.all([
-            runAgyHeadlessCommand(executable, '/usage', env),
+            nativeQuota ? Promise.resolve({ stdout: '', stderr: '' }) : runAgyHeadlessCommand(executable, '/usage', env),
+            // Native quota snapshots do not include G1 credits. Preserve the
+            // existing optional balance query even when /usage is cached.
             runAgyHeadlessCommand(executable, '/credits', env).catch(() => ({ stdout: '', stderr: '' }))
         ])
 
-        const parsedUsage = parseAgyUsageCommandJson(`${usageOut.stdout}\n${usageOut.stderr}`)
-        if (parsedUsage?.unauthenticated) {
+        const parsedUsage = nativeQuota ?? parseAgyUsageCommandJson(`${usageOut.stdout}\n${usageOut.stderr}`)
+        if (parsedUsage && 'unauthenticated' in parsedUsage && parsedUsage.unauthenticated) {
             return {
                 agent: 'agy',
                 available: true,
@@ -813,7 +819,7 @@ export async function probeAgyQuota(env: NodeJS.ProcessEnv = process.env): Promi
             planLabel: liveAgyTierLabel ?? readPersistedLiveQuotaState(env).agyTierLabel ?? null,
             creditsLabel,
             buckets: parsedUsage.buckets,
-            updatedAt
+            updatedAt: nativeQuota?.updatedAt ?? updatedAt
         }
     } catch (error) {
         return {
@@ -1212,17 +1218,19 @@ export async function getAgentQuotasResponse(options?: {
     const probeTimeoutMs = options?.probeTimeoutMs ?? DEFAULT_PROVIDER_PROBE_TIMEOUT_MS
     const now = Date.now()
     const latestLiveUpdateAt = getLatestLiveQuotaUpdateAt(env)
+    const agyIdentity = getAgyQuotaCacheIdentity(env)
 
     if (
         !refresh
         && cachedResponse
+        && cachedResponse.agyIdentity === agyIdentity
         && cachedResponse.expiresAt > now
         && latestLiveUpdateAt <= cachedResponse.startedAt
     ) {
         return cachedResponse.response
     }
 
-    if (!refresh && inflightPromise) {
+    if (inflightPromise && inflightAgyIdentity === agyIdentity) {
         return await inflightPromise
     }
 
@@ -1238,25 +1246,33 @@ export async function getAgentQuotasResponse(options?: {
             accounts,
             fetchedAt
         }
+        const agyAccount = accounts.find(account => account.agent === 'agy' && account.status === 'ok')
+        const agyExpiresAt = agyAccount
+            ? Math.min(agyAccount.updatedAt + CACHE_TTL_MS, ...agyAccount.buckets.flatMap(bucket => bucket.resetsAt ? [bucket.resetsAt] : []))
+            : Infinity
         cachedResponse = {
             startedAt,
-            expiresAt: fetchedAt + CACHE_TTL_MS,
+            expiresAt: Math.min(fetchedAt + CACHE_TTL_MS, agyExpiresAt),
+            agyIdentity,
             response
         }
         return response
     })().finally(() => {
         if (inflightPromise === promise) {
             inflightPromise = null
+            inflightAgyIdentity = null
         }
     })
 
     inflightPromise = promise
+    inflightAgyIdentity = agyIdentity
     return await promise
 }
 
 export function _resetAgentQuotasCacheForTests(): void {
     cachedResponse = null
     inflightPromise = null
+    inflightAgyIdentity = null
     liveClaudeBuckets.clear()
     liveAgyTierLabel = null
     claudeStatusProbeOverrideForTests = null

@@ -22,12 +22,14 @@ export type RoundModelUsage = {
 }
 
 export type AgyUsage = Partial<Record<
-    'input_tokens' | 'output_tokens' | 'thinking_tokens' | 'cache_read_tokens' | 'total_tokens', number
+    'input_tokens' | 'output_tokens' | 'thinking_tokens' | 'cache_read_tokens' | 'cache_write_tokens' | 'total_tokens', number
 >>
 
 export type RoundSummary = {
     provider?: 'codex' | 'agy'
     agyUsage?: AgyUsage
+    /** Durable native calls already included in this response's footer. */
+    agyRequestIds?: string[]
     turnId?: string
     usage?: UsageData
     modelUsage: Record<string, RoundModelUsage>

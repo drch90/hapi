@@ -60,7 +60,36 @@ const response: AgentQuotasResponse = {
     ]
 }
 
+const agyResponse: AgentQuotasResponse = { fetchedAt: 0, accounts: [{
+    agent: 'agy', available: true, status: 'ok', updatedAt: 0,
+    buckets: [
+        bucket({ id: 'gemini-weekly', group: 'Gemini Models', window: 'weekly', usedPercent: 20, remainingPercent: 80 }),
+        bucket({ id: 'gemini-5h', group: 'Gemini Models', window: '5h', usedPercent: 10, remainingPercent: 90 }),
+        bucket({ id: '3p-weekly', group: 'Claude and GPT models', window: 'weekly', usedPercent: 40, remainingPercent: 60 }),
+        bucket({ id: '3p-5h', group: 'Claude and GPT models', window: '5h', usedPercent: 30, remainingPercent: 70 }),
+    ],
+}] }
+
 describe('selectComposerQuotaBuckets', () => {
+    it.each(['gemini-4-neon-high', 'Gemini 4 Neon (High)', 'Orchestrator (Carbon)'])(
+        'selects the Gemini quota group for %s', model => {
+            expect(selectComposerQuotaBuckets(agyResponse, 'agy', model).map(bucket => bucket.id))
+                .toEqual(['gemini-5h', 'gemini-weekly'])
+        }
+    )
+
+    it.each(['claude-sonnet-5.5', 'Claude Opus 5.5', 'gpt-oss-120b-medium'])(
+        'selects the third-party quota group for %s', model => {
+            expect(selectComposerQuotaBuckets(agyResponse, 'agy', model).map(bucket => bucket.id))
+                .toEqual(['3p-5h', '3p-weekly'])
+        }
+    )
+
+    it.each([undefined, 'auto', 'unknown-model'])('keeps both groups when the model %s is unresolved', model => {
+        expect(selectComposerQuotaBuckets(agyResponse, 'agy', model).map(bucket => bucket.id))
+            .toEqual(['gemini-5h', 'gemini-weekly', '3p-5h', '3p-weekly'])
+    })
+
     it('picks the ungrouped 5h then weekly windows of the session agent', () => {
         expect(selectComposerQuotaBuckets(response, 'claude').map((b) => b.id))
             .toEqual(['claude-five_hour', 'claude-seven_day'])
@@ -103,15 +132,24 @@ describe('AgentQuotaStatus', () => {
         getMachineAgentQuotasMock.mockReset()
     })
 
-    function renderStatus(agentFlavor: string, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+    function renderStatus(agentFlavor: string, queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }), model?: string) {
         return render(
             <QueryClientProvider client={queryClient}>
                 <I18nProvider>
-                    <AgentQuotaStatus machineId="machine-1" agentFlavor={agentFlavor} />
+                    <AgentQuotaStatus machineId="machine-1" agentFlavor={agentFlavor} model={model} />
                 </I18nProvider>
             </QueryClientProvider>
         )
     }
+
+    it('labels Antigravity model groups and shows the selected model account', async () => {
+        getMachineAgentQuotasMock.mockResolvedValue(agyResponse)
+        renderStatus('agy', undefined, 'Claude Opus 5.5')
+        const chip = await screen.findByRole('button', { name: 'Claude/GPT 5h 30% · Claude/GPT 7d 40%' })
+        expect(chip.textContent).not.toContain('Gemini')
+        fireEvent.click(chip)
+        expect(await screen.findByText('30% used')).toBeTruthy()
+    })
 
     it('shows used percent for the 5h and weekly windows of the session machine', async () => {
         getMachineAgentQuotasMock.mockResolvedValue(response)

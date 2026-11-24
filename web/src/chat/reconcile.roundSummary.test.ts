@@ -36,7 +36,7 @@ describe('agy round usage reconciliation', () => {
         agyUsage: { input_tokens: 10, output_tokens: 2, thinking_tokens: 1, cache_read_tokens: 4, total_tokens: 13 }
     }
 
-    it.each(['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'total_tokens'] as const)(
+    it.each(['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_tokens'] as const)(
         'updates the footer when only agy %s changes',
         (key) => {
             const previous = block(agy)

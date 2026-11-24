@@ -211,7 +211,7 @@ function parseUsageEvent(session: StoredSession, message: StoredMessage): UsageE
         }
     }
 
-    // Antigravity (agy) emits per-turn round-summary payloads rather than token_count.
+    // Antigravity summaries carry ACP rounds or individual durable PTY calls.
     if (data.type === 'round-summary') {
         const summary = asRecord(data.summary)
         if (summary?.provider === 'agy') {
@@ -220,22 +220,25 @@ function parseUsageEvent(session: StoredSession, message: StoredMessage): UsageE
             const inputTokens = firstCount(agyUsage, 'input_tokens', 'inputTokens')
             const outputTokens = firstCount(agyUsage, 'output_tokens', 'outputTokens')
             const cacheReadTokens = firstCount(agyUsage, 'cache_read_tokens', 'cacheReadTokens')
-            if (inputTokens + outputTokens + cacheReadTokens <= 0) return null
+            const cacheCreationTokens = firstCount(agyUsage, 'cache_write_tokens', 'cacheCreationTokens')
+            if (inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens <= 0) return null
+            const conversationId = typeof summary.conversation_id === 'string' ? summary.conversation_id.trim() : ''
+            const requestId = typeof summary.request_id === 'string' ? summary.request_id.trim() : ''
             const model = typeof summary.model === 'string' && summary.model.trim()
                 ? summary.model.trim()
                 : null
             return {
                 sessionId: session.id,
-                sourceKey: `delta|${message.id}`,
+                sourceKey: conversationId && requestId ? `agy|${JSON.stringify([conversationId, requestId])}` : `delta|${message.id}`,
                 sourceSeq: message.seq,
                 createdAt: message.createdAt,
                 agent: 'agy',
                 model,
                 kind: 'delta',
-                inputTokens: inputTokens + cacheReadTokens,
+                inputTokens: inputTokens + cacheReadTokens + cacheCreationTokens,
                 outputTokens,
                 cacheReadTokens,
-                cacheCreationTokens: 0,
+                cacheCreationTokens,
                 lastInputTokens: null,
                 lastOutputTokens: null,
                 lastCacheReadTokens: null,

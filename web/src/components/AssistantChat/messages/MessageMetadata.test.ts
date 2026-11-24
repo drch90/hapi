@@ -287,6 +287,14 @@ describe('provider throughput metadata', () => {
     it.each([undefined, 0, -1, NaN, Infinity, 1.5])('hides invalid output %s', (generationOutputTokens) => {
         expect(buildMessageMetadataLabels({ roundSummary: { ...summary, generationOutputTokens } }).join(' ')).not.toContain('tok/s')
     })
+    it('includes cache writes in the agy cache ratio without counting thinking again', () => {
+        expect(buildMessageMetadataLabels({ roundSummary: { provider: 'agy', modelUsage: {},
+            agyUsage: { input_tokens: 120, output_tokens: 50, thinking_tokens: 20,
+                cache_read_tokens: 40, cache_write_tokens: 10, total_tokens: 220 } } })).toEqual([
+            'Tokens: 220 (120 in · 50 out · 20 thinking)', 'Cached input: 23.5%', 'Cache write: 10',
+        ])
+    })
+
     it('renders the agy usage breakdown, cache share and round time', () => {
         const parts = buildMessageMetadataLabels({
             roundSummary: {

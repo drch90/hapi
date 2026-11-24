@@ -174,6 +174,15 @@ describe('agy round summary carrier', () => {
         content: { role: 'agent', content: { type: 'codex', data: { type: 'round-summary', summary } } }
     })
 
+    it('keeps native request identity and cache writes separate from context usage', () => {
+        const normalized = normalizeCarrier({ provider: 'agy', conversation_id: 'native', request_id: 'call',
+            agy_usage: { input_tokens: 120, output_tokens: 50, cache_write_tokens: 10, cache_read_tokens: 40, thinking_tokens: 20 } })
+        expect(normalized?.content).toMatchObject({ type: 'turn-summary', summary: {
+            agyRequestIds: ['["native","call"]'], agyUsage: { input_tokens: 120, output_tokens: 50, cache_write_tokens: 10 },
+        } })
+        expect(normalized?.usage).toBeUndefined()
+    })
+
     it('keeps the agy usage breakdown, model and round time', () => {
         expect(normalizeCarrier({
             provider: 'agy',
@@ -206,7 +215,7 @@ describe('agy round summary carrier', () => {
     it('drops invalid token counts and empty agy summaries', () => {
         const normalized = normalizeCarrier({
             provider: 'agy',
-            agy_usage: { input_tokens: -1, output_tokens: 1.5, thinking_tokens: '3', cache_read_tokens: 2, total_tokens: Number.MAX_SAFE_INTEGER + 1 }
+            agy_usage: { input_tokens: -1, output_tokens: 1.5, thinking_tokens: '3', cache_read_tokens: 2, cache_write_tokens: -1, total_tokens: Number.MAX_SAFE_INTEGER + 1 }
         })
         expect(normalized?.content).toEqual({
             type: 'turn-summary',

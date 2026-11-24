@@ -138,6 +138,7 @@ export function agyRoundSummary(
                 output_tokens: usage.outputTokens,
                 ...(usage.thoughtTokens !== undefined ? { thinking_tokens: usage.thoughtTokens } : {}),
                 ...(usage.cacheReadTokens !== undefined ? { cache_read_tokens: usage.cacheReadTokens } : {}),
+                ...(usage.cacheCreationTokens !== undefined ? { cache_write_tokens: usage.cacheCreationTokens } : {}),
                 ...(usage.totalTokens !== undefined ? { total_tokens: usage.totalTokens } : {})
             },
             ...(durationMs !== null ? { duration_ms: durationMs } : {}),

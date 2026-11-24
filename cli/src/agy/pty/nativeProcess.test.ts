@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import * as agyQuotaCache from '@/agent/agyQuotaCache';
 import { AgentPtyManager } from '@/agent/AgentPtyManager';
 import { NativeAgyProcess } from './nativeProcess';
 import { AgyIndeterminateDeliveryError } from './delivery';
@@ -20,6 +24,26 @@ function harness() {
 }
 
 describe('native Antigravity input serialization', () => {
+    it('publishes quotas only for a new status file observation, using its actual modification time', async () => {
+        const directory = mkdtempSync(join(tmpdir(), 'hapi-agy-status-'));
+        try {
+            const record = vi.fn();
+            vi.spyOn(agyQuotaCache, 'createAgyQuotaRecorder').mockReturnValue(record);
+            const { native } = harness();
+            const path = join(directory, 'status.json');
+            (native as unknown as { statusPath: string }).statusPath = path;
+            writeFileSync(path, JSON.stringify({ agent_state: 'idle', quota: { 'gemini-5h': { remaining_fraction: 0.5 } } }));
+            const modifiedAt = statSync(path).mtimeMs;
+            await native.refreshStatus();
+            await native.refreshStatus();
+            expect(record).toHaveBeenCalledExactlyOnceWith([{ id: 'gemini-5h', remainingFraction: 0.5, resetTime: null }], modifiedAt);
+            utimesSync(path, modifiedAt / 1000, (modifiedAt + 1000) / 1000);
+            await native.refreshStatus();
+            expect(record).toHaveBeenCalledTimes(2);
+            expect(record.mock.calls[1]?.[1]).toBeCloseTo(modifiedAt + 1000, 1);
+        } finally { rmSync(directory, { recursive: true, force: true }); }
+    });
+
     it('cycles from the confirmed current mode instead of assuming a fixed number of keys', async () => {
         const h = harness();
         const modes: AgyNativeMode[] = ['default', 'accept-edits', 'auto', 'plan'];

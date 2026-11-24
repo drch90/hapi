@@ -74,12 +74,14 @@ function buildAgyRoundLabels(summary: RoundSummary): string[] {
         ].filter(Boolean).join(' · ')
         const total = usage.total_tokens !== undefined ? formatCompactTokenCount(usage.total_tokens) : undefined
         if (total || breakdown) parts.push(`Tokens: ${total ? total + (breakdown ? ` (${breakdown})` : '') : breakdown}`)
-        // agy's input excludes cache reads.
+        // agy's input excludes both cache reads and writes.
         const input = usage.input_tokens
         const cached = usage.cache_read_tokens
-        if (input !== undefined && cached !== undefined && cached > 0 && Number.isSafeInteger(input + cached)) {
-            parts.push(`Cached input: ${formatPercentage(cached / (input + cached) * 100)}%`)
+        const written = usage.cache_write_tokens ?? 0
+        if (input !== undefined && cached !== undefined && cached > 0 && Number.isSafeInteger(input + cached + written)) {
+            parts.push(`Cached input: ${formatPercentage(cached / (input + cached + written) * 100)}%`)
         }
+        if (written > 0) parts.push(`Cache write: ${formatCompactTokenCount(written)}`)
     }
     const round: string[] = []
     if (summary.durationMs !== undefined) round.push(formatRoundDuration(summary.durationMs))

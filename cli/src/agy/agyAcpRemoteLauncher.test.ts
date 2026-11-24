@@ -1789,10 +1789,11 @@ describe('agy ACP helpers', () => {
     });
 
     it('reports generation tokens, thinking included, only with a positive generation time', () => {
-        const usage = { type: 'usage' as const, inputTokens: 100, outputTokens: 40, thoughtTokens: 20 };
+        const usage = { type: 'usage' as const, inputTokens: 100, outputTokens: 40, thoughtTokens: 20, cacheCreationTokens: 15 };
         expect(agyRoundSummary(usage, 9_000, null, 3_000.4).summary).toMatchObject({
             generation_ms: 3_000,
-            generation_output_tokens: 60
+            generation_output_tokens: 60,
+            agy_usage: { cache_write_tokens: 15 }
         });
         for (const generationMs of [null, 0, -5]) {
             const summary = agyRoundSummary(usage, 9_000, null, generationMs).summary;

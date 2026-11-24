@@ -92,6 +92,71 @@ afterEach(async () => {
 });
 
 describe('Antigravity native driver', () => {
+    it('collects completed native calls while idle without submitting input or replaying prior history', async () => {
+        const transcript = new MemoryTranscript();
+        const usage = { requestId: 'historical', inputTokens: 1, outputTokens: 2, cacheWriteTokens: 0, cacheReadTokens: 0, thinkingTokens: 1 };
+        transcript.append({ usage });
+        const h = harness({ transcript });
+        await waitFor(() => expect(h.client.emitSessionReady).toHaveBeenCalledOnce());
+        transcript.append({ type: 132, status: 2, terminal: false,
+            tool: { id: 'daemon', name: 'run_command', input: { IsDaemon: true }, summary: '', output: '' } });
+        transcript.append({ usage: { ...usage, requestId: 'background-call' } });
+        const summaries = () => h.client.sendAgentMessage.mock.calls.filter(([m]) => m.type === 'round-summary');
+        await waitFor(() => expect(summaries()).toHaveLength(1));
+        expect(summaries()[0]?.[0].summary.request_id).toBe('background-call');
+        transcript.read.mockClear();
+        await waitFor(() => expect(transcript.read).toHaveBeenLastCalledWith(2));
+        await h.driver.kill();
+        expect(summaries()).toHaveLength(1);
+        expect(h.natives[0]!.submit).not.toHaveBeenCalled();
+        expect(h.client.sendAgySessionMessage).not.toHaveBeenCalled();
+    });
+
+    it('reports completed calls once across polling, shared executions, final drains and later turns', async () => {
+        const h = harness();
+        const summaries = () => h.client.sendAgentMessage.mock.calls.filter(([message]) => message.type === 'round-summary');
+        const usage = { requestId: 'call-1', inputTokens: 120, outputTokens: 50, cacheWriteTokens: 10, cacheReadTokens: 40, thinkingTokens: 20 };
+        h.queue.push('work', MODE, 'work');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(1));
+        h.acknowledge('work');
+        const index = h.transcript.append({ status: 8, terminal: false, text: 'Working', usage });
+        await waitFor(() => expect(h.client.sendAgySessionMessage).toHaveBeenCalled());
+        expect(summaries()).toHaveLength(0);
+        h.transcript.update(index, { status: 3, terminal: true, model: 'gemini-test' });
+        await waitFor(() => expect(summaries()).toHaveLength(1));
+        h.transcript.append({ text: 'Second call', usage: { ...usage, requestId: 'call-2' } });
+        h.transcript.append({ usage }); // A replay of the first native call.
+        h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(1));
+        expect(summaries()).toHaveLength(2);
+        expect(summaries()[0]?.[0]).toMatchObject({ summary: { provider: 'agy', conversation_id: ID, request_id: 'call-1',
+            model: 'gemini-test', num_turns: 1, agy_usage: { input_tokens: 120, output_tokens: 50,
+                thinking_tokens: 20, cache_write_tokens: 10, cache_read_tokens: 40, total_tokens: 220 } } });
+        expect(summaries()[0]?.[1]).toMatch(/^agy-usage-[a-f0-9]{64}$/);
+        expect(summaries()[1]?.[1]).not.toBe(summaries()[0]?.[1]);
+        h.queue.push('continue', MODE, 'continue');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(2));
+        h.acknowledge('continue'); h.finish();
+        await waitFor(() => expect(h.readyCount()).toBe(2));
+        expect(summaries()).toHaveLength(2);
+    });
+
+    it('does not replay historical usage on resume and retains billed failed calls on abort', async () => {
+        const transcript = new MemoryTranscript();
+        const usage = { requestId: 'historical', inputTokens: 1, outputTokens: 2, cacheWriteTokens: 0, cacheReadTokens: 0, thinkingTokens: 1 };
+        transcript.append({ text: 'Previous response', usage });
+        const h = harness({ transcript });
+        h.queue.push('next', MODE, 'next');
+        await waitFor(() => expect(h.natives[0]!.inputs).toHaveLength(1));
+        h.acknowledge('next');
+        transcript.append({ status: 6, failed: true, usage: { ...usage, requestId: 'failed-call' } });
+        transcript.append({ status: 8, terminal: false, usage: { ...usage, requestId: 'still-streaming' } });
+        await waitFor(() => expect(h.client.sendAgentMessage.mock.calls.filter(([m]) => m.type === 'round-summary')).toHaveLength(1));
+        await h.driver.kill();
+        expect(h.client.sendAgentMessage.mock.calls.filter(([m]) => m.type === 'round-summary').map(([m]) => m.summary.request_id))
+            .toEqual(['failed-call']);
+    });
+
     it('answers usage queries without model input, durable prompt receipts, or terminal replacement', async () => {
         const h = harness({ configure: native => {
             native.nativeStatus = parseAgyNativeStatus(JSON.stringify({ agent_state: 'idle', quota: {

@@ -58,7 +58,10 @@ function areRoundSummariesEqual(left?: RoundSummary, right?: RoundSummary): bool
         && left.agyUsage?.output_tokens === right.agyUsage?.output_tokens
         && left.agyUsage?.thinking_tokens === right.agyUsage?.thinking_tokens
         && left.agyUsage?.cache_read_tokens === right.agyUsage?.cache_read_tokens
+        && left.agyUsage?.cache_write_tokens === right.agyUsage?.cache_write_tokens
         && left.agyUsage?.total_tokens === right.agyUsage?.total_tokens
+        && (left.agyRequestIds?.length ?? 0) === (right.agyRequestIds?.length ?? 0)
+        && (left.agyRequestIds ?? []).every((id, index) => id === right.agyRequestIds?.[index])
         && left.totalCostUsd === right.totalCostUsd
         && left.numTurns === right.numTurns
         && left.durationMs === right.durationMs

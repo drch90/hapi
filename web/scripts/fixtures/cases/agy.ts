@@ -10,6 +10,23 @@ import { T0, wireMessage } from './support'
  * sessions combine that prose with common codex-family tool lifecycle records.
  */
 export const agyCases: FixtureCase[] = [
+    {
+        name: 'agy-native-request-usage',
+        description: 'Native Antigravity per-call usage summaries retain cache writes and never replace the independently reported context occupancy or add chat rows.',
+        messages: [
+            wireMessage({ id: 'agy-usage-answer', seq: 1, createdAt: T0, content: { role: 'agent',
+                content: { type: 'output', data: { type: 'agy_message', id: 'agy-usage-text', content: 'Done.', model: 'Gemini 4 Neon' } } } }),
+            wireMessage({ id: 'agy-usage-context', seq: 2, createdAt: T0 + 1, content: { role: 'agent', content: { type: 'codex', data: {
+                type: 'token_count', model: 'Gemini 4 Neon', usageSchema: 'hapi.usage.v1', inputTokenSemantics: 'includes-cache',
+                info: { total: { inputTokens: 0, outputTokens: 0 }, contextTokens: 12_000, modelContextWindow: 1_048_576 },
+            } } } }),
+            ...['call-1', 'call-2'].map((requestId, index) => wireMessage({ id: `agy-request-${index}`, seq: index + 3, createdAt: T0 + index + 2,
+                content: { role: 'agent', content: { type: 'codex', data: { type: 'round-summary', summary: {
+                    provider: 'agy', conversation_id: 'native-conversation', request_id: requestId, model: 'Gemini 4 Neon', num_turns: 1,
+                    agy_usage: { input_tokens: 120, output_tokens: 50, thinking_tokens: 20, cache_read_tokens: 40, cache_write_tokens: 10, total_tokens: 220 },
+                } } } } })),
+        ],
+    },
     ...([
         { name: 'positive', contexts: [10_034], description: 'Native Antigravity context snapshots carry positive occupancy and the native window with zero billable tokens, without adding chat rows.' },
         { name: 'compacted', contexts: [10_034, 1_000], description: 'Native Antigravity context occupancy decreases after compaction; the latest snapshot replaces the previous size.' },

@@ -523,7 +523,7 @@ export function StatusBar(props: {
                     </Popover.Root>
                 ) : null}
                 {props.machineId ? (
-                    <AgentQuotaStatus machineId={props.machineId} agentFlavor={props.agentFlavor} />
+                    <AgentQuotaStatus machineId={props.machineId} agentFlavor={props.agentFlavor} model={props.contextModel ?? props.model} />
                 ) : null}
             </div>
 

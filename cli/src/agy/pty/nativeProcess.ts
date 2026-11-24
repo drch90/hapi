@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentPtyManager } from '@/agent/AgentPtyManager';
 import { getAgentLaunchCommand } from '@/agent/agentLaunchCommand';
+import { createAgyQuotaRecorder } from '@/agent/agyQuotaCache';
 import { killProcessTreeByPid } from '@/utils/process';
 import { logger } from '@/ui/logger';
 import { listAgyModels } from '@/modules/common/agyModels';
@@ -80,6 +81,8 @@ export class NativeAgyProcess implements AgyProcess {
     private closing: Promise<void> | null = null;
     private statusPath: string | null = null;
     private status: AgyNativeStatus | null = null;
+    private readonly recordQuotas = createAgyQuotaRecorder();
+    private quotaStatusMtimeMs = 0;
     private promptBusy = false;
     failure: Error | null = null;
     sessionId: string | null;
@@ -138,7 +141,14 @@ export class NativeAgyProcess implements AgyProcess {
     async refreshStatus(): Promise<void> {
         if (!this.statusPath || this.closed) return;
         let text: string;
-        try { text = await readFile(this.statusPath, 'utf8'); } catch (error) {
+        let modifiedAt: number;
+        try {
+            // The hook atomically replaces the file. Read data and its time
+            // from the same inode; re-reading a stale hook must not renew quotas.
+            const file = await open(this.statusPath, 'r');
+            try { text = await file.readFile('utf8'); modifiedAt = (await file.stat()).mtimeMs; }
+            finally { await file.close(); }
+        } catch (error) {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
             throw error;
         }
@@ -150,6 +160,10 @@ export class NativeAgyProcess implements AgyProcess {
         this.status = status;
         this.sessionId ??= status.conversationId;
         this.model = status.model ? `${status.model}${status.effort && !status.model.toLowerCase().includes(status.effort) ? ` · ${status.effort}` : ''}` : this.model;
+        if (modifiedAt !== this.quotaStatusMtimeMs) {
+            this.recordQuotas(status.quotas, modifiedAt);
+            this.quotaStatusMtimeMs = modifiedAt;
+        }
     }
 
     async start(): Promise<void> {

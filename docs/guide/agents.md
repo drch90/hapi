@@ -530,8 +530,14 @@ the prompt is loaded by DSH through its own `skill` tool and catalog.
 
   Queries and native operations are processed separately from ordinary prompts.
   Other native dialogs and terminal-only commands require continuing directly in
-  `agy`. Context snapshots do not add to billable usage; per-request token and
-  cost totals are not reported.
+  `agy`. Completed native model calls report input/output tokens and cache
+  reads/writes to Usage and the response details. Calls are deduplicated by
+  native request identity; resuming does not replay historical usage. Context
+  occupancy remains a separate snapshot. Output includes native thinking
+  tokens, and monetary costs are not reported.
+  Account quotas reuse recent native observations when available, with a
+  bounded CLI query as fallback. The composer selects the Gemini or Claude/GPT
+  quota group for the current model, showing both when the model is unknown.
 
 - **Pi** (`hapi pi`) — the Pi coding agent running as `pi --mode rpc` (JSON-line RPC over piped stdio); remote-control only, no local TUI input path. [earendil-works/pi](https://github.com/earendil-works/pi)
 

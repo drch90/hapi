@@ -69,6 +69,30 @@ export type AgyNativePermission = {
     reason: string;
 };
 
+export type AgyNativeUsage = {
+    requestId: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheWriteTokens: number;
+    cacheReadTokens: number;
+    thinkingTokens: number;
+};
+
+function decodeUsage(metadata: Proto): AgyNativeUsage | undefined {
+    if (!metadata.bytes(9)) return;
+    // CortexStepMetadata.model_usage is ModelUsageStats, not context occupancy.
+    const usage = metadata.message(9);
+    const counts = [2, 3, 4, 5, 9].map(field => usage.fields.has(field) ? usage.number(field) : 0);
+    if (counts.some(value => value === undefined)) return;
+    const [inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens, thinkingTokens] = counts as number[];
+    if (!Number.isSafeInteger(inputTokens! + outputTokens! + cacheWriteTokens! + cacheReadTokens!)) return;
+    return {
+        requestId: usage.text(7) || usage.text(11) || usage.text(12),
+        inputTokens: inputTokens!, outputTokens: outputTokens!, cacheWriteTokens: cacheWriteTokens!,
+        cacheReadTokens: cacheReadTokens!, thinkingTokens: thinkingTokens!,
+    };
+}
+
 export type AgyNativeStep = {
     index: number;
     type: number;
@@ -84,6 +108,7 @@ export type AgyNativeStep = {
     thinking: string;
     messageId: string;
     model: string;
+    usage?: AgyNativeUsage;
     tool?: { id: string; name: string; input: unknown; summary: string; output: string };
     permission?: AgyNativePermission;
     decision?: { approved: boolean; target: string };
@@ -131,6 +156,7 @@ export function decodeAgyStep(row: AgyNativeRow): AgyNativeStep {
         text: planner.text(8) || planner.text(1),
         thinking: planner.text(3) || planner.text(16),
         messageId: planner.text(6), model: model.text(20) || model.text(8) || model.text(12),
+        ...(type === 15 ? { usage: decodeUsage(metadata) } : {}),
         ...(tool.text(1) && tool.text(2) ? { tool: {
             id: tool.text(1), name: tool.text(2), input,
             summary: metadata.text(30),

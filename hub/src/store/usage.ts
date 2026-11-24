@@ -25,7 +25,8 @@ export type UsageScanState = {
     lastSeq: number
 }
 
-export const USAGE_SCAN_PARSER_VERSION = 2
+// Reindex agy summaries for cache writes and durable native request identities.
+export const USAGE_SCAN_PARSER_VERSION = 3
 
 type UsageEventRow = {
     session_id: string

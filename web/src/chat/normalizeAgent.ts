@@ -106,7 +106,7 @@ function normalizeAgyRoundSummary(value: Record<string, unknown>): RoundSummary 
     const raw = value.agy_usage
     const agyUsage: NonNullable<RoundSummary['agyUsage']> = {}
     if (isObject(raw) && !Array.isArray(raw)) {
-        for (const key of ['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'total_tokens'] as const) {
+        for (const key of ['input_tokens', 'output_tokens', 'thinking_tokens', 'cache_read_tokens', 'cache_write_tokens', 'total_tokens'] as const) {
             const token = nonNegativeSafeInteger(raw[key])
             if (token !== undefined) agyUsage[key] = token
         }
@@ -118,9 +118,12 @@ function normalizeAgyRoundSummary(value: Record<string, unknown>): RoundSummary 
     if (!hasUsage && durationMs === undefined) return undefined
     const generationMs = nonNegativeSafeInteger(value.generation_ms)
     const generationOutputTokens = nonNegativeSafeInteger(value.generation_output_tokens)
+    const conversationId = asString(value.conversation_id)?.trim()
+    const requestId = asString(value.request_id)?.trim()
     return {
         provider: 'agy',
         modelUsage: model ? { [model]: {} } : {},
+        ...(conversationId && requestId ? { agyRequestIds: [JSON.stringify([conversationId, requestId])] } : {}),
         ...(hasUsage ? { agyUsage } : {}),
         ...(numTurns !== undefined && numTurns > 0 ? { numTurns } : {}),
         ...(durationMs !== undefined ? { durationMs } : {}),

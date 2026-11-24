@@ -17,14 +17,29 @@ const WINDOW_SHORT_LABELS: Record<string, string> = {
     weekly: '7d'
 }
 
-/** The account-wide 5h and weekly windows for this agent, in that order. */
+/** The 5h and weekly windows for this agent and (for agy) its model family. */
 export function selectComposerQuotaBuckets(
     response: AgentQuotasResponse | undefined,
-    agentFlavor: string | null | undefined
+    agentFlavor: string | null | undefined,
+    model?: string | null
 ): AgentQuotaBucket[] {
     if (!response || !agentFlavor) return []
     const account = response.accounts.find((entry) => entry.agent === agentFlavor)
     if (!account || account.status !== 'ok') return []
+    if (agentFlavor === 'agy') {
+        const family = /\b(?:claude|gpt)\b/i.test(model ?? '') ? '3p'
+            : /\b(?:gemini|orchestrator)\b/i.test(model ?? '') ? 'gemini' : null
+        // Unknown/auto models show both labelled groups, never guess Gemini.
+        return ['gemini', '3p'].filter(group => !family || group === family).flatMap(group =>
+            Object.keys(WINDOW_SHORT_LABELS).flatMap(window => {
+                const bucket = account.buckets.find(entry => entry.window === window && (
+                    entry.id === `${group}-${window}`
+                    || (group === 'gemini' ? /gemini/i : /claude|gpt/i).test(entry.group ?? '')
+                ))
+                return bucket ? [bucket] : []
+            })
+        )
+    }
     return Object.keys(WINDOW_SHORT_LABELS).flatMap((window) => {
         const bucket = account.buckets.find((entry) => !entry.group && entry.window === window)
         return bucket ? [bucket] : []
@@ -90,7 +105,7 @@ function useNow(intervalMs: number): number {
 }
 
 /** Compact plan-quota readout (5h / 7d used + reset countdown) shown next to the context meter. */
-export function AgentQuotaStatus(props: { machineId: string; agentFlavor: string | null | undefined }) {
+export function AgentQuotaStatus(props: { machineId: string; agentFlavor: string | null | undefined; model?: string | null }) {
     const { api } = useAppContext()
     const { t, locale } = useTranslation()
     const now = useNow(COUNTDOWN_TICK_MS)
@@ -102,11 +117,13 @@ export function AgentQuotaStatus(props: { machineId: string; agentFlavor: string
         retry: false
     })
     // A failed refetch keeps the previous data; hide it rather than show stale numbers.
-    const buckets = query.isError ? [] : selectComposerQuotaBuckets(query.data, props.agentFlavor)
+    const buckets = query.isError ? [] : selectComposerQuotaBuckets(query.data, props.agentFlavor, props.model)
     if (buckets.length === 0) return null
 
     const parts = buckets.map((bucket) => {
-        const head = `${WINDOW_SHORT_LABELS[bucket.window ?? '']} ${Math.round(bucket.usedPercent)}%`
+        const group = props.agentFlavor === 'agy' && bucket.group
+            ? `${/gemini/i.test(bucket.group) ? 'Gemini' : 'Claude/GPT'} ` : ''
+        const head = `${group}${WINDOW_SHORT_LABELS[bucket.window ?? '']} ${Math.round(bucket.usedPercent)}%`
         return {
             id: bucket.id,
             text: bucket.resetsAt && bucket.resetsAt > now

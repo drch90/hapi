@@ -1,4 +1,5 @@
 import React from 'react';
+import { createHash } from 'node:crypto';
 import { convertAgentMessage } from '@/agent/messageConverter';
 import { createNativeSessionTitleMetadataSync } from '@/agent/nativeSessionTitle';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext } from '@/modules/common/remote/RemoteLauncherBase';
@@ -32,6 +33,7 @@ type Owner = {
     retiring: boolean;
     retirement?: Promise<void>;
     transcript: AgyTranscriptSource | null;
+    usageCursor?: AgyTranscriptCursor;
     permissions: AgyPtyPermissionHandler | null;
     failure: Error | null;
     monitor?: Promise<void>;
@@ -79,6 +81,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
     private activeTurn: Promise<void> | null = null;
     private preparation: Promise<unknown> = Promise.resolve();
     private lastContext: string | null = null;
+    private readonly reportedUsage = new Set<string>();
 
     constructor(private readonly session: AgySession, private readonly processFactory = createAgyProcess,
         private readonly transcriptFactory: (id: string) => AgyTranscriptSource = id => new AgyTranscript(id)) {
@@ -113,6 +116,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             await owner.setup.catch(() => {});
             await owner.process.close();
             await owner.monitor;
+            await this.refreshUsage(owner);
             // An active turn drains final durable rows before closing its DB.
             if (this.turn?.owner !== owner) owner.transcript?.close();
         })();
@@ -132,8 +136,10 @@ export class AgyPtyDriver extends RemoteLauncherBase {
         if (!id) return false;
         const transcript = this.transcriptFactory(id);
         owner.transcript = transcript;
-        await transcript.maxIndex();
+        const lastIndex = await transcript.maxIndex();
         if (owner.retiring || this.shouldExit) throw new Error('Antigravity startup cancelled');
+        owner.usageCursor = new AgyTranscriptCursor(transcript,
+            this.turn?.owner === owner ? this.turn.baseline + 1 : lastIndex + 1);
         this.session.onSessionFound(id);
         owner.permissions = new AgyPtyPermissionHandler(this.session.client, owner.process, transcript,
             () => this.owner === owner && !owner.retiring && !owner.failure && this.turn?.owner === owner && !this.turn.stopped,
@@ -192,6 +198,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             if (this.turn?.owner === owner) continue;
             try { await owner.process.refreshStatus(); this.emitContext(owner); }
             catch (error) { owner.failure = error instanceof Error ? error : new Error(String(error)); return; }
+            await this.refreshUsage(owner);
         }
     }
 
@@ -240,8 +247,52 @@ export class AgyPtyDriver extends RemoteLauncherBase {
         }
     }
 
+    private async refreshUsage(owner: Owner): Promise<void> {
+        const cursor = owner.usageCursor;
+        if (!cursor) return;
+        try {
+            // Includes native calls made while HAPI is idle or compacting.
+            // The initial baseline excludes history from before attachment.
+            await cursor.refresh();
+            for (const step of cursor.steps.values()) {
+                this.emitUsage(owner, step);
+                // Long-lived daemon tools are irrelevant to usage; retaining
+                // them would rescan every subsequent call on each idle poll.
+                if (step.type !== 15 || step.terminal) cursor.steps.delete(step.index);
+            }
+        } catch (error) { logger.debug('[agy] Native usage read deferred', error); }
+    }
+
+    private emitUsage(owner: Owner, step: AgyNativeStep): void {
+        const usage = step.usage;
+        const conversationId = owner.process.sessionId;
+        if (step.type !== 15 || !step.terminal || !usage || !conversationId) return;
+        // A native execution contains many model calls. Use the durable call
+        // identity, never execution_id or a repeatedly sampled status counter.
+        const requestId = usage.requestId || `step:${step.index}:${step.createdAt ?? ''}`;
+        const key = JSON.stringify([conversationId, requestId]);
+        if (this.reportedUsage.has(key)) return;
+        const total = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+        if (!Number.isSafeInteger(total) || total <= 0) return;
+        this.session.client.sendAgentMessage({ type: 'round-summary', summary: {
+            provider: 'agy', conversation_id: conversationId, request_id: requestId,
+            model: step.model || owner.process.model || undefined,
+            agy_usage: {
+                input_tokens: usage.inputTokens,
+                // Native output already includes thinking; do not add it again.
+                output_tokens: usage.outputTokens,
+                thinking_tokens: usage.thinkingTokens,
+                cache_read_tokens: usage.cacheReadTokens,
+                cache_write_tokens: usage.cacheWriteTokens,
+                total_tokens: total,
+            },
+            num_turns: 1,
+        } }, `agy-usage-${createHash('sha256').update(key).digest('hex')}`);
+        this.reportedUsage.add(key);
+    }
+
     private emit(turn: Turn, step: AgyNativeStep, final = false): void {
-        if (step.invalidated) return;
+        if (step.invalidated) { this.emitUsage(turn.owner!, step); return; }
         const previous = turn.emitted.get(step.index) ?? { sentAt: 0 };
         const now = Date.now();
         const live = !final && !step.terminal;
@@ -292,6 +343,7 @@ export class AgyPtyDriver extends RemoteLauncherBase {
             previous.error = step.error;
         }
         turn.emitted.set(step.index, previous);
+        this.emitUsage(turn.owner!, step);
     }
 
     private async refresh(turn: Turn, all = false): Promise<void> {

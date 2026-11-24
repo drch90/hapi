@@ -6,6 +6,45 @@ import { collectTitleChanges, ensureToolBlock, extractTitleFromChangeTitleInput,
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { asString, isObject } from '@hapi/protocol'
 
+/** PTY summaries arrive once per model call; keep the whole response's totals.
+ * ACP summaries already cover a round and continue to replace the footer. */
+function mergeAgyRequestSummary(previous: RoundSummary | undefined, next: RoundSummary): RoundSummary {
+    if (next.provider !== 'agy' || next.agyRequestIds?.length !== 1
+        || previous?.provider !== 'agy' || !previous.agyRequestIds?.length) return next
+    if (previous.agyRequestIds.includes(next.agyRequestIds[0]!)) return previous
+    const agyUsage = { ...previous.agyUsage }
+    for (const [key, value] of Object.entries(next.agyUsage ?? {})) {
+        if (value === undefined) continue
+        const field = key as keyof typeof agyUsage
+        const total = (agyUsage[field] ?? 0) + value
+        if (Number.isSafeInteger(total)) agyUsage[field] = total
+        else delete agyUsage[field]
+    }
+    return {
+        provider: 'agy', agyUsage,
+        agyRequestIds: [...previous.agyRequestIds, ...next.agyRequestIds],
+        modelUsage: { ...previous.modelUsage, ...next.modelUsage },
+        numTurns: (previous.numTurns ?? 1) + (next.numTurns ?? 1),
+    }
+}
+
+type SummaryTargetBlock = Exclude<ChatBlock, UserTextBlock | AgentEventBlock>
+
+function latestSummaryTarget(blocks: ChatBlock[]): SummaryTargetBlock | undefined {
+    let target: SummaryTargetBlock | undefined
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+        const block = blocks[index]!
+        if (block.kind === 'user-text' || (block.kind === 'cli-output' && block.source === 'user')) break
+        // Skip trailing notices, but never cross a rendered response boundary.
+        if (block.kind === 'agent-event') {
+            if (target) break
+            continue
+        }
+        target = block
+    }
+    return target
+}
+
 /**
  * A question tool call's own input can predate what limits its answers (agy
  * learns whether free text is allowed only when the form arrives), so take
@@ -374,6 +413,14 @@ export function reduceTimeline(
     const textBlocksByStreamId = new Map<string, AgentTextBlock>()
     const reasoningBlocksByStreamId = new Map<string, AgentReasoningBlock>()
     let hasReadyEvent = false
+    let pendingAgySummary: RoundSummary | undefined
+    const flushPendingAgySummary = () => {
+        if (!pendingAgySummary) return
+        const target = latestSummaryTarget(blocks)
+        if (!target) return
+        target.roundSummary = mergeAgyRequestSummary(target.roundSummary, pendingAgySummary)
+        pendingAgySummary = undefined
+    }
 
     const ensureAgentRunBlock = (
         cardId: string,
@@ -544,6 +591,8 @@ export function reduceTimeline(
     }
 
     for (const msg of messages) {
+        flushPendingAgySummary()
+        if (msg.role === 'user') pendingAgySummary = undefined
         if (msg.role === 'event') {
             if (msg.content.type === 'ready') {
                 hasReadyEvent = true
@@ -586,28 +635,9 @@ export function reduceTimeline(
             }
             if (msg.content.type === 'turn-summary') {
                 const summary = msg.content.summary as RoundSummary
-                type SummaryTargetBlock = Exclude<ChatBlock, UserTextBlock | AgentEventBlock>
-                const isSummaryTarget = (block: ChatBlock): block is SummaryTargetBlock =>
-                    block.kind !== 'user-text'
-                    && block.kind !== 'agent-event'
-                    && !(block.kind === 'cli-output' && block.source === 'user')
-                let firstIndex = -1
-                for (let index = blocks.length - 1; index >= 0; index -= 1) {
-                    const block = blocks[index]
-                    if (block.kind === 'user-text' || (block.kind === 'cli-output' && block.source === 'user')) break
-                    // Ignore trailing notices, but never cross a rendered response
-                    // boundary after locating the latest assistant group.
-                    if (block.kind === 'agent-event') {
-                        if (firstIndex !== -1) break
-                        continue
-                    }
-                    if (!isSummaryTarget(block)) break
-                    firstIndex = index
-                }
-                if (firstIndex !== -1) {
-                    const summaryTarget = blocks[firstIndex]
-                    if (isSummaryTarget(summaryTarget)) summaryTarget.roundSummary = summary
-                }
+                const target = latestSummaryTarget(blocks)
+                if (target) target.roundSummary = mergeAgyRequestSummary(target.roundSummary, summary)
+                else if (summary.agyRequestIds?.length) pendingAgySummary = mergeAgyRequestSummary(pendingAgySummary, summary)
                 continue
             }
             if (msg.content.type === 'turn-duration') {
@@ -1208,5 +1238,6 @@ export function reduceTimeline(
         }
     }
 
+    flushPendingAgySummary()
     return { blocks: mergeCliOutputBlocks(blocks), toolBlocksById, hasReadyEvent }
 }
