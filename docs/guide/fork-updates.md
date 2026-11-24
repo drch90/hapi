@@ -12,8 +12,9 @@ the intervening v0.36.6 release. Both histories and all 122 files added locally
 relative to upstream v0.36.5 are retained. The original tip remains at
 `backup/pre-upstream-v0.36.7-20261124`.
 
-This is a local source merge. No push, Actions dispatch or service deployment
-was performed.
+Merge `514048c7` and Android test-repository fix `2e660e4b` were pushed to the
+fork. Android APK run 70 passed, and the hub and runner were deployed as
+described below.
 
 ### Integrated capabilities
 
@@ -40,12 +41,61 @@ Checks and builds used the pinned **Bun 1.4.4**.
 | Fixtures | 92 chat, 14 SSE and 15 pagination fixtures plus the mode catalog regenerated; a second generation had no drift. |
 | Builds | CLI, Web, embedded assets, hub, the Linux all-in-one executable, website, documentation and static passkey site passed. The executable reports version 0.36.7. |
 | Android static checks | Conflict resolutions, imports, interface calls and regression sources inspected. All four locales have 878 matching resource keys, valid XML, unique names and matching placeholders. The retained APK workflow is unchanged. |
+| Android remote preflight and APK | [Actions run 70](https://github.com/drch90/hapi/actions/runs/45330101864) passed on `2e660e4b`: app, unit-test and instrumentation-test sources compiled; protocol/data/app tests and lint passed before APK assembly. APK identity, version code 70 and fixed certificate verification passed before upload. |
 
 The bundled difftastic is unchanged and requires unavailable `GLIBC_2.32`,
 `GLIBC_2.33` and `GLIBC_2.34`. The full CLI and browser suites are therefore
 not reported as green. No Android Gradle tasks, native compilation, unit tests,
-lint, SDK setup or emulators ran on this service host. Android remote
-preflight/conformance and iOS compilation remain unverified.
+lint, SDK setup or emulators ran on this service host. CI compiled
+instrumentation sources without running device tests; device behavior and
+iOS compilation remain unverified.
+
+### Android APK
+
+The first remote run, 69, compiled the app and test sources and passed
+protocol/data tests and lint. Five Robolectric test classes could not start
+because their Android runtime download received HTTP 429 from Maven Central.
+Commit `2e660e4b` directs Robolectric's separate runtime resolver to the same
+canonical Maven Central endpoint used by Gradle. Run 70 then passed the full
+preflight and produced the
+[signed APK artifact](https://github.com/drch90/hapi/actions/runs/45330101864/artifacts/14891233613).
+It retains `run.hapi.companion`, the fixed signing certificate and increasing
+version code 70, allowing an update over the previous APK with that signing
+identity. Artifacts are retained for seven days.
+
+### Service deployment
+
+The Linux executable from `514048c7` was checked on an isolated loopback hub
+with a database copy, a fresh test token and disabled push/tunnel services.
+All 330 sessions and 183,950 messages in that snapshot were retained;
+authentication, sample histories, embedded assets and SQLite integrity passed.
+The later Android-only build configuration fix does not change this service
+executable.
+
+The production hub and supervised runner were upgraded from **0.36.5 to
+0.36.7**. Persistent rollback material, including the final consistent database
+backup, original executable and package metadata, settings, JWT secret and
+owner identity, is stored at
+`/root/.hapi/deployments/v0.36.7-514048c74dc5/` with private directory access.
+The database remains at schema 36.
+
+The new hub passed health and existing-JWT checks 4.34 seconds after the
+switch began; the replacement runner was ready after 5.85 seconds. Preserving
+the executable's mtime prevented a competing version handoff. The runner
+exited through its own control endpoint and PM2 started its replacement.
+Its workspace root, custom launchers and PM2 supervision were preserved.
+
+All six sessions live at the start of the switch reconnected. Their six
+wrappers, six native agent processes and four MCP processes kept their PIDs,
+start markers and executable device/inode identities. All six runner
+registrations were restored from verified live metadata. Every one of the
+330 session IDs and 184,315 message IDs in the final pre-switch backup remains
+present. Settings, JWT/owner keys, custom launchers and the PM2 dump are
+unchanged.
+
+Existing wrappers continue running their original code; new sessions use
+the updated CLI. The deployed executable SHA-256 is
+`6409e2a7a752bf8e4b8e5060812e7eed7aa9a0b7b428c70676aac81a4e559b19`.
 
 ## 2026-11-19: upstream v0.36.5
 

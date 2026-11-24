@@ -14,7 +14,7 @@ separate service from the network tunnels described here.
 ## Upgrading a source build with PM2
 
 Build this fork from source to retain its local extensions. Use the Bun version
-pinned in the root `package.json` (`bun@1.4.4` for v0.36.5):
+pinned in the root `package.json` (`bun@1.4.4` for v0.36.7):
 
 ```bash
 bun install --frozen-lockfile
@@ -24,7 +24,7 @@ bun run build:single-exe
 The all-in-one executable embeds the Web app. On Linux x64 the output is
 `cli/dist-exe/bun-linux-x64-baseline/hapi`; check its `--version` before replacing
 the installed binary. The [fork update record](./fork-updates.md) describes the
-v0.36.5 source verification and deployment, alongside earlier deployments.
+v0.36.7 source verification and deployment, alongside earlier deployments.
 
 For an existing PM2 installation:
 
