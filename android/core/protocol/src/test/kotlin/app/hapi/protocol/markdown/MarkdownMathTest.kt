@@ -19,8 +19,7 @@ import kotlin.test.assertTrue
 /**
  * Math extraction semantics, mirroring the web test names in
  * `web/src/lib/remark-latex-bracket-math.test.ts` and the currency suite of
- * `web/src/components/assistant-ui/markdown-text.test.ts` (remark-math with
- * `singleDollarTextMath: false`). Assertions are AST-level: which
+ * `web/src/components/assistant-ui/markdown-text.test.ts`. Assertions are AST-level: which
  * [MathBlockNode]/[MathInlineNode] nodes exist, their latex values and block
  * placement, and that no private-use placeholder token ever leaks into the
  * final tree.
@@ -583,6 +582,50 @@ class MarkdownMathTest {
     }
 
     // ── Dollar math (remark-math `singleDollarTextMath: false`) ──────────────
+
+    @Test
+    fun `renders single-dollar clock problem formulas inside quotes and emphasis`() {
+        val document = parse(
+            """
+            > 时针 ${'$'}OM${'$'} 与分针 ${'$'}ON${'$'}，${'$'}1\text{ h}${'$'} 之内，${'$'}\angle MON = 90^\circ${'$'}。
+
+            - 领先 **${'$'}60^\circ${'$'}**；速度差 ${'$'}6 - 0.5 = \mathbf{5.5^\circ/\text{min}}${'$'}。
+            - 设经过 ${'$'}t\text{ min}${'$'}（${'$'}0 < t \le 60${'$'}），${'$'}t = \frac{420}{11}${'$'}。
+            """.trimIndent(),
+        )
+        assertEquals(
+            listOf("OM", "ON", "1\\text{ h}", "\\angle MON = 90^\\circ", "60^\\circ",
+                "6 - 0.5 = \\mathbf{5.5^\\circ/\\text{min}}", "t\\text{ min}", "0 < t \\le 60", "t = \\frac{420}{11}"),
+            document.mathInlines().map { it.latex },
+        )
+        assertEquals("60^\\circ", document.collect<StrongEmphasis>().single().collect<MathInlineNode>().single().latex)
+        assertNoPlaceholderTokens(document)
+    }
+
+    @Test
+    fun `preserves currency and code beside single-dollar formulas`() {
+        val document = parse(
+            listOf(
+                "${'$'}200/mo and ${'$'}80, ${'$'}20–${'$'}30; math ${'$'}x^2${'$'} and ${'$'}5${'$'}.",
+                "",
+                "\\${'$'}escaped\\${'$'}, ${'$'} unfinished ${'$'}, ${'$'}x${'$'}2, `${'$'}code${'$'}`.",
+                "", "```latex", "${'$'}fenced${'$'}", "```",
+            ).joinToString("\n"),
+        )
+        assertEquals(listOf("x^2", "5"), document.mathInlines().map { it.latex })
+        assertTrue(document.allText().contains("${'$'}200/mo and ${'$'}80, ${'$'}20–${'$'}30"))
+        assertEquals("${'$'}code${'$'}", document.collect<Code>().single().literal)
+        assertEquals("${'$'}fenced${'$'}\n", document.collect<FencedCodeBlock>().single().literal)
+        assertNoPlaceholderTokens(document)
+    }
+
+    @Test
+    fun `single-dollar math does not cross lines protected nodes or unfinished streaming text`() {
+        for (source in listOf("${'$'}x\ny${'$'}", "${'$'}x `code` y${'$'}", "${'$'}x + 1")) {
+            assertTrue(parse(source).mathInlines().isEmpty(), source)
+        }
+        assertEquals(listOf("x + 1"), parse("${'$'}x + 1${'$'}").mathInlines().map { it.latex })
+    }
 
     @Test
     fun `does not render single-dollar currency amounts as math`() {

@@ -78,7 +78,27 @@ class MathDocumentTest {
         val html = buildMathDocument(MathRenderSpec("x", displayMode = true, textColorArgb = 0xFF000000.toInt(), fontSizePx = 16))
         assertTrue(html.contains("MathBridge.onHeight(height)"))
         assertTrue(html.contains("ResizeObserver"))
-        assertTrue(html.contains("scrollHeight"))
+        assertTrue(html.contains("el.getBoundingClientRect().height"))
+        assertTrue(html.contains("document.fonts.ready.then(report)"))
+    }
+
+    @Test
+    fun paragraphRunsEscapeUserTextAndRetainNativeLinkIndices() {
+        val hostile = "</script><img src=x onerror=alert(1)>__LATEX__"
+        val html = buildMathDocument(
+            MathRenderSpec("paragraph", false, 0xFF000000.toInt(), 16, runs = listOf(
+                MathTextRun(hostile),
+                MathTextRun("\\frac{60}{11}", math = true, css = "font-weight:600;"),
+                MathTextRun("Open file", link = 2),
+            )),
+        )
+        assertTrue(html.contains(jsonStringLiteral(hostile)))
+        assertFalse(html.contains("<img src=x"))
+        assertTrue(html.contains("\"math\":true"))
+        assertTrue(html.contains("\"link\":2"))
+        assertTrue(html.contains("span.textContent = run.text"))
+        assertTrue(html.contains("MathBridge.onLink(run.link)"))
+        assertFalse(html.contains("innerHTML"))
     }
 
     @Test

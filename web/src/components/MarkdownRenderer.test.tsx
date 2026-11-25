@@ -8,6 +8,17 @@ describe('MarkdownRenderer', () => {
         cleanup()
     })
 
+    it.each([true, false])('renders single-dollar math (standalone=%s)', (standalone) => {
+        const { container } = render(
+            <I18nProvider>
+                <MarkdownRenderer standalone={standalone} content={String.raw`时针 $OM$，夹角 $90^\circ$；费用 $200 和 $80。`} />
+            </I18nProvider>
+        )
+        expect(container.querySelectorAll('.katex')).toHaveLength(2)
+        expect(container.querySelector('.katex-error')).toBeFalsy()
+        expect(container.textContent).toContain('费用 $200 和 $80')
+    })
+
     it('renders fenced code blocks with the shared syntax highlighter shell in standalone mode', () => {
         render(
             <I18nProvider>

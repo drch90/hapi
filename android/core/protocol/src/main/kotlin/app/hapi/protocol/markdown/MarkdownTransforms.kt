@@ -27,7 +27,7 @@ import org.commonmark.parser.Parser
  *                             <- `web/src/lib/remark-file-path-links.ts`
  * - [MarkdownMath]            <- `web/src/lib/remark-latex-bracket-math.ts` +
  *                                `remark-math {singleDollarTextMath: false}`
- *                                (`parse` extracts `$$`/`\[...\]`/`\(...\)` math nodes)
+ *                                (`parse` extracts dollar/bracket math nodes)
  *
  * Pure JVM on purpose: everything here is unit-tested in `:core:protocol`.
  */

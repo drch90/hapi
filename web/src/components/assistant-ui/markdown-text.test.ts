@@ -132,8 +132,8 @@ describe('MARKDOWN_PLUGINS — GFM strikethrough', () => {
 
 describe('MARKDOWN_PLUGINS — currency prose vs KaTeX', () => {
     // Regression: prose with multiple "$N" amounts must NOT be eaten by KaTeX.
-    // remarkMath is configured with `singleDollarTextMath: false` so single
-    // dollar signs are treated as literal text, matching GitHub markdown.
+    // Tight dollar pairs are handled by the source transform; the permissive
+    // remarkMath single-dollar parser stays disabled to protect currency.
 
     it('does not render single-$ currency amounts as KaTeX math', () => {
         const md = "The plan is $200/mo and the bill is $80 — total $400 saved."

@@ -20,6 +20,13 @@ for (const viewport of [
         await expect(codeBody).toBeVisible()
         await expect(codeBody).toContainText('\\[x^2\\]')
         await expect(codeBody.locator('.katex')).toHaveCount(0)
+        const clock = page.getByTestId('clock-math-fixture')
+        await expect(clock.locator('.katex')).toHaveCount(10)
+        await expect(clock.locator('.katex-error')).toHaveCount(0)
+        await expect(clock.locator('strong .katex')).toHaveCount(1)
+        await expect(clock).toContainText('费用 $200 和 $80')
+        await expect(clock).not.toContainText('$OM$')
+        await page.evaluate(() => document.fonts.ready)
         const pageFitsViewport = await page.evaluate(() => (
             document.documentElement.scrollWidth <= window.innerWidth
         ))

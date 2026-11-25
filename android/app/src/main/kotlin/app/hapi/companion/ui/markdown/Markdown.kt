@@ -133,11 +133,10 @@ val LocalMarkdownLinkHandler = staticCompositionLocalOf<MarkdownLinkHandler> { N
  * Renders chat markdown with the shared HAPI pipeline: source transforms and
  * parser configuration come from `:core:protocol` ([MarkdownTransforms.parse]:
  * table repair, GFM tables/strikethrough/autolink, indented code disabled,
- * `$$`/`\[...\]`/`\(...\)` math extraction), then this walker maps the AST to
- * Compose. Display math renders through the offline KaTeX WebView
- * ([KaTeXMathBlock]); inline math is a declared v1 degradation (monospace TeX
- * via the code-span style) because an AnnotatedString cannot host a WebView
- * inline. `mermaid` fences render through the offline mermaid WebView
+ * dollar/bracket math extraction), then this walker maps the AST to Compose.
+ * Display math and paragraphs containing inline math render through offline
+ * KaTeX, preserving the annotated paragraph's styles and native link handlers.
+ * `mermaid` fences render through the offline mermaid WebView
  * ([MermaidDiagramView], web-parity dispatch); other unknown fences degrade to
  * plain [CodeBlock]s; html blocks fall back to monospace text.
  */
@@ -493,6 +492,14 @@ private fun MarkdownInlineText(
             appendInlineChildren(parent, InlineContext(colors, handler), insideLink = false)
         }
     }
+    if (annotated.hasStringAnnotations(INLINE_MATH_TAG, 0, annotated.length)) {
+        KaTeXMathText(
+            annotated,
+            style = if (textAlign != null) style.copy(textAlign = textAlign) else style,
+            codeBackground = colors.inlineCodeBackground,
+        )
+        return
+    }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
     val codeBackground = colors.inlineCodeBackground
     val hasCode = remember(annotated) { annotated.hasStringAnnotations(INLINE_CODE_TAG, 0, annotated.length) }
@@ -508,7 +515,8 @@ private fun MarkdownInlineText(
     )
 }
 
-private const val INLINE_CODE_TAG = "hapi-inline-code"
+internal const val INLINE_CODE_TAG = "hapi-inline-code"
+internal const val INLINE_MATH_TAG = "hapi-inline-math"
 
 /**
  * Inline code chips hug the glyphs (iOS draws the run's font box, not the
@@ -601,22 +609,15 @@ private fun AnnotatedString.Builder.appendInlineNode(node: Node, ctx: InlineCont
         is Link -> if (insideLink) appendInlineChildren(node, ctx, true) else appendLink(node, ctx)
         is Image -> appendImageFallback(node, ctx)
         is HtmlInline -> append(node.literal.orEmpty())
-        is MathInlineNode -> appendMathLiteral(node.latex, ctx)
-        is MathBlockNode -> appendMathLiteral(node.latex, ctx)
+        is MathInlineNode -> appendMath(node.latex)
+        is MathBlockNode -> appendMath(node.latex)
         else -> appendInlineChildren(node, ctx, insideLink)
     }
 }
 
-/**
- * Inline math, declared v1 degradation: an [AnnotatedString] cannot host the
- * KaTeX WebView inline, so `\(...\)` and mid-paragraph `$$...$$` render as the
- * raw TeX in the code-span style (readable, copyable, clearly math). Block
- * math gets the full KaTeX treatment via [KaTeXMathBlock]; this branch only
- * fires for inline occurrences and for display nodes that could not be hoisted
- * out of their paragraph.
- */
-private fun AnnotatedString.Builder.appendMathLiteral(latex: String, ctx: InlineContext) {
-    appendCodeSpan(latex, ctx.codeSpanStyle)
+/** Retain TeX for copying/accessibility and mark it for the paragraph renderer. */
+private fun AnnotatedString.Builder.appendMath(latex: String) {
+    withAnnotation(INLINE_MATH_TAG, latex) { append(latex) }
 }
 
 /** Plain prose: autolink workspace file citations found by the shared detector. */

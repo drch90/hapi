@@ -55,7 +55,9 @@ Links: [docs](https://example.com/docs), [guide](docs/guide.md#install),
 | --- | --- |
 | left | 2 | `x|y` |
 
-The plan is ${'$'}200/mo — currency stays prose — and inline \(a^2 + b^2\) degrades to TeX.
+The plan is ${'$'}200/mo — currency stays prose — and inline \(a^2 + b^2\) renders with KaTeX.
+
+时针 ${'$'}OM${'$'} 与分针 ${'$'}ON${'$'} 的夹角为 **${'$'}90^\circ${'$'}**，经过 ${'$'}\frac{60}{11}\text{ min}${'$'}。
 
 \[
 E = mc^2 \qquad \int_{0}^{\infty} e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}

@@ -32,6 +32,46 @@ const pluginVariants = [
 ] as const
 
 describe('remarkLatexBracketMath', () => {
+    it.each(pluginVariants)('renders the clock-problem single-dollar formulas in the %s pipeline', (_, plugins) => {
+        const html = render(String.raw`> 时针 $OM$ 与分针 $ON$，$1\text{ h}$ 之内，$\angle MON = 90^\circ$。
+
+- 分针领先时针 **$60^\circ$**；速度差 $6 - 0.5 = \mathbf{5.5^\circ/\text{min}}$。
+- 设经过 $t\text{ min}$（$0 < t \le 60$），$t = \frac{420}{11}$。
+
+$$\mathbf{\frac{60}{11}\text{ 或 }\frac{420}{11}}$$`, plugins)
+
+        expect(html.match(/class="katex"/g)).toHaveLength(10)
+        expect(html).not.toContain('katex-error')
+        expect(html).toContain('<strong><span class="katex"')
+        expect(html).not.toContain('$OM$')
+        expect(html).not.toContain('\uE000')
+    })
+
+    it.each(pluginVariants)('preserves currency and code beside single-dollar math in the %s pipeline', (_, plugins) => {
+        const html = render([
+            '$200/mo and $80, $20–$30; math $x^2$ and $5$.',
+            '',
+            String.raw`\$escaped\$, $ unfinished $, $x$2, ` + '`$code$`.',
+            '',
+            '```latex',
+            '$fenced$',
+            '```',
+        ].join('\n'), plugins)
+        expect(html.match(/class="katex"/g)).toHaveLength(2)
+        expect(html).toContain('$200/mo and $80, $20–$30')
+        expect(html).toContain('$x$2')
+        expect(html).toContain('$code$')
+        expect(html).toContain('$fenced$')
+    })
+
+    it('does not pair single-dollar delimiters across lines, code or unfinished streaming input', () => {
+        for (const markdown of ['$x\ny$', '$x `code` y$', '$x + 1', '$x $$y$$']) {
+            const html = render(markdown)
+            expect(html).not.toContain('encoding="application/x-tex">x')
+        }
+        expect(render('$x + 1$')).toContain('class="katex"')
+    })
+
     it('does not enable trusted math rendering through an inherited option', () => {
         const original = Object.getOwnPropertyDescriptor(Object.prototype, 'trust')
         Object.defineProperty(Object.prototype, 'trust', { value: true, writable: true, configurable: true })

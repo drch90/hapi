@@ -81,12 +81,10 @@ export const MarkdownFileBaseContext = createContext<MarkdownFileBaseValue | nul
 // remarkFilePathLinks runs last to convert file paths → links after all other
 // transforms have settled.
 //
-// remarkMath is configured with `singleDollarTextMath: false` so that prose
-// containing currency amounts (e.g. "$200/mo ... $80 bill") is not garbled
-// into KaTeX output. Block math `$$...$$` (on its own line) still works.
-// This matches GitHub-flavored markdown behavior. The option lives on the
-// shared TAIL so both MARKDOWN_PLUGINS (default) and MARKDOWN_PLUGINS_WITH_BREAKS
-// (user-prompt rendering with hard breaks) inherit the fix.
+// The source transform above handles tight single-dollar pairs ($x$, $90^\circ$)
+// while preserving currency prose ($200/mo ... $80 bill). Disable remarkMath's
+// permissive single-dollar parser so it cannot consume those amounts first;
+// remarkMath still handles double-dollar math in every plugin variant.
 const MARKDOWN_PLUGIN_TAIL_HEAD = [
     remarkNonHttpsAutolink,
     remarkStripCjkAutolink,

@@ -623,6 +623,13 @@ or between user prompts, 24dp before and 16dp after a user turn, otherwise
 minimum side margins. Bubble widths use actual container constraints,
 including split-screen; Android font scaling remains enabled.
 
+Math supports `$...$` and `\(...\)` inline formulas, plus double-dollar and
+`\[...\]` formulas. Single-dollar pairs must stay on one line with no whitespace
+just inside the delimiters and no digit immediately after the closer, keeping
+amounts such as `$200/mo and $80` literal. Paragraphs containing inline formulas
+use the bundled offline KaTeX renderer and retain emphasis, code styling and
+native link actions; ordinary paragraphs keep the Compose text renderer.
+
 Chat surfaces stay neutral gray: the static schemes carry hue-free surface
 ladders, and `NeutralChatSurfaces` reapplies them over Material You so the
 wallpaper only tints accents inside a conversation (presets and OLED pass

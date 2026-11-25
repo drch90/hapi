@@ -23,7 +23,8 @@ import org.commonmark.node.Text
  * - `$$...$$` on its own lines -> [MathKind.DISPLAY] (micromark math flow);
  *   mid-paragraph `$$...$$` -> [MathKind.INLINE] (math text), closing run must
  *   be the same size as the opening run.
- * - Single `$...$` NEVER opens math (currency protection, GitHub parity).
+ * - Tight single-line `$...$` pairs open inline math; whitespace at either
+ *   inner edge or a digit after the closer keeps currency prose literal.
  * - `\[...\]` -> [MathKind.DISPLAY], `\( ... \)` -> [MathKind.INLINE]; the
  *   opener `\(`/`\[` may be escaped by an odd run of backslashes.
  * - Code spans, fenced/indented code, html and link/image/definition
@@ -41,7 +42,7 @@ import org.commonmark.node.Text
 internal object MarkdownMath {
 
     /** Cheap pre-check: sources without any of these substrings skip the whole two-parse dance. */
-    val MATH_HINT: Regex = Regex("""\$\$|\\\[|\\\(""")
+    val MATH_HINT: Regex = Regex("""\$|\\\[|\\\(""")
 
     private const val PLACEHOLDER_BASE = 0xE000
     private const val PLACEHOLDER_END = 0xF8FF
@@ -96,7 +97,10 @@ internal object MarkdownMath {
         // Existing $$ math is opaque to the bracket scan (web SOURCE_OPAQUE
         // contains math/inlineMath: `$$\verb|\(x\)|$$` keeps its inner `\(`).
         for (match in matches) markRange(mask, match.start, match.end)
-        matches += findBracketMathMatches(source, mask)
+        val bracketMatches = findBracketMathMatches(source, mask)
+        matches += bracketMatches
+        for (match in bracketMatches) markRange(mask, match.start, match.end)
+        matches += findSingleDollarMath(source, mask)
         if (matches.isEmpty()) return null
 
         matches.sortBy { it.start }
@@ -176,6 +180,35 @@ internal object MarkdownMath {
     }
 
     private class CloseSpan(val start: Int, val end: Int)
+
+    /** Same tight-pair rules as the web source transform; never cross a line or opaque node. */
+    private fun findSingleDollarMath(source: String, mask: BooleanArray): List<MathMatch> {
+        val matches = mutableListOf<MathMatch>()
+        var start = 0
+        while (start < source.length) {
+            val next = source.getOrNull(start + 1)
+            if (source[start] == '$' && source.getOrNull(start - 1) != '$' && next != '$' &&
+                next != null && !next.isWhitespace() && !mask[start] && isUnescapedDelimiter(source, start)
+            ) {
+                var end = start + 1
+                while (end < source.length) {
+                    if (mask[end] || source[end] == '\n' || source[end] == '\r') break
+                    if (source[end] == '$' && isUnescapedDelimiter(source, end)) {
+                        if (end > start + 1 && !source[end - 1].isWhitespace() &&
+                            source.getOrNull(end + 1) != '$' && source.getOrNull(end + 1)?.let { it in '0'..'9' } != true
+                        ) {
+                            matches.add(MathMatch(MathKind.INLINE, source.substring(start + 1, end), start, end + 1, ""))
+                            start = end
+                        }
+                        break
+                    }
+                    end++
+                }
+            }
+            start++
+        }
+        return matches
+    }
 
     /**
      * Closing `$$` line for flow math: container prefix / <= 3 spaces, then a `$` run >= [size].

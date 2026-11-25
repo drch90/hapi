@@ -24,6 +24,16 @@ internal data class MathRenderSpec(
     val textColorArgb: Int,
     /** Body font size in CSS px (density-independent like dp); see [spFontToCssPx]. */
     val fontSizePx: Int,
+    /** Styled paragraph runs; null renders the single [latex] formula. */
+    val runs: List<MathTextRun>? = null,
+    val bodyCss: String = "",
+)
+
+internal data class MathTextRun(
+    val text: String,
+    val math: Boolean = false,
+    val css: String = "",
+    val link: Int? = null,
 )
 
 // ── CSS px <-> Android unit conversions (WebView boundary) ────────────────
@@ -54,13 +64,20 @@ internal fun cssPxToDp(reportedCssPx: Int, webViewScale: Float = 1f): Float =
     reportedCssPx * webViewScale.coerceAtLeast(0f)
 
 internal fun buildMathDocument(spec: MathRenderSpec): String {
-    // The TeX payload is substituted last so a formula that happens to contain
-    // a template marker can never rewrite the color/size slots.
-    return MATH_DOCUMENT_TEMPLATE
-        .replace("__COLOR__", "%06X".format(spec.textColorArgb and 0xFFFFFF))
-        .replace("__FONTSIZE__", spec.fontSizePx.coerceAtLeast(1).toString())
-        .replace("__DISPLAY__", if (spec.displayMode) "true" else "false")
-        .replace("__LATEX__", jsonStringLiteral(spec.latex))
+    // One substitution pass: markers inside user text are never interpreted.
+    return Regex("__[A-Z]+__").replace(MATH_DOCUMENT_TEMPLATE) { marker ->
+        when (marker.value) {
+            "__COLOR__" -> "%06X".format(spec.textColorArgb and 0xFFFFFF)
+            "__FONTSIZE__" -> spec.fontSizePx.coerceAtLeast(1).toString()
+            "__DISPLAY__" -> spec.displayMode.toString()
+            "__LATEX__" -> jsonStringLiteral(spec.latex)
+            "__BODYCSS__" -> jsonStringLiteral(spec.bodyCss)
+            "__RUNS__" -> spec.runs?.joinToString(prefix = "[", postfix = "]") { run ->
+                """{"text":${jsonStringLiteral(run.text)},"math":${run.math},"css":${jsonStringLiteral(run.css)},"link":${run.link}}"""
+            } ?: "null"
+            else -> marker.value
+        }
+    }
 }
 
 /**
@@ -106,6 +123,9 @@ private val MATH_DOCUMENT_TEMPLATE = """
 html, body { margin: 0; padding: 0; background: transparent; color: #__COLOR__; }
 body { font-size: __FONTSIZE__px; line-height: 1.45; }
 #math { overflow-x: auto; overflow-y: hidden; }
+.math-prose { font-family: sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; }
+.math-prose .inline-math { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; white-space: normal; padding: 0.15em 0; }
+.math-prose a { color: inherit; text-decoration: inherit; }
 .katex-display { margin: 0.45em 0; }
 .katex-fallback {
   font-family: monospace;
@@ -123,31 +143,56 @@ body { font-size: __FONTSIZE__px; line-height: 1.45; }
   var el = document.getElementById('math');
   var latex = __LATEX__;
   var displayMode = __DISPLAY__;
-  try {
-    katex.render(latex, el, { displayMode: displayMode, throwOnError: true });
-  } catch (error) {
+  var runs = __RUNS__;
+  el.style.cssText = __BODYCSS__;
+  function renderMath(latex, el, displayMode) {
     try {
-      katex.render(latex, el, { displayMode: displayMode, strict: 'ignore', throwOnError: false });
-    } catch (nested) {
-      var pre = document.createElement('pre');
-      pre.className = 'katex-fallback';
-      pre.textContent = latex;
-      pre.title = String(nested && nested.message ? nested.message : nested);
-      el.textContent = '';
-      el.appendChild(pre);
+      katex.render(latex, el, { displayMode: displayMode, throwOnError: true });
+    } catch (error) {
+      try {
+        katex.render(latex, el, { displayMode: displayMode, strict: 'ignore', throwOnError: false });
+      } catch (nested) {
+        var pre = document.createElement('pre');
+        pre.className = 'katex-fallback';
+        pre.textContent = latex;
+        pre.title = String(nested && nested.message ? nested.message : nested);
+        el.textContent = '';
+        el.appendChild(pre);
+      }
     }
   }
+  if (runs) {
+    el.className = 'math-prose';
+    runs.forEach(function (run) {
+      var span = document.createElement(run.link === null ? 'span' : 'a');
+      span.style.cssText = run.css;
+      if (run.link !== null) {
+        span.href = '#';
+        span.addEventListener('click', function (event) {
+          event.preventDefault();
+          MathBridge.onLink(run.link);
+        });
+      }
+      if (run.math) {
+        span.className = 'inline-math';
+        renderMath(run.text, span, false);
+      } else {
+        span.textContent = run.text;
+      }
+      el.appendChild(span);
+    });
+  } else {
+    renderMath(latex, el, displayMode);
+  }
   function report() {
-    var body = document.body;
-    var height = Math.max(
-      document.documentElement ? document.documentElement.scrollHeight : 0,
-      body ? body.scrollHeight : 0
-    ) | 0;
+    // Measure content, not the viewport (scrollHeight cannot shrink a view).
+    var height = Math.ceil(el.getBoundingClientRect().height);
     if (height > 0) MathBridge.onHeight(height);
   }
-  if (typeof ResizeObserver !== 'undefined' && document.documentElement) {
-    new ResizeObserver(report).observe(document.documentElement);
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(report).observe(el);
   }
+  if (document.fonts) document.fonts.ready.then(report);
   window.addEventListener('load', report);
   setTimeout(report, 120);
 })();

@@ -8,7 +8,7 @@ enum class MathKind {
     /** `$$...$$` on its own lines or `\[...\]` — web `math` node, `math-display`. */
     DISPLAY,
 
-    /** `\( ... \)` or `$$...$$` mid-paragraph — web `inlineMath` node, `math-inline`. */
+    /** `$...$`, `\( ... \)` or `$$...$$` mid-paragraph — web `inlineMath`. */
     INLINE,
 }
 
@@ -22,15 +22,15 @@ enum class MathKind {
  *
  * Extends [CustomBlock] so it can be hoisted to a top-level block sibling
  * (web `splitParagraphAroundDisplayMath` parity); before hoisting it may
- * transiently sit in inline position, where the Compose walker degrades it to
- * the monospace inline fallback instead.
+ * transiently sit in inline position, where the Compose walker renders it
+ * with the containing math paragraph.
  */
 class MathBlockNode(val latex: String) : CustomBlock() {
     override fun toString(): String = "MathBlockNode(${latex.replace("\n", "\\n")})"
 }
 
 /**
- * Inline math extracted from `\( ... \)` or mid-paragraph `$$...$$`.
+ * Inline math extracted from `$...$`, `\( ... \)` or mid-paragraph `$$...$$`.
  *
  * Mirrors the web `inlineMath` mdast node (rendered by rehype-katex without
  * display mode). Produced by splitting [org.commonmark.node.Text] nodes that

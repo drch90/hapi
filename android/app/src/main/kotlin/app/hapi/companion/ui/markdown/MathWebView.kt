@@ -47,9 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Height adaptation: the document reports its height through the
  * `MathBridge.onHeight` JS interface (ResizeObserver + load + timeout) and
  * [OfflineMarkdownWebViewClient.onPageFinished] re-measures via
- * `evaluateJavascript(scrollHeight)`; whichever lands first wins.
+ * `evaluateJavascript` on the content bounds, including after font loads.
  */
-private class MathBridge(mainThread: Handler, onHeight: (Int) -> Unit) {
+private class MathBridge(mainThread: Handler, onHeight: (Int) -> Unit, private val onLink: (Int) -> Unit) {
     private val handler = mainThread
     private val callback = onHeight
     private val released = AtomicBoolean(false)
@@ -65,13 +65,22 @@ private class MathBridge(mainThread: Handler, onHeight: (Int) -> Unit) {
             if (!released.get()) callback(px)
         }
     }
+
+    @JavascriptInterface
+    fun onLink(index: Int) {
+        if (released.get()) return
+        handler.post { if (!released.get()) onLink.invoke(index) }
+    }
 }
 
 /**
  * Rejects all network requests; offline markdown views render from bundled
  * assets only (KaTeX math, Mermaid diagrams).
  */
-internal class OfflineMarkdownWebViewClient(private val onHeight: (Int) -> Unit) : WebViewClient() {
+internal class OfflineMarkdownWebViewClient(
+    private val heightExpression: String = "Math.max(document.documentElement?document.documentElement.scrollHeight:0,document.body?document.body.scrollHeight:0)|0",
+    private val onHeight: (Int) -> Unit,
+) : WebViewClient() {
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         return when (request.url.scheme?.lowercase()) {
             "http", "https", "ws", "wss" -> WebResourceResponse(
@@ -87,7 +96,7 @@ internal class OfflineMarkdownWebViewClient(private val onHeight: (Int) -> Unit)
 
     override fun onPageFinished(view: WebView, url: String?) {
         view.evaluateJavascript(
-            "(function(){var b=document.body;return Math.max(document.documentElement?document.documentElement.scrollHeight:0,b?b.scrollHeight:0)|0})()",
+            "(function(){return $heightExpression})()",
         ) { value ->
             value.toIntOrNull()?.let(onHeight)
         }
@@ -97,7 +106,7 @@ internal class OfflineMarkdownWebViewClient(private val onHeight: (Int) -> Unit)
 /** [WebView] configured once and reused across recompositions by [render]. */
 private class MathWebView(context: Context) : WebView(context) {
     private val mainThread = Handler(Looper.getMainLooper())
-    private val bridge = MathBridge(mainThread) { px -> reportedHeight = px }
+    private val bridge = MathBridge(mainThread, { px -> reportedHeight = px }, { index -> onLinkClicked?.invoke(index) })
 
     /** Latest height reported by the document; read by the size callback. */
     var reportedHeight: Int = 0
@@ -108,6 +117,7 @@ private class MathWebView(context: Context) : WebView(context) {
 
     /** Assigned by the composable each composition; see [render]. */
     var onHeightChanged: ((Int) -> Unit)? = null
+    var onLinkClicked: ((Int) -> Unit)? = null
 
     private var lastSpec: MathRenderSpec? = null
 
@@ -124,7 +134,7 @@ private class MathWebView(context: Context) : WebView(context) {
         isVerticalScrollBarEnabled = false
         isHorizontalScrollBarEnabled = false
         addJavascriptInterface(bridge, "MathBridge")
-        webViewClient = OfflineMarkdownWebViewClient { px ->
+        webViewClient = OfflineMarkdownWebViewClient("Math.ceil(document.getElementById('math').getBoundingClientRect().height)") { px ->
             mainThread.post { reportedHeight = px }
         }
     }
@@ -147,9 +157,12 @@ private class MathWebView(context: Context) : WebView(context) {
         )
     }
 
-    override fun onDetachedFromWindow() {
+    override fun destroy() {
         bridge.release()
-        super.onDetachedFromWindow()
+        onHeightChanged = null
+        onLinkClicked = null
+        removeJavascriptInterface("MathBridge")
+        super.destroy()
     }
 }
 
@@ -208,6 +221,11 @@ internal fun KaTeXMathBlock(
     val spec = remember(latex, displayMode, contentColor, fontSizePx) {
         MathRenderSpec(latex = latex, displayMode = displayMode, textColorArgb = contentColor.toArgb(), fontSizePx = fontSizePx)
     }
+    KaTeXView(spec, modifier)
+}
+
+@Composable
+internal fun KaTeXView(spec: MathRenderSpec, modifier: Modifier = Modifier, onLink: (Int) -> Unit = {}) {
     // One stable holder for the mounted view's height; a spec change resets
     // it through [MathViewHeightState.onRender] instead of re-keying Compose
     // state that the creation-time callback would no longer feed.
@@ -216,7 +234,7 @@ internal fun KaTeXMathBlock(
     AndroidView(
         modifier = modifier
             .fillMaxWidth()
-            .semantics { contentDescription = latex }
+            .semantics { contentDescription = spec.latex }
             .then(
                 if (heightState.heightCssPx > 0) {
                     // The bridge reports CSS px; at the default WebView scale
@@ -236,6 +254,7 @@ internal fun KaTeXMathBlock(
             // re-point the callback at the live holder and reset the height
             // for the new spec BEFORE rendering the replacement document.
             view.onHeightChanged = heightState::onHeightReported
+            view.onLinkClicked = onLink
             heightState.onRender(spec)
             view.render(spec)
         },

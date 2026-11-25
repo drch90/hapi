@@ -275,6 +275,33 @@ function findBracketMathMatches(source: string, mask: ProtectedMask): BracketMat
     return matches
 }
 
+/** Tight, same-line dollar pairs support math without consuming currency prose. */
+function findSingleDollarMathMatches(source: string, mask: ProtectedMask): BracketMathMatch[] {
+    const matches: BracketMathMatch[] = []
+    for (let start = 0; start < source.length; start++) {
+        if (source[start] !== '$' || source[start - 1] === '$' || source[start + 1] === '$'
+            || !source[start + 1] || /\s/u.test(source[start + 1])
+            || mask[start] || !isUnescapedDelimiter(source, start)) continue
+
+        for (let end = start + 1; end < source.length; end++) {
+            if (mask[end] || source[end] === '\n' || source[end] === '\r') break
+            if (source[end] !== '$' || !isUnescapedDelimiter(source, end)) continue
+            // Do not skip an invalid closer: it may open the next formula or
+            // currency amount, e.g. "$200 and $x$" or "$20–$30".
+            if (end > start + 1 && !/\s/u.test(source[end - 1])
+                && source[end + 1] !== '$' && !/[0-9]/u.test(source[end + 1] ?? '')) {
+                matches.push({
+                    start, end: end + 1, kind: 'inline', continuationPrefix: '',
+                    value: source.slice(start + 1, end),
+                })
+                start = end
+            }
+            break
+        }
+    }
+    return matches
+}
+
 function createMathNode(kind: MathKind, value: string): MarkdownNode {
     if (kind === 'display') {
         return {
@@ -340,7 +367,11 @@ function makeSourcePlaceholder(source: string, match: BracketMathMatch, token: s
 }
 
 function prepareBracketMathSource(source: string, tree: MarkdownNode): { source: string; placeholders: PlaceholderMap } | null {
-    const matches = findBracketMathMatches(source, getProtectedMarkdownRanges(source, tree))
+    const mask = getProtectedMarkdownRanges(source, tree)
+    const matches = findBracketMathMatches(source, mask)
+    for (const match of matches) markProtectedRange(mask, match.start, match.end)
+    matches.push(...findSingleDollarMathMatches(source, mask))
+    matches.sort((left, right) => left.start - right.start)
     if (matches.length === 0) return null
 
     const placeholders: PlaceholderMap = new Map()
@@ -496,7 +527,7 @@ function restorePlaceholdersInContainer(node: MarkdownNode, placeholders: Placeh
     }
 }
 
-/** Convert TeX bracket delimiters before Markdown escape handling loses them. */
+/** Convert bracket and tight single-dollar math before Markdown escapes lose TeX. */
 export default function remarkLatexBracketMath(this: Processor) {
     const processor = this
     return (tree: MarkdownNode, file: MarkdownFile): void => {
